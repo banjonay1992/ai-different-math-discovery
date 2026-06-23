@@ -706,6 +706,7 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertIn('adaptive_dimension_agenda', packed)
         self.assertIn('algebraic_foundation_baseline', packed)
         self.assertIn('algebraic_expression_agenda', packed)
+        self.assertIn('operator_prior_budget_report', packed)
         self.assertTrue(priors)
         prior = next(
             prior for prior in priors
@@ -1054,6 +1055,214 @@ class DiscoveryLoopTests(unittest.TestCase):
             validation_outcome['outcome'],
         )
         self.assertTrue(validation_outcome['operator_prior_evaluated'])
+
+    def test_generated_operator_priors_apply_signature_budget(self):
+        memory = CumulativeTheoryMemory()
+        contexts = [
+            'repulsion',
+            'central_force',
+            'localized_gravity',
+            'inverse_square_repulsion',
+        ]
+        for seed, context in enumerate(contexts):
+            memory.disagreement_records.append({
+                'context': context,
+                'seed': seed,
+                'mode': 'distance_exponent_race',
+                'family_kinds': [
+                    'distance_scaled_direction_residual',
+                    'generated_distance_scaled_direction_residual',
+                ],
+                'rival_labels': [
+                    'distance exponent candidate',
+                    'generated distance exponent candidate',
+                ],
+                'mean_rival_score': 0.82,
+                'probe_points': [
+                    {'x': 12.0, 'y': 10.0, 'distance_from_center': 2.0},
+                    {'x': 14.0, 'y': 10.0, 'distance_from_center': 4.0},
+                ],
+                'rival_predictions': [
+                    {'prediction': 'candidate / separation^-0.5'},
+                    {'prediction': 'candidate / separation^-1.0'},
+                    {'prediction': 'candidate / separation^-1.5'},
+                    {'prediction': 'candidate / separation^-2.0'},
+                ],
+            })
+
+        priors = memory.generated_operator_priors(limit=8)
+        budget = memory.operator_prior_budget_report(limit=8)
+
+        self.assertEqual(8, len(priors))
+        self.assertGreaterEqual(budget['candidate_count'], 16)
+        self.assertEqual(8, budget['selected_count'])
+        self.assertTrue(budget['signature_counts'])
+        self.assertLessEqual(max(budget['signature_counts'].values()), 2)
+        self.assertTrue(all(
+            prior['operator_kind'] == 'inverse_separation_power'
+            for prior in priors
+        ))
+
+    def test_equation_case_records_consolidate_robust_operator_invariants(self):
+        memory = CumulativeTheoryMemory()
+        cases = [
+            (0, 'k * unit_anchor_vector / separation^3', 0.76),
+            (1, 'k * unit_anchor_vector / separation^2', 0.63),
+            (3, 'k * unit_anchor_vector / separation^3', 0.77),
+            (
+                2,
+                'k * taper(separation, 7_053) * '
+                'unit_generated_center_vector / separation^0_5',
+                0.89,
+            ),
+        ]
+        for seed, expression, score in cases:
+            memory.record_equation_case_result(
+                'repulsion',
+                seed,
+                {
+                    'interesting_equation': {
+                        'target': 'baseline_adjusted_delta_velocity',
+                        'expression': expression,
+                        'role': 'generated_operator_distance_scaled_direction_equation',
+                        'score': score,
+                    },
+                    'passed': True,
+                    'label_leaks': [],
+                },
+                phase='math_final_discovery',
+            )
+
+        invariants = memory.operator_prior_invariant_consolidations(limit=3)
+        top = invariants[0]
+        exponents = {
+            item['value']: item['support']
+            for item in top['parameter_candidates']
+        }
+        packed = memory.to_dict()
+        restored = CumulativeTheoryMemory.from_dict(packed)
+
+        self.assertEqual('repulsion', top['context'])
+        self.assertEqual('inverse_separation_power', top['law_family'])
+        self.assertEqual('unit_anchor_vector', top['vector_basis'])
+        self.assertEqual('robust_family_parameter_unresolved', top['status'])
+        self.assertEqual(3, top['support_count'])
+        self.assertEqual([0, 1, 3], top['support_seeds'])
+        self.assertEqual(2, exponents[3.0])
+        self.assertEqual(1, exponents[2.0])
+        self.assertIn('distance exponent', top['next_experiment'])
+        self.assertIn('equation_case_records', packed)
+        self.assertIn('operator_prior_invariant_consolidations', packed)
+        self.assertEqual(
+            top,
+            restored.operator_prior_invariant_consolidations(limit=3)[0],
+        )
+        self.assertIn('Robust equation invariants:', memory.summary())
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            _print_cumulative_theory_review(memory)
+        printed = output.getvalue()
+
+        self.assertIn('Theory robust equation invariants:', printed)
+        self.assertIn('robust_family_parameter_unresolved', printed)
+
+    def test_invariant_exponent_resolution_designs_near_mid_far_probe(self):
+        memory = CumulativeTheoryMemory()
+        cases = [
+            (0, 'k * unit_anchor_vector / separation^3', 0.76, 3.0),
+            (1, 'k * unit_anchor_vector / separation^2', 0.63, 2.0),
+            (3, 'k * unit_anchor_vector / separation^3', 0.77, 3.0),
+        ]
+        for seed, expression, score, exponent in cases:
+            memory.record_equation_case_result(
+                'repulsion',
+                seed,
+                {
+                    'interesting_equation': {
+                        'target': 'baseline_adjusted_delta_velocity',
+                        'expression': expression,
+                        'role': 'generated_operator_distance_scaled_direction_equation',
+                        'score': score,
+                        'parameters': {
+                            'center_x': 9.0,
+                            'center_y': 11.0,
+                            'distance_exponent': exponent,
+                        },
+                    },
+                    'passed': True,
+                    'label_leaks': [],
+                },
+                phase='math_final_discovery',
+            )
+
+        experiment = memory.equation_invariant_resolution_experiments(limit=1)[0]
+        signature = experiment['disagreement_signature']
+        plan = memory.planned_experiments(
+            world_types=['standard', 'repulsion'],
+            object_counts=[5],
+            steps=240,
+            limit=1,
+        )[0]
+        actions = _planned_probe_actions(plan)
+        selected = memory.evaluate_planned_result(
+            plan,
+            context='repulsion',
+            seed=plan['seed'],
+            report={
+                'theories': [{
+                    'theory_kind': 'distance_scaled_direction_residual',
+                    'parameters': {'distance_exponent': 3.0},
+                    'score': 0.81,
+                }],
+                'proof_checks': [],
+            },
+        )
+
+        self.assertEqual(
+            'equation_invariant_exponent_resolution',
+            experiment['experiment_kind'],
+        )
+        self.assertEqual('repulsion', plan['world_type'])
+        self.assertEqual('distance_exponent_race', signature['mode'])
+        self.assertEqual([3.0, 2.0], signature['candidate_exponents'])
+        self.assertEqual(
+            ['near_exponent_ratio', 'mid_log_slope', 'far_exponent_ratio'],
+            [point['label'] for point in signature['probe_points']],
+        )
+        self.assertEqual(
+            ['near_exponent_ratio', 'mid_log_slope', 'far_exponent_ratio'],
+            [action['probe_label'] for action in actions],
+        )
+        self.assertTrue(all(
+            action['source'] == 'planned_equation_invariant_resolution'
+            for action in actions
+        ))
+        self.assertEqual(plan['invariant_key'], actions[0]['invariant_key'])
+        self.assertIn('equation_invariant_resolution_experiments', memory.to_dict())
+        self.assertIn('Equation invariant resolution:', memory.summary())
+        self.assertEqual('invariant_exponent_selected', selected['outcome'])
+
+        memory.planned_outcomes.append({
+            'experiment_kind': 'equation_invariant_exponent_resolution',
+            'invariant_key': plan['invariant_key'],
+            'outcome': 'invariant_resolution_still_unresolved',
+        })
+        refined = memory.equation_invariant_resolution_experiments(limit=1)[0]
+        self.assertEqual(
+            ['very_near_center', 'mid_log_check', 'very_far_from_center'],
+            [
+                point['label']
+                for point in refined['disagreement_signature']['probe_points']
+            ],
+        )
+
+        memory.planned_outcomes.append({
+            'experiment_kind': 'equation_invariant_exponent_resolution',
+            'invariant_key': plan['invariant_key'],
+            'outcome': 'invariant_exponent_selected',
+        })
+        self.assertEqual([], memory.equation_invariant_resolution_experiments(limit=1))
 
     def test_domain_counterexample_adds_representation_domain_predicate(self):
         loop = AutonomousDiscoveryLoop()
@@ -1625,7 +1834,17 @@ class DiscoveryLoopTests(unittest.TestCase):
                 'steps': kwargs['steps'],
                 'equation_count': 1,
                 'installed_count': 1,
-                'interesting_equation': {},
+                'interesting_equation': {
+                    'target': 'baseline_adjusted_delta_velocity',
+                    'expression': 'k * unit_local_inferred_vector / separation^2',
+                    'role': 'residual_distance_scaled_direction_equation',
+                    'score': 0.36,
+                    'parameters': {
+                        'center_x': 7.0,
+                        'center_y': 13.0,
+                        'distance_exponent': 2.0,
+                    },
+                },
                 'interesting_score': 0.36,
                 'label_leaks': [],
                 'probe_suggestions': [],
@@ -1659,6 +1878,15 @@ class DiscoveryLoopTests(unittest.TestCase):
             progress_events[1][1]['outcome']['outcome'],
         )
         self.assertEqual('autonomous_followup', followups[0]['phase'])
+        self.assertEqual(1, len(memory.equation_case_records))
+        self.assertEqual(
+            'equation_followup',
+            memory.equation_case_records[0]['phase'],
+        )
+        self.assertEqual(
+            'k * unit_local_inferred_vector / separation^2',
+            memory.equation_case_records[0]['expression'],
+        )
         self.assertEqual(
             'transfer_test',
             followups[0]['planned_experiment']['experiment_kind'],

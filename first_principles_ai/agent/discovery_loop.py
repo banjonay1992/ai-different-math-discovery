@@ -1418,6 +1418,7 @@ class CumulativeTheoryMemory:
         self.planned_outcomes: list[dict] = []
         self.disagreement_records: list[dict] = []
         self.operator_prior_outcomes: list[dict] = []
+        self.equation_case_records: list[dict] = []
         self.domain_world_records: list[dict] = []
         self.autonomous_scientist_records: list[dict] = []
         self.arithmetic_rediscovery_records: list[dict] = []
@@ -1536,6 +1537,13 @@ class CumulativeTheoryMemory:
                 rival_found=rival_found,
                 rival_proof_passed=rival_proof_passed,
             )
+        elif experiment_kind == 'equation_invariant_exponent_resolution':
+            outcome = self._equation_invariant_resolution_outcome_label(
+                target_found=found_family,
+                target_proof_passed=proof_passed,
+                rival_found=rival_found,
+                rival_proof_passed=rival_proof_passed,
+            )
         else:
             outcome = self._planned_outcome_label(
                 experiment_kind=experiment_kind,
@@ -1560,6 +1568,7 @@ class CumulativeTheoryMemory:
             'target_scope': self._plan_target_scope(plan, context),
             'rival_scope': self._plan_rival_scope(plan, context),
             'disagreement_mode': plan.get('disagreement_signature', {}).get('mode'),
+            'invariant_key': plan.get('invariant_key'),
             'primary_theory_label': plan.get('primary_theory_label'),
             'rival_theory_labels': list(plan.get('rival_theory_labels') or []),
             'found_family': found_family,
@@ -1621,6 +1630,38 @@ class CumulativeTheoryMemory:
             return []
         self._append_operator_prior_result_records(records)
         return records
+
+    def record_equation_case_result(
+        self,
+        context: str,
+        seed: int,
+        result: dict[str, Any],
+        phase: str = 'equation_case',
+    ) -> dict[str, Any]:
+        """Keep the headline equation from a run for cross-seed consolidation."""
+        equation = dict(result.get('interesting_equation') or {})
+        if not equation:
+            return {}
+        expression = str(equation.get('expression') or '')
+        if not expression:
+            return {}
+        record = {
+            'context': context,
+            'seed': int(seed),
+            'phase': phase,
+            'target': equation.get('target'),
+            'expression': expression,
+            'role': equation.get('role'),
+            'score': round(float(equation.get('score', 0.0) or 0.0), 3),
+            'parameters': _rounded_dict(dict(equation.get('parameters') or {})),
+            'passed': bool(result.get('passed') or result.get('equation_passed')),
+            'label_leak_count': len(result.get('label_leaks') or []),
+            'probe_suggestion_count': len(result.get('probe_suggestions') or []),
+        }
+        self.equation_case_records.append(record)
+        if len(self.equation_case_records) > 160:
+            self.equation_case_records = self.equation_case_records[-160:]
+        return record
 
     def _operator_prior_records_from_result(
         self,
@@ -3925,10 +3966,51 @@ class CumulativeTheoryMemory:
 
     def generated_operator_priors(
         self,
-        limit: int = 12,
+        limit: int = 8,
         context: str | None = None,
     ) -> list[dict]:
         """Convert representation agenda items into workbench-search priors."""
+        limit = max(0, int(limit or 0))
+        if limit <= 0:
+            return []
+        candidates = self._generated_operator_prior_candidates(
+            limit=limit,
+            context=context,
+        )
+        return self._bounded_operator_priors(candidates, limit=limit)
+
+    def operator_prior_budget_report(
+        self,
+        limit: int = 8,
+        context: str | None = None,
+    ) -> dict[str, Any]:
+        limit = max(0, int(limit or 0))
+        candidates = self._generated_operator_prior_candidates(
+            limit=limit,
+            context=context,
+        )
+        selected = self._bounded_operator_priors(candidates, limit=limit)
+        signature_counts: dict[str, int] = {}
+        for prior in selected:
+            signature = self._operator_prior_budget_signature(prior)
+            signature_key = '|'.join(signature)
+            signature_counts[signature_key] = signature_counts.get(signature_key, 0) + 1
+        return {
+            'limit': limit,
+            'context': context,
+            'candidate_count': len(candidates),
+            'selected_count': len(selected),
+            'max_per_signature': self._operator_prior_signature_cap(limit),
+            'signature_counts': signature_counts,
+            'selected_keys': [item.get('key') for item in selected],
+        }
+
+    def _generated_operator_prior_candidates(
+        self,
+        limit: int,
+        context: str | None,
+    ) -> list[dict[str, Any]]:
+        candidate_limit = max(limit * 4, 16)
         priors: dict[str, dict[str, Any]] = {}
         for record in reversed(self.disagreement_records):
             for prior in self._operator_priors_from_disagreement(record):
@@ -3937,12 +4019,12 @@ class CumulativeTheoryMemory:
                 adjusted = self._annotate_operator_prior_with_algebraic_foundation(adjusted)
                 if not self._operator_prior_allowed_in_context(adjusted, context):
                     continue
-                priors[prior['key']] = adjusted
-                if len(priors) >= limit:
+                priors[str(adjusted.get('key'))] = adjusted
+                if len(priors) >= candidate_limit:
                     break
-            if len(priors) >= limit:
+            if len(priors) >= candidate_limit:
                 break
-        for claim in self.operator_prior_discovery_claims(limit=max(5, limit)):
+        for claim in self.operator_prior_discovery_claims(limit=max(5, candidate_limit)):
             prior = self._operator_prior_from_claim(claim)
             if not prior:
                 continue
@@ -3952,7 +4034,7 @@ class CumulativeTheoryMemory:
             if not self._operator_prior_allowed_in_context(adjusted, context):
                 continue
             priors.setdefault(str(adjusted.get('key')), adjusted)
-            if len(priors) >= limit:
+            if len(priors) >= candidate_limit:
                 break
         ranked = sorted(
             priors.values(),
@@ -3962,7 +4044,631 @@ class CumulativeTheoryMemory:
             ),
             reverse=True,
         )
-        return ranked[:limit]
+        return ranked
+
+    def _bounded_operator_priors(
+        self,
+        candidates: list[dict[str, Any]],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        max_per_signature = self._operator_prior_signature_cap(limit)
+        max_per_kind = max(2, limit)
+        selected: list[dict[str, Any]] = []
+        selected_keys: set[str] = set()
+        signature_counts: dict[tuple[str, str, str, str], int] = {}
+        kind_counts: dict[str, int] = {}
+
+        for prior in candidates:
+            signature = self._operator_prior_budget_signature(prior)
+            kind = str(prior.get('operator_kind', 'unknown'))
+            if signature_counts.get(signature, 0) >= max_per_signature:
+                continue
+            if kind_counts.get(kind, 0) >= max_per_kind:
+                continue
+            self._select_operator_prior(
+                prior,
+                selected,
+                selected_keys,
+                signature_counts,
+                kind_counts,
+                signature,
+                kind,
+            )
+            if len(selected) >= limit:
+                return selected
+
+        for prior in candidates:
+            key = str(prior.get('key', ''))
+            if key in selected_keys:
+                continue
+            signature = self._operator_prior_budget_signature(prior)
+            if signature_counts.get(signature, 0) >= max_per_signature + 1:
+                continue
+            kind = str(prior.get('operator_kind', 'unknown'))
+            self._select_operator_prior(
+                prior,
+                selected,
+                selected_keys,
+                signature_counts,
+                kind_counts,
+                signature,
+                kind,
+            )
+            if len(selected) >= limit:
+                return selected
+        return selected
+
+    def _select_operator_prior(
+        self,
+        prior: dict[str, Any],
+        selected: list[dict[str, Any]],
+        selected_keys: set[str],
+        signature_counts: dict[tuple[str, str, str, str], int],
+        kind_counts: dict[str, int],
+        signature: tuple[str, str, str, str],
+        kind: str,
+    ):
+        selected.append(prior)
+        selected_keys.add(str(prior.get('key', '')))
+        signature_counts[signature] = signature_counts.get(signature, 0) + 1
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+
+    def _operator_prior_signature_cap(self, limit: int) -> int:
+        return 2 if limit >= 5 else 3
+
+    def _operator_prior_budget_signature(
+        self,
+        prior: dict[str, Any],
+    ) -> tuple[str, str, str, str]:
+        parameters = dict(prior.get('parameters') or {})
+        return (
+            str(prior.get('operator_kind', 'unknown')),
+            str(parameters.get('relation', 'unknown')),
+            str(parameters.get('source_context') or parameters.get('context') or 'unknown'),
+            self._operator_prior_window_kind(prior),
+        )
+
+    def _operator_prior_window_kind(self, prior: dict[str, Any]) -> str:
+        operator_kind = str(prior.get('operator_kind', ''))
+        expression = str(prior.get('expression', ''))
+        if operator_kind == 'localized_tapered_power' or 'taper' in expression or 'max(0' in expression:
+            return 'tapered'
+        if operator_kind == 'localized_cutoff_window' or 'inside(' in expression:
+            return 'windowed'
+        return 'global'
+
+    def operator_prior_invariant_consolidations(
+        self,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Summarize repeated headline equations into cross-seed law families."""
+        groups: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+        for record in self.equation_case_records:
+            expression = str(record.get('expression') or '')
+            if not expression:
+                continue
+            context = str(record.get('context') or 'unknown')
+            target = str(record.get('target') or 'unknown')
+            law_family = self._equation_law_family(record)
+            vector_basis = self._equation_vector_basis(expression)
+            window_kind = self._equation_window_kind(expression)
+            key = (context, target, law_family, vector_basis, window_kind)
+            group = groups.setdefault(
+                key,
+                {
+                    'context': context,
+                    'target': target,
+                    'law_family': law_family,
+                    'vector_basis': vector_basis,
+                    'window_kind': window_kind,
+                    'records': [],
+                    'support_seeds': set(),
+                    'scores': [],
+                    'leak_count': 0,
+                    'pass_count': 0,
+                    'expressions': {},
+                    'exponents': {},
+                    'parameter_records': [],
+                },
+            )
+            group['records'].append(record)
+            group['parameter_records'].append(dict(record.get('parameters') or {}))
+            if isinstance(record.get('seed'), int):
+                group['support_seeds'].add(int(record['seed']))
+            group['scores'].append(float(record.get('score', 0.0) or 0.0))
+            group['leak_count'] += int(record.get('label_leak_count', 0) or 0)
+            if record.get('passed'):
+                group['pass_count'] += 1
+            group['expressions'][expression] = group['expressions'].get(expression, 0) + 1
+            exponent = self._equation_distance_exponent(record)
+            if exponent is not None:
+                group['exponents'][exponent] = group['exponents'].get(exponent, 0) + 1
+
+        consolidations = []
+        for key, group in groups.items():
+            support_count = len(group['records'])
+            mean_score = (
+                sum(group['scores']) / len(group['scores'])
+                if group['scores']
+                else 0.0
+            )
+            parameter_candidates = [
+                {
+                    'name': 'distance_exponent',
+                    'value': exponent,
+                    'support': count,
+                }
+                for exponent, count in sorted(
+                    group['exponents'].items(),
+                    key=lambda item: (-item[1], item[0]),
+                )
+            ]
+            dominant_expression, dominant_support = max(
+                group['expressions'].items(),
+                key=lambda item: (item[1], item[0]),
+            )
+            status = self._equation_invariant_status(
+                support_count=support_count,
+                parameter_candidate_count=len(parameter_candidates),
+            )
+            item = {
+                'key': ':'.join(key),
+                'context': group['context'],
+                'target': group['target'],
+                'law_family': group['law_family'],
+                'vector_basis': group['vector_basis'],
+                'window_kind': group['window_kind'],
+                'status': status,
+                'support_count': support_count,
+                'support_seeds': sorted(group['support_seeds']),
+                'mean_score': round(mean_score, 3),
+                'pass_count': group['pass_count'],
+                'leak_count': group['leak_count'],
+                'dominant_expression': dominant_expression,
+                'dominant_expression_support': dominant_support,
+                'dominant_parameters': self._equation_invariant_dominant_parameters(
+                    list(group.get('parameter_records') or [])
+                ),
+                'parameter_candidates': parameter_candidates,
+            }
+            item['robust_claim'] = self._equation_invariant_claim(item)
+            item['next_experiment'] = self._equation_invariant_next_experiment(item)
+            item['falsifies_if'] = self._equation_invariant_falsifier(item)
+            consolidations.append(item)
+
+        status_priority = {
+            'robust_law': 4,
+            'robust_family_parameter_unresolved': 3,
+            'candidate_family': 2,
+            'local_candidate': 1,
+        }
+        consolidations.sort(
+            key=lambda item: (
+                status_priority.get(item['status'], 0),
+                item['support_count'],
+                item['mean_score'],
+                -item['leak_count'],
+                item['key'],
+            ),
+            reverse=True,
+        )
+        return consolidations[:limit]
+
+    def _equation_law_family(self, record: dict[str, Any]) -> str:
+        expression = str(record.get('expression') or '')
+        role = str(record.get('role') or '')
+        window_kind = self._equation_window_kind(expression)
+        if 'separation^' in expression:
+            if window_kind == 'tapered':
+                return 'localized_tapered_power'
+            return 'inverse_separation_power'
+        if window_kind == 'windowed':
+            return 'localized_window'
+        if 'vx * dt' in expression or 'vy * dt' in expression:
+            return 'linear_transition'
+        if role:
+            return role
+        return 'equation'
+
+    def _equation_invariant_dominant_parameters(
+        self,
+        parameter_records: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        dominant = {}
+        for name in (
+            'center_x',
+            'center_y',
+            'cutoff_radius',
+            'distance_exponent',
+        ):
+            value = self._dominant_numeric_parameter_from_dicts(
+                parameter_records,
+                name,
+            )
+            if value is not None:
+                dominant[name] = value
+        return _rounded_dict(dominant)
+
+    def _equation_vector_basis(self, expression: str) -> str:
+        for basis in (
+            'unit_anchor_vector',
+            'unit_generated_center_vector',
+            'unit_local_inferred_vector',
+        ):
+            if basis in expression:
+                return basis
+        if 'perpendicular' in expression:
+            return 'perpendicular_unit_center_vector'
+        if 'unit(center - position)' in expression:
+            return 'unit_center_position_vector'
+        if 'unit(' in expression:
+            return 'unit_vector'
+        return 'scalar_or_unknown'
+
+    def _equation_window_kind(self, expression: str) -> str:
+        if 'taper' in expression or 'max(0' in expression:
+            return 'tapered'
+        if 'inside(' in expression or 'separation <=' in expression:
+            return 'windowed'
+        return 'global'
+
+    def _equation_distance_exponent(self, record: dict[str, Any]) -> float | None:
+        parameters = dict(record.get('parameters') or {})
+        value = parameters.get('distance_exponent')
+        if isinstance(value, (int, float)):
+            return round(float(value), 3)
+        expression = str(record.get('expression') or '')
+        if 'separation^' not in expression:
+            return None
+        token = expression.split('separation^', 1)[1].strip().split()[0]
+        token = token.split('*')[0].split('/')[0].rstrip('),.;')
+        cleaned = ''.join(
+            char for char in token
+            if char.isdigit() or char in {'-', '.', '_'}
+        ).replace('_', '.')
+        try:
+            return round(float(cleaned), 3)
+        except ValueError:
+            return None
+
+    def _equation_invariant_status(
+        self,
+        support_count: int,
+        parameter_candidate_count: int,
+    ) -> str:
+        if support_count >= 3 and parameter_candidate_count > 1:
+            return 'robust_family_parameter_unresolved'
+        if support_count >= 3:
+            return 'robust_law'
+        if support_count >= 2:
+            return 'candidate_family'
+        return 'local_candidate'
+
+    def _equation_invariant_claim(self, item: dict[str, Any]) -> str:
+        parameters = item.get('parameter_candidates') or []
+        if item['status'] == 'robust_family_parameter_unresolved':
+            values = ', '.join(str(parameter['value']) for parameter in parameters)
+            return (
+                f"{item['context']} repeatedly fits {item['law_family']} "
+                f"using {item['vector_basis']}; exponent remains unresolved "
+                f"among {values}"
+            )
+        if item['status'] == 'robust_law':
+            return (
+                f"{item['context']} repeatedly fits {item['law_family']} "
+                f"using {item['vector_basis']}"
+            )
+        return (
+            f"{item['context']} has a candidate {item['law_family']} "
+            f"using {item['vector_basis']}"
+        )
+
+    def _equation_invariant_next_experiment(self, item: dict[str, Any]) -> str:
+        if len(item.get('parameter_candidates') or []) > 1:
+            return (
+                'run matched near/far residual probes to choose the distance '
+                'exponent without changing the vector basis'
+            )
+        if item.get('leak_count', 0) > 0:
+            return 'rerun the same law family on leak-clean held-out observations'
+        if item['status'] == 'robust_law':
+            return 'test the same invariant on hidden and off-center holdout worlds'
+        return 'repeat on another seed before treating this as reusable theory'
+
+    def _equation_invariant_falsifier(self, item: dict[str, Any]) -> str:
+        if item['law_family'] in {
+            'inverse_separation_power',
+            'localized_tapered_power',
+        }:
+            return (
+                'held-out residuals prefer a different vector basis, window, '
+                'or no inverse-separation improvement'
+            )
+        return 'held-out equations fail to reproduce the repeated residual pattern'
+
+    def equation_invariant_resolution_experiments(
+        self,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        recommendations = []
+        for invariant in self.operator_prior_invariant_consolidations(
+            limit=max(5, len(self.equation_case_records)),
+        ):
+            if invariant.get('status') != 'robust_family_parameter_unresolved':
+                continue
+            if invariant.get('law_family') not in {
+                'inverse_separation_power',
+                'localized_tapered_power',
+            }:
+                continue
+            candidates = list(invariant.get('parameter_candidates') or [])
+            if len(candidates) < 2:
+                continue
+            outcome_stats = self._invariant_resolution_outcome_stats(
+                str(invariant.get('key', 'unknown')),
+            )
+            if outcome_stats['selected_count'] > 0:
+                continue
+            signature = self._equation_invariant_resolution_signature(
+                invariant,
+                refinement_level=outcome_stats['still_open_count'],
+            )
+            probe_points = list(signature.get('probe_points') or [])
+            probe_action = {}
+            if probe_points:
+                first_point = probe_points[0]
+                probe_action = {
+                    'type': 'spawn',
+                    'x': first_point.get('x'),
+                    'y': first_point.get('y'),
+                    'vx': 0.0,
+                    'vy': 0.0,
+                    'source': 'planned_equation_invariant_resolution',
+                    'probe_label': first_point.get('label'),
+                    'invariant_key': invariant.get('key'),
+                }
+            priority = max(
+                0.35,
+                min(
+                    0.98,
+                    0.91
+                    + min(0.05, 0.012 * int(invariant.get('support_count', 0) or 0))
+                    + min(0.03, 0.04 * float(invariant.get('mean_score', 0.0) or 0.0))
+                    - min(0.24, 0.08 * outcome_stats['attempt_count']),
+                ),
+            )
+            theory_kind = self._equation_invariant_theory_kind(invariant)
+            labels = self._equation_invariant_variant_labels(invariant, theory_kind)
+            recommendations.append({
+                'theory_kind': theory_kind,
+                'experiment_kind': 'equation_invariant_exponent_resolution',
+                'priority': round(priority, 3),
+                'family_status': str(invariant.get('status', 'unknown')),
+                'target_context': 'invariant_source_context',
+                'source_context': invariant.get('context'),
+                'avoid_contexts': [],
+                'reason': (
+                    'resolve robust equation invariant exponent: '
+                    f"{invariant.get('robust_claim')}"
+                ),
+                'expected_result': (
+                    'near, mid, and far residual magnitudes should select one '
+                    'distance exponent while keeping the same vector basis'
+                ),
+                'falsifies_if': invariant.get('falsifies_if'),
+                'proof_evidence': {
+                    'support_count': int(invariant.get('support_count', 0) or 0),
+                    'context_count': 1,
+                    'proof_rate': 0.0,
+                    'mean_score': float(invariant.get('mean_score', 0.0) or 0.0),
+                    'leak_count': int(invariant.get('leak_count', 0) or 0),
+                    'parameter_candidate_count': len(candidates),
+                    'attempt_count': outcome_stats['attempt_count'],
+                    'still_open_count': outcome_stats['still_open_count'],
+                },
+                'invariant_key': invariant.get('key'),
+                'equation_invariant': invariant,
+                'disagreement_signature': signature,
+                'primary_theory_label': labels[0] if labels else None,
+                'rival_theory_kinds': [],
+                'rival_theory_labels': labels[1:],
+                'probe_action': _rounded_dict(probe_action),
+                'suggested_campaign': {
+                    'command_family': 'equation_campaign',
+                    'world_selection': 'invariant_source_context',
+                    'enable_equation_probes': True,
+                },
+            })
+        recommendations.sort(
+            key=lambda item: (
+                item['priority'],
+                item['proof_evidence']['support_count'],
+                item.get('invariant_key', ''),
+            ),
+            reverse=True,
+        )
+        return recommendations[:limit]
+
+    def _invariant_resolution_outcome_stats(self, invariant_key: str) -> dict[str, int]:
+        outcomes = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'equation_invariant_exponent_resolution'
+            and outcome.get('invariant_key') == invariant_key
+        ]
+        return {
+            'attempt_count': len(outcomes),
+            'still_open_count': sum(
+                1 for outcome in outcomes
+                if outcome.get('outcome') == 'invariant_resolution_still_unresolved'
+            ),
+            'selected_count': sum(
+                1 for outcome in outcomes
+                if outcome.get('outcome') in {
+                    'invariant_exponent_selected',
+                    'invariant_rival_exponent_selected',
+                }
+            ),
+        }
+
+    def _equation_invariant_resolution_signature(
+        self,
+        invariant: dict[str, Any],
+        refinement_level: int = 0,
+    ) -> dict[str, Any]:
+        parameters = dict(invariant.get('dominant_parameters') or {})
+        center_x = _coerce_float(parameters.get('center_x'), 10.0)
+        center_y = _coerce_float(parameters.get('center_y'), 10.0)
+        near_distance, mid_distance, far_distance = (
+            self._equation_invariant_probe_distances(invariant)
+        )
+        probe_points = [
+            self._invariant_radial_probe_point(
+                'near_exponent_ratio',
+                center_x,
+                center_y,
+                near_distance,
+            ),
+            self._invariant_radial_probe_point(
+                'mid_log_slope',
+                center_x,
+                center_y,
+                mid_distance,
+            ),
+            self._invariant_radial_probe_point(
+                'far_exponent_ratio',
+                center_x,
+                center_y,
+                far_distance,
+            ),
+        ]
+        if refinement_level > 0:
+            refined = self._refine_probe_points(
+                'distance_exponent_race',
+                probe_points,
+                refinement_level,
+            )
+            if refined:
+                probe_points = refined
+        exponents = [
+            float(candidate['value'])
+            for candidate in list(invariant.get('parameter_candidates') or [])
+            if isinstance(candidate.get('value'), (int, float))
+        ]
+        ratio_denominator = max(far_distance, 1e-6)
+        expected_ratios = {
+            str(exponent): round((near_distance / ratio_denominator) ** exponent, 6)
+            for exponent in exponents
+        }
+        return {
+            'mode': 'distance_exponent_race',
+            'resolution_source': 'robust_equation_invariant',
+            'invariant_key': invariant.get('key'),
+            'question': (
+                'Which candidate distance exponent preserves the near/mid/far '
+                'residual magnitude ratios for this repeated invariant?'
+            ),
+            'candidate_exponents': exponents,
+            'expected_far_over_near_ratio_by_exponent': expected_ratios,
+            'probe_points': probe_points,
+            'rival_predictions': [
+                self._equation_invariant_prediction_signature(
+                    invariant,
+                    exponent,
+                    expected_ratios.get(str(exponent), 0.0),
+                )
+                for exponent in exponents[:4]
+            ],
+            'refinement_level': int(refinement_level),
+            'refinement_strategy': (
+                self._refinement_strategy('distance_exponent_race')
+                if refinement_level > 0
+                else 'near/mid/far samples magnify exponent-ratio differences'
+            ),
+        }
+
+    def _equation_invariant_probe_distances(
+        self,
+        invariant: dict[str, Any],
+    ) -> tuple[float, float, float]:
+        parameters = dict(invariant.get('dominant_parameters') or {})
+        radius = parameters.get('cutoff_radius')
+        if isinstance(radius, (int, float)) and radius > 1.5:
+            near = max(0.75, min(float(radius) * 0.22, 2.0))
+            mid = max(near * 1.8, min(float(radius) * 0.55, 4.5))
+            far = max(mid * 1.3, min(float(radius) * 0.9, 8.0))
+            return (round(near, 6), round(mid, 6), round(far, 6))
+        return (1.25, 3.5, 7.5)
+
+    def _invariant_radial_probe_point(
+        self,
+        label: str,
+        center_x: float,
+        center_y: float,
+        distance: float,
+        world_width: float = 20.0,
+        world_height: float = 20.0,
+    ) -> dict[str, Any]:
+        x = min(max(center_x + distance, 1.0), world_width - 1.0)
+        y = min(max(center_y, 1.0), world_height - 1.0)
+        return {
+            'label': label,
+            'x': round(x, 6),
+            'y': round(y, 6),
+            'distance_from_center': round(abs(x - center_x), 6),
+        }
+
+    def _equation_invariant_prediction_signature(
+        self,
+        invariant: dict[str, Any],
+        exponent: float,
+        expected_ratio: float,
+    ) -> dict[str, Any]:
+        theory_kind = self._equation_invariant_theory_kind(invariant)
+        return {
+            'theory_key': (
+                f"{invariant.get('key', 'equation_invariant')}:"
+                f"separation^-{exponent}"
+            ),
+            'theory_kind': theory_kind,
+            'score': invariant.get('mean_score', 0.0),
+            'distance_exponent': exponent,
+            'prediction': (
+                f"near/far residual ratio should follow separation^-{exponent} "
+                f"(expected far-over-near {expected_ratio})"
+            ),
+            'falsified_if': (
+                f"observed log-slope rejects exponent {exponent} while another "
+                'candidate preserves the vector-basis residuals'
+            ),
+            'mode': 'distance_exponent_race',
+        }
+
+    def _equation_invariant_theory_kind(self, invariant: dict[str, Any]) -> str:
+        vector_basis = str(invariant.get('vector_basis') or '')
+        law_family = str(invariant.get('law_family') or '')
+        relation = (
+            'perpendicular'
+            if 'perpendicular' in vector_basis
+            else 'direction'
+        )
+        if law_family == 'localized_tapered_power':
+            return f'tapered_distance_{relation}_residual'
+        return f'distance_scaled_{relation}_residual'
+
+    def _equation_invariant_variant_labels(
+        self,
+        invariant: dict[str, Any],
+        theory_kind: str,
+    ) -> list[str]:
+        family_kind = self._family_key(theory_kind)
+        labels = []
+        for candidate in list(invariant.get('parameter_candidates') or []):
+            exponent = candidate.get('value')
+            if isinstance(exponent, (int, float)):
+                labels.append(f'{family_kind}/separation^-{exponent}')
+        return labels
 
     def proof_certificates(self, limit: int = 5) -> list[dict]:
         status_priority = {
@@ -4154,6 +4860,9 @@ class CumulativeTheoryMemory:
         mode = str(signature.get('mode') or '')
         if experiment_kind == 'model_disagreement_probe' and mode:
             return (experiment_kind, mode)
+        invariant_key = str(recommendation.get('invariant_key') or '')
+        if invariant_key:
+            return (experiment_kind, 'equation_invariant', invariant_key)
         return (
             experiment_kind,
             str(recommendation.get('theory_kind', 'unknown')),
@@ -4166,6 +4875,9 @@ class CumulativeTheoryMemory:
             for family in self.families.values()
         ]
         recommendations.extend(self.disagreement_experiments(limit=limit * 2))
+        recommendations.extend(
+            self.equation_invariant_resolution_experiments(limit=limit * 2)
+        )
         recommendations.extend(self.operator_prior_claim_experiments(limit=limit * 2))
         recommendations.extend(self.operator_prior_repair_experiments(limit=limit * 2))
         recommendations.extend(self.operator_prior_validation_experiments(limit=limit * 2))
@@ -4208,6 +4920,20 @@ class CumulativeTheoryMemory:
                 'source_status': recommendation['family_status'],
             }
             if recommendation.get('experiment_kind') == 'model_disagreement_probe':
+                plan['disagreement_signature'] = recommendation.get(
+                    'disagreement_signature',
+                    {},
+                )
+                plan['primary_theory_label'] = recommendation.get('primary_theory_label')
+                plan['rival_theory_kinds'] = recommendation.get('rival_theory_kinds', [])
+                plan['rival_theory_labels'] = recommendation.get('rival_theory_labels', [])
+                plan['probe_action'] = recommendation.get('probe_action', {})
+            if recommendation.get('experiment_kind') == 'equation_invariant_exponent_resolution':
+                plan['invariant_key'] = recommendation.get('invariant_key')
+                plan['equation_invariant'] = recommendation.get(
+                    'equation_invariant',
+                    {},
+                )
                 plan['disagreement_signature'] = recommendation.get(
                     'disagreement_signature',
                     {},
@@ -4396,6 +5122,7 @@ class CumulativeTheoryMemory:
             'planned_outcomes': list(self.planned_outcomes),
             'disagreement_records': list(self.disagreement_records),
             'operator_prior_outcomes': list(self.operator_prior_outcomes),
+            'equation_case_records': list(self.equation_case_records),
             'domain_world_records': list(self.domain_world_records),
             'autonomous_scientist_records': list(self.autonomous_scientist_records),
             'arithmetic_rediscovery_records': list(
@@ -4431,6 +5158,13 @@ class CumulativeTheoryMemory:
             'latest_autonomous_scientist_report': self.latest_autonomous_scientist_report(),
             'representation_agenda': self.representation_agenda(),
             'generated_operator_priors': self.generated_operator_priors(),
+            'operator_prior_budget_report': self.operator_prior_budget_report(),
+            'operator_prior_invariant_consolidations': (
+                self.operator_prior_invariant_consolidations()
+            ),
+            'equation_invariant_resolution_experiments': (
+                self.equation_invariant_resolution_experiments()
+            ),
             'operator_prior_feedback': self.operator_prior_feedback(),
             'operator_prior_domains': self.operator_prior_domains(),
             'operator_prior_anomalies': self.operator_prior_anomalies(),
@@ -4464,6 +5198,7 @@ class CumulativeTheoryMemory:
         memory.planned_outcomes = list(data.get('planned_outcomes', []))
         memory.disagreement_records = list(data.get('disagreement_records', []))
         memory.operator_prior_outcomes = list(data.get('operator_prior_outcomes', []))
+        memory.equation_case_records = list(data.get('equation_case_records', []))
         memory.domain_world_records = list(data.get('domain_world_records', []))
         memory.autonomous_scientist_records = list(
             data.get('autonomous_scientist_records', [])
@@ -4698,6 +5433,15 @@ class CumulativeTheoryMemory:
             if source_context:
                 return str(source_context)
             return candidates[0] if candidates else 'standard'
+        if target == 'invariant_source_context':
+            source_context = recommendation.get('source_context')
+            if source_context:
+                return str(source_context)
+            invariant = dict(recommendation.get('equation_invariant') or {})
+            context = invariant.get('context')
+            if context:
+                return str(context)
+            return candidates[0] if candidates else 'standard'
         if target == 'operator_prior_unseen_context':
             for world_type in candidates:
                 if world_type not in avoid:
@@ -4786,6 +5530,23 @@ class CumulativeTheoryMemory:
         if rival_found:
             return 'rival_weak'
         return 'evidence_absent'
+
+    def _equation_invariant_resolution_outcome_label(
+        self,
+        target_found: bool,
+        target_proof_passed: bool,
+        rival_found: bool,
+        rival_proof_passed: bool,
+    ) -> str:
+        if target_found and target_proof_passed and rival_found and rival_proof_passed:
+            return 'invariant_resolution_still_unresolved'
+        if target_found and target_proof_passed:
+            return 'invariant_exponent_selected'
+        if rival_found and rival_proof_passed:
+            return 'invariant_rival_exponent_selected'
+        if target_found or rival_found:
+            return 'invariant_resolution_weak'
+        return 'invariant_resolution_absent'
 
     def _matches_plan_target(self, plan: dict, theory: dict) -> bool:
         family = self._family_key(str(theory.get('theory_kind', '')))
@@ -5148,6 +5909,33 @@ class CumulativeTheoryMemory:
                     f"    {proposal['proposal_kind']}:{proposal['name']} "
                     f"for {proposal['theory_kind']} priority={proposal['priority']:.2f}"
                 )
+        invariants = self.operator_prior_invariant_consolidations(limit=limit)
+        if invariants:
+            lines.append("  Robust equation invariants:")
+            for invariant in invariants:
+                lines.append(
+                    f"    {invariant['law_family']}:{invariant['context']} "
+                    f"status={invariant['status']}, "
+                    f"support={invariant['support_count']}, "
+                    f"score={invariant['mean_score']:.2f}"
+                )
+                lines.append(f"      next: {invariant['next_experiment']}")
+        invariant_resolution = self.equation_invariant_resolution_experiments(
+            limit=limit,
+        )
+        if invariant_resolution:
+            lines.append("  Equation invariant resolution:")
+            for experiment in invariant_resolution:
+                signature = dict(experiment.get('disagreement_signature') or {})
+                exponents = ','.join(
+                    str(value)
+                    for value in signature.get('candidate_exponents', [])[:4]
+                )
+                lines.append(
+                    f"    {experiment['theory_kind']}: priority="
+                    f"{experiment['priority']:.2f}, exponents={exponents}"
+                )
+                lines.append(f"      next: {experiment['reason']}")
         feedback = self.operator_prior_feedback(limit=limit)
         if feedback:
             lines.append("  Operator prior feedback:")

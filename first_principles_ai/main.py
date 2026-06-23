@@ -1032,6 +1032,12 @@ def run_equation_campaign(
                     result['seed'],
                     result,
                 )
+                theory_memory.record_equation_case_result(
+                    result['context'],
+                    result['seed'],
+                    result,
+                    phase='equation_campaign',
+                )
                 _print_equation_campaign_row(result)
 
     for index in range(hidden_worlds):
@@ -1060,6 +1066,12 @@ def run_equation_campaign(
             result['context'],
             result['seed'],
             result,
+        )
+        theory_memory.record_equation_case_result(
+            result['context'],
+            result['seed'],
+            result,
+            phase='equation_campaign',
         )
         _print_equation_campaign_row(result)
 
@@ -1174,6 +1186,12 @@ def _run_equation_followup_cases(
             report=result.get('discovery_loop', {}),
             operator_prior_result=result,
         )
+        theory_memory.record_equation_case_result(
+            result['context'],
+            result['seed'],
+            result,
+            phase='equation_followup',
+        )
         result['planned_experiment_outcome'] = outcome
         followups.append(result)
         if progress_fn:
@@ -1223,19 +1241,27 @@ def _print_equation_followup_progress(event: str, payload: dict):
 def _planned_probe_actions(plan: dict, max_actions: int = 4) -> list[dict]:
     signature = dict(plan.get('disagreement_signature') or {})
     actions = []
+    source = (
+        'planned_equation_invariant_resolution'
+        if plan.get('experiment_kind') == 'equation_invariant_exponent_resolution'
+        else 'planned_model_disagreement_probe'
+    )
     for point in list(signature.get('probe_points') or [])[:max_actions]:
         if not {'x', 'y'} <= set(point):
             continue
-        actions.append({
+        action = {
             'type': 'spawn',
             'x': float(point['x']),
             'y': float(point['y']),
             'vx': 0.0,
             'vy': 0.0,
-            'source': 'planned_model_disagreement_probe',
+            'source': source,
             'probe_label': point.get('label'),
             'disagreement_mode': signature.get('mode'),
-        })
+        }
+        if plan.get('invariant_key'):
+            action['invariant_key'] = plan.get('invariant_key')
+        actions.append(action)
     if actions:
         return actions
     action = dict(plan.get('probe_action') or {})
@@ -1336,6 +1362,12 @@ def run_math_foundation_prep(
                     result['seed'],
                     result,
                 )
+                theory_memory.record_equation_case_result(
+                    result['context'],
+                    result['seed'],
+                    result,
+                    phase='math_foundation_prep',
+                )
                 _print_math_foundation_prep_row(result)
 
     for index in range(hidden_worlds):
@@ -1363,6 +1395,12 @@ def run_math_foundation_prep(
             result['context'],
             result['seed'],
             result,
+        )
+        theory_memory.record_equation_case_result(
+            result['context'],
+            result['seed'],
+            result,
+            phase='math_foundation_prep',
         )
         _print_math_foundation_prep_row(result)
 
@@ -2493,6 +2531,12 @@ def run_math_final_discovery(
                     result['seed'],
                     result,
                 )
+                theory_memory.record_equation_case_result(
+                    result['context'],
+                    result['seed'],
+                    result,
+                    phase='math_final_discovery',
+                )
                 _print_math_final_discovery_row(result)
 
     for index in range(hidden_worlds):
@@ -2525,6 +2569,12 @@ def run_math_final_discovery(
             result['context'],
             result['seed'],
             result,
+        )
+        theory_memory.record_equation_case_result(
+            result['context'],
+            result['seed'],
+            result,
+            phase='math_final_discovery',
         )
         _print_math_final_discovery_row(result)
 
@@ -3110,6 +3160,10 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     domain_transfer_experiments = theory_memory.domain_transfer_experiments(limit=3)
     representation_agenda = theory_memory.representation_agenda(limit=3)
     generated_operator_priors = theory_memory.generated_operator_priors(limit=3)
+    operator_prior_invariants = theory_memory.operator_prior_invariant_consolidations(limit=3)
+    invariant_resolution_experiments = (
+        theory_memory.equation_invariant_resolution_experiments(limit=3)
+    )
     operator_prior_feedback = theory_memory.operator_prior_feedback(limit=3)
     operator_prior_domains = theory_memory.operator_prior_domains(limit=3)
     operator_prior_anomalies = theory_memory.operator_prior_anomalies(limit=3)
@@ -3151,6 +3205,8 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         domain_transfer_experiments,
         representation_agenda,
         generated_operator_priors,
+        operator_prior_invariants,
+        invariant_resolution_experiments,
         operator_prior_feedback,
         operator_prior_domains,
         operator_prior_anomalies,
@@ -3360,6 +3416,29 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
                 f"usefulness={operator.get('usefulness', 0.0):.2f}"
             )
             print(f"    parameters: {parameters}")
+    if operator_prior_invariants:
+        print("Theory robust equation invariants:")
+        for item in operator_prior_invariants:
+            print(
+                f"  {item['law_family']}: {item['context']} "
+                f"status={item['status']} support={item['support_count']} "
+                f"score={item['mean_score']:.2f}"
+            )
+            print(f"    claim: {item['robust_claim']}")
+            print(f"    next: {item['next_experiment']}")
+    if invariant_resolution_experiments:
+        print("Theory equation invariant resolution probes:")
+        for item in invariant_resolution_experiments:
+            signature = item.get('disagreement_signature', {})
+            exponents = ','.join(
+                str(value)
+                for value in signature.get('candidate_exponents', [])[:4]
+            )
+            print(
+                f"  {item['theory_kind']}: priority={item['priority']:.2f} "
+                f"context={item.get('source_context')} exponents={exponents}"
+            )
+            print(f"    next: {item['expected_result']}")
     if operator_prior_feedback:
         print("Theory operator prior feedback:")
         for item in operator_prior_feedback:
