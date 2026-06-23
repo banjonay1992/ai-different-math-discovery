@@ -111,6 +111,9 @@ python3 main.py --math-foundation-prep --seeds 1 --benchmark-steps 220 --world-t
 # Inspect the saved discovery notebook without running simulations or the final
 python3 main.py --discovery-readiness --theory-memory-file tmp/theory-memory.json
 
+# Preview generated math-domain worlds without running the final
+python3 main.py --domain-curriculum-preview --theory-memory-file tmp/theory-memory.json
+
 # Run the watched final math/equation discovery performance campaign
 python3 main.py --math-final-discovery --benchmark-steps 600 --object-counts 5 --equation-hidden-worlds 3 --theory-memory-file tmp/theory-memory.json
 

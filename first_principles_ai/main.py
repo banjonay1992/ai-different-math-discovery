@@ -1420,6 +1420,33 @@ def run_discovery_readiness_audit(
     return report
 
 
+def run_domain_curriculum_preview(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    limit: int = 12,
+) -> list[dict]:
+    """Print generated domain-world blueprints without running simulations."""
+    theory_memory = theory_memory or CumulativeTheoryMemory()
+    blueprints = theory_memory.domain_world_blueprints(limit=limit)
+
+    print("=" * 70)
+    print("DOMAIN CURRICULUM WORLD PREVIEW")
+    print("=" * 70)
+    print("Final discovery run: not run")
+    print()
+    print(f"{'Domain':28s} {'Samples':>7s} {'Fals':>5s} {'Leaks':>5s} Transfer")
+    print("-" * 92)
+    for item in blueprints:
+        transfers = ','.join(item.get('transfer_targets', [])[:3]) or 'none'
+        print(
+            f"{item['domain_key']:28s} "
+            f"{item['sample_count']:7d} "
+            f"{item['falsifier_count']:5d} "
+            f"{item['leaky_observation_count']:5d} "
+            f"{transfers}"
+        )
+    return blueprints
+
+
 def run_math_final_discovery(
     seeds: int = 1,
     steps: int = 600,
@@ -1993,6 +2020,7 @@ def _dossier_has_entries(dossier: dict) -> bool:
             'proof_certificates',
             'disagreement_probes',
             'self_authored_equations',
+            'domain_world_blueprints',
             'domain_transfer_probes',
         )
     )
@@ -2040,6 +2068,14 @@ def _print_discovery_evidence_dossier(
             f"status={equation['status']} confidence={equation['confidence']:.2f}"
         )
         print(f"    expression: {equation['expression']}")
+    for blueprint in dossier.get('domain_world_blueprints', [])[:2]:
+        print(
+            f"  domain world {blueprint['domain_key']}: "
+            f"samples={blueprint['sample_count']} "
+            f"falsifiers={blueprint['falsifier_count']} "
+            f"leaks={int(blueprint['leaks_benchmark_truth'])}"
+        )
+        print(f"    next: {blueprint['next_pressure']}")
     for transfer in dossier.get('domain_transfer_probes', [])[:2]:
         print(
             f"  domain transfer {transfer['source_domain']}->{transfer['target_domain']}: "
@@ -2062,6 +2098,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     self_authored_equations = theory_memory.self_authored_equations(limit=3)
     math_domain_curriculum = theory_memory.math_domain_curriculum()
     domain_curriculum_agenda = theory_memory.domain_curriculum_agenda(limit=3)
+    domain_world_blueprints = theory_memory.domain_world_blueprints(limit=3)
     domain_transfer_experiments = theory_memory.domain_transfer_experiments(limit=3)
     representation_agenda = theory_memory.representation_agenda(limit=3)
     generated_operator_priors = theory_memory.generated_operator_priors(limit=3)
@@ -2100,6 +2137,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         self_authored_equations,
         math_domain_curriculum,
         domain_curriculum_agenda,
+        domain_world_blueprints,
         domain_transfer_experiments,
         representation_agenda,
         generated_operator_priors,
@@ -2256,6 +2294,16 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
                 f"priority={item['priority']:.2f} support={item['support_count']}"
             )
             print(f"    next: {item['next_pressure']}")
+    if domain_world_blueprints:
+        print("Theory domain world blueprints:")
+        for item in domain_world_blueprints:
+            print(
+                f"  {item['domain_key']}: samples={item['sample_count']} "
+                f"falsifiers={item['falsifier_count']} "
+                f"leaks={item['leaky_observation_count']}"
+            )
+            targets = ','.join(item.get('transfer_targets', [])[:3]) or 'none'
+            print(f"    transfer: {targets}")
     if domain_transfer_experiments:
         print("Theory domain transfer probes:")
         for item in domain_transfer_experiments:
@@ -2587,6 +2635,8 @@ if __name__ == '__main__':
                         help='Run readiness checks before the final watched math discovery run')
     parser.add_argument('--discovery-readiness', action='store_true',
                         help='Print a non-final readiness audit from cumulative theory memory')
+    parser.add_argument('--domain-curriculum-preview', action='store_true',
+                        help='Preview generated math-domain worlds without running final discovery')
     parser.add_argument('--math-final-discovery', action='store_true',
                         help='Run the final math discovery campaign when the user is ready to watch')
     parser.add_argument('--equation-hidden-worlds', type=int, default=0,
@@ -2670,6 +2720,10 @@ if __name__ == '__main__':
 
     if args.discovery_readiness:
         run_discovery_readiness_audit(theory_memory=theory_memory)
+        raise SystemExit(0)
+
+    if args.domain_curriculum_preview:
+        run_domain_curriculum_preview(theory_memory=theory_memory)
         raise SystemExit(0)
 
     if args.equation_campaign:

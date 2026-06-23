@@ -2225,6 +2225,9 @@ class CumulativeTheoryMemory:
         algebraic_foundation = self.algebraic_foundation_baseline()
         algebraic_agenda = self.algebraic_expression_agenda(limit=5)
         domain_curriculum = self.math_domain_curriculum()
+        domain_world_blueprints = self.domain_world_blueprints(
+            limit=len(MATH_DOMAIN_CURRICULUM),
+        )
         domain_transfer_experiments = self.domain_transfer_experiments(limit=5)
         repair_confirmed_count = sum(
             1 for outcome in self.planned_outcomes
@@ -2394,6 +2397,33 @@ class CumulativeTheoryMemory:
                 'seed the missing math domains and bridges in the domain curriculum',
             ),
             (
+                'executable_domain_worlds',
+                'each math domain has generated observations plus benchmark-only falsifiers',
+                (
+                    len(domain_world_blueprints) >= domain_curriculum['domain_count']
+                    and all(
+                        int(item.get('sample_count', 0) or 0) > 0
+                        and item.get('expected_discoveries')
+                        and int(item.get('falsifier_count', 0) or 0) > 0
+                        and not item.get('leaks_benchmark_truth')
+                        for item in domain_world_blueprints
+                    )
+                ),
+                1.0,
+                {
+                    'world_blueprint_count': len(domain_world_blueprints),
+                    'domains_with_falsifiers': sum(
+                        1 for item in domain_world_blueprints
+                        if int(item.get('falsifier_count', 0) or 0) > 0
+                    ),
+                    'leaky_observation_count': sum(
+                        1 for item in domain_world_blueprints
+                        if item.get('leaks_benchmark_truth')
+                    ),
+                },
+                'generate label-clean observation worlds with falsifiers for every math domain',
+            ),
+            (
                 'domain_transfer_loop',
                 'the curriculum emits cross-domain transfer probes with falsifiers',
                 bool(domain_transfer_experiments) and all(
@@ -2472,6 +2502,7 @@ class CumulativeTheoryMemory:
                 domain_transfer_experiments=(
                     domain_transfer_experiments if self.records else []
                 ),
+                domain_world_blueprints=domain_world_blueprints,
             ),
             'first_principles_basis': first_principles,
             'adaptive_dimension_agenda': adaptive_dimensions,
@@ -2480,6 +2511,7 @@ class CumulativeTheoryMemory:
             'self_authored_equations': self_authored_equations,
             'math_domain_curriculum': domain_curriculum,
             'domain_curriculum_agenda': self.domain_curriculum_agenda(limit=12),
+            'domain_world_blueprints': domain_world_blueprints,
             'domain_transfer_experiments': domain_transfer_experiments,
         }
 
@@ -2495,6 +2527,7 @@ class CumulativeTheoryMemory:
         disagreement_experiments: list[dict[str, Any]] | None = None,
         self_authored_equations: list[dict[str, Any]] | None = None,
         domain_transfer_experiments: list[dict[str, Any]] | None = None,
+        domain_world_blueprints: list[dict[str, Any]] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Compact evidence trail for the non-final readiness score."""
         chains = (
@@ -2551,6 +2584,11 @@ class CumulativeTheoryMemory:
                 self.domain_transfer_experiments(limit=limit)
                 if self.records else []
             )
+        )
+        domain_worlds = (
+            domain_world_blueprints
+            if domain_world_blueprints is not None
+            else self.domain_world_blueprints(limit=limit)
         )
 
         chain_summaries = []
@@ -2669,6 +2707,17 @@ class CumulativeTheoryMemory:
                 'falsifies_if': experiment.get('falsifies_if'),
             })
 
+        domain_world_summaries = []
+        for blueprint in domain_worlds[:limit]:
+            domain_world_summaries.append({
+                'domain_key': blueprint.get('domain_key'),
+                'sample_count': int(blueprint.get('sample_count', 0) or 0),
+                'falsifier_count': int(blueprint.get('falsifier_count', 0) or 0),
+                'transfer_targets': list(blueprint.get('transfer_targets') or [])[:limit],
+                'leaks_benchmark_truth': bool(blueprint.get('leaks_benchmark_truth')),
+                'next_pressure': blueprint.get('next_pressure'),
+            })
+
         return {
             'chains': chain_summaries,
             'claims': claim_summaries,
@@ -2678,6 +2727,7 @@ class CumulativeTheoryMemory:
             'disagreement_probes': disagreement_summaries,
             'self_authored_equations': authored_summaries,
             'domain_transfer_probes': domain_transfer_summaries,
+            'domain_world_blueprints': domain_world_summaries,
         }
 
     def _discovery_readiness_actions(
@@ -2700,7 +2750,11 @@ class CumulativeTheoryMemory:
             return []
         actions = []
         missing = set(missing_gates)
-        if missing & {'broad_domain_curriculum', 'domain_transfer_loop'}:
+        if missing & {
+            'broad_domain_curriculum',
+            'executable_domain_worlds',
+            'domain_transfer_loop',
+        }:
             actions.append({
                 'action_kind': 'non_final_domain_curriculum_review',
                 'reason': 'inspect domain coverage and bridge probes before expanding simulator worlds',
@@ -2999,6 +3053,77 @@ class CumulativeTheoryMemory:
             reverse=True,
         )
         return experiments[:limit]
+
+    def domain_world_blueprints(
+        self,
+        limit: int = 12,
+        seed: int = 0,
+        variant: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Summarize executable observation worlds for the broad math curriculum."""
+        try:
+            from world.math_domain_worlds import (
+                generate_math_domain_world_manifest,
+                math_domain_manifest_from_observation,
+            )
+        except ImportError:  # pragma: no cover - package import fallback
+            from first_principles_ai.world.math_domain_worlds import (
+                generate_math_domain_world_manifest,
+                math_domain_manifest_from_observation,
+            )
+
+        agenda = {
+            item['domain_key']: item
+            for item in self.domain_curriculum_agenda(limit=len(MATH_DOMAIN_CURRICULUM))
+        }
+        blueprints = []
+        for domain in MATH_DOMAIN_CURRICULUM:
+            key = str(domain['key'])
+            item = agenda.get(key, {})
+            manifest = generate_math_domain_world_manifest(
+                key,
+                seed=seed + int(domain.get('curriculum_order', 0) or 0),
+                variant=variant,
+            )
+            observations = manifest.observations()
+            leak_count = sum(
+                1 for observation in observations
+                if math_domain_manifest_from_observation(observation)
+            )
+            blueprints.append({
+                'domain_key': key,
+                'name': domain.get('name'),
+                'curriculum_order': domain.get('curriculum_order'),
+                'status': item.get('status', 'seeded_pending_world'),
+                'priority': item.get('priority', 0.0),
+                'seed': manifest.seed,
+                'variant': manifest.variant,
+                'sample_count': len(observations),
+                'observation_kinds': sorted({
+                    str(observation.get('observation_kind', 'unknown'))
+                    for observation in observations
+                }),
+                'observation_schema': manifest.observation_schema(),
+                'expected_discoveries': list(manifest.expected_discoveries),
+                'falsifier_count': len(manifest.falsifiers),
+                'falsifiers': list(manifest.falsifiers),
+                'transfer_targets': list(manifest.transfer_targets),
+                'leaks_benchmark_truth': leak_count > 0,
+                'leaky_observation_count': leak_count,
+                'next_pressure': item.get(
+                    'next_pressure',
+                    self._domain_next_pressure(domain, 'seeded_pending_world'),
+                ),
+            })
+        blueprints.sort(
+            key=lambda item: (
+                float(item.get('priority', 0.0) or 0.0),
+                -int(item.get('curriculum_order', 0) or 0),
+                str(item.get('domain_key', '')),
+            ),
+            reverse=True,
+        )
+        return blueprints[:limit]
 
     def _domain_curriculum_evidence(self, domain: dict[str, Any]) -> dict[str, Any]:
         keywords = self._domain_keywords(domain)
@@ -3458,6 +3583,7 @@ class CumulativeTheoryMemory:
             'algebraic_expression_agenda': self.algebraic_expression_agenda(),
             'math_domain_curriculum': self.math_domain_curriculum(),
             'domain_curriculum_agenda': self.domain_curriculum_agenda(),
+            'domain_world_blueprints': self.domain_world_blueprints(),
             'domain_transfer_experiments': self.domain_transfer_experiments(),
             'representation_agenda': self.representation_agenda(),
             'generated_operator_priors': self.generated_operator_priors(),
@@ -4032,6 +4158,17 @@ class CumulativeTheoryMemory:
                     f"priority={item['priority']:.2f}, support={item['support_count']}"
                 )
                 lines.append(f"      next: {item['next_pressure']}")
+        domain_worlds = self.domain_world_blueprints(limit=limit)
+        if domain_worlds:
+            lines.append("  Domain world blueprints:")
+            for item in domain_worlds:
+                lines.append(
+                    f"    {item['domain_key']}: samples={item['sample_count']}, "
+                    f"falsifiers={item['falsifier_count']}, "
+                    f"leaks={item['leaky_observation_count']}"
+                )
+                targets = ','.join(item.get('transfer_targets', [])[:3]) or 'none'
+                lines.append(f"      transfer: {targets}")
         domain_transfers = self.domain_transfer_experiments(limit=limit)
         if domain_transfers:
             lines.append("  Domain transfer probes:")
