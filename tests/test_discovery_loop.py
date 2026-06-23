@@ -17,6 +17,8 @@ from main import (
     _planned_probe_actions,
     _print_cumulative_theory_review,
     _run_equation_followup_cases,
+    parse_live_progress_line,
+    run_live_progress_viewer,
     run_memory_efficiency_review,
 )
 
@@ -2432,6 +2434,159 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertIn('MEMORY EFFICIENCY REVIEW', output.getvalue())
         self.assertEqual(1, report['compressed_shard_count'])
         self.assertEqual(3, len(memory.records))
+
+    def test_summary_only_compaction_makes_efficient_runs_long_ready(self):
+        memory = CumulativeTheoryMemory()
+        for index in range(4):
+            memory.records.append({
+                'context': 'localized_gravity',
+                'seed': index,
+                'phase': 'probe_ready',
+                'theory_count': 2,
+                'operator_count': 1,
+                'proof_check_count': 1,
+                'disagreement_mode': 'taper_shape_vs_hard_boundary',
+            })
+            memory.operator_prior_outcomes.append({
+                'context': 'localized_gravity',
+                'seed': index,
+                'operator_key': 'operator:localized:taper',
+                'operator_kind': 'localized_tapered_power',
+                'outcome': 'weak',
+                'best_score': 0.31,
+                'matching_equation_count': 1,
+                'parameters': {
+                    'center_x': 8.0,
+                    'center_y': 12.0,
+                    'cutoff_radius': 6.0,
+                    'distance_exponent': 1.0,
+                    'relation': 'direction',
+                },
+            })
+
+        before = memory.resource_efficiency_report(
+            recommended_record_window=8,
+            recommended_operator_window=8,
+        )
+        self.assertFalse(before['long_run_ready'])
+
+        after = memory.compact_experience(
+            keep_recent_records=8,
+            keep_recent_operator_outcomes=8,
+            force_summary=True,
+        )
+
+        self.assertEqual(4, len(memory.records))
+        self.assertEqual(4, len(memory.operator_prior_outcomes))
+        self.assertEqual(1, len(memory.compressed_experience_shards))
+        self.assertTrue(memory.compressed_experience_shards[0]['summary_only'])
+        self.assertTrue(after['long_run_ready'])
+
+    def test_unmatched_operator_prior_creates_repair_claim_and_plan(self):
+        memory = CumulativeTheoryMemory()
+        operator_key = 'operator:memory_prior:localized_tapered_power:6:1:direction:demo'
+        for context in ('standard', 'zero_gravity'):
+            memory.operator_prior_outcomes.append({
+                'context': context,
+                'seed': 0,
+                'operator_key': operator_key,
+                'operator_kind': 'localized_tapered_power',
+                'outcome': 'unmatched',
+                'best_score': 0.0,
+                'matching_equation_count': 0,
+                'parameters': {
+                    'center_x': 9.0,
+                    'center_y': 11.0,
+                    'cutoff_radius': 6.0,
+                    'distance_exponent': 1.0,
+                    'relation': 'direction',
+                },
+            })
+
+        claim = memory.operator_prior_discovery_claims(limit=1)[0]
+        self.assertEqual(operator_key, claim['operator_key'])
+        self.assertEqual('needs_repair', claim['status'])
+        self.assertIn('repair target', claim['accepted_because'][0])
+
+        repair = memory.operator_prior_claim_experiments(limit=1)[0]
+        self.assertEqual('operator_prior_domain_repair', repair['experiment_kind'])
+        self.assertEqual('operator_prior_claim_needs_repair', repair['family_status'])
+        self.assertEqual('operator_prior_failure_context', repair['target_context'])
+        self.assertEqual(operator_key, repair['operator_prior_key'])
+
+        readiness = memory.discovery_readiness_report()
+        self.assertTrue(readiness['gates']['operator_discovery_claims']['passed'])
+        self.assertTrue(readiness['gates']['claim_driven_planning']['passed'])
+        self.assertTrue(readiness['gates']['anomaly_repair_loop']['passed'])
+
+    def test_next_experiments_diversify_repeated_disagreement_modes(self):
+        memory = CumulativeTheoryMemory()
+        recommendations = []
+        for index in range(4):
+            recommendations.append({
+                'experiment_kind': 'model_disagreement_probe',
+                'theory_kind': 'distance_scaled_direction_residual',
+                'priority': 0.96 - index * 0.01,
+                'target_context': 'recorded_disagreement_context',
+                'family_status': 'disagreement',
+                'reason': 'resolve exponent race',
+                'expected_result': 'one exponent should win',
+                'falsifies_if': 'near/far ratio rejects the exponent',
+                'proof_evidence': {'support_count': 3 - index},
+                'disagreement_signature': {'mode': 'distance_exponent_race'},
+            })
+        recommendations.append({
+            'experiment_kind': 'model_disagreement_probe',
+            'theory_kind': 'tapered_distance_direction_residual',
+            'priority': 0.91,
+            'target_context': 'recorded_disagreement_context',
+            'family_status': 'disagreement',
+            'reason': 'resolve taper shape',
+            'expected_result': 'boundary samples decide',
+            'falsifies_if': 'boundary samples reject taper',
+            'proof_evidence': {'support_count': 2},
+            'disagreement_signature': {'mode': 'taper_shape_vs_hard_boundary'},
+        })
+
+        selected = memory._diversified_experiments(recommendations, limit=5)
+        first_three_modes = [
+            item['disagreement_signature']['mode']
+            for item in selected[:3]
+        ]
+
+        self.assertEqual(
+            2,
+            first_three_modes.count('distance_exponent_race'),
+        )
+        self.assertIn('taper_shape_vs_hard_boundary', first_three_modes)
+
+    def test_live_progress_viewer_parses_hf_and_scientist_events(self):
+        line = 'HF_PROGRESS {"event":"finish","readiness_score":0.879}'
+        parsed = parse_live_progress_line(line)
+        self.assertEqual('hf_progress', parsed['stream'])
+        self.assertEqual('finish', parsed['event'])
+
+        with tempfile.NamedTemporaryFile('w+', encoding='utf-8') as handle:
+            handle.write(
+                'SCIENTIST_EVENT {"event":"invariant_consolidated",'
+                '"relation_kind":"distance","status":"robust_law"}\n'
+            )
+            handle.write(
+                'HF_PROGRESS {"event":"adaptive_comparison_finish",'
+                '"recommendation":"keep_targeted_adaptive"}\n'
+            )
+            handle.write('HF_ARTIFACT {"run_id":"demo","report":"https://example.test/r"}\n')
+            handle.flush()
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                summary = run_live_progress_viewer(progress_file=handle.name)
+
+        self.assertEqual(1, summary['counts']['scientist_event'])
+        self.assertEqual(1, summary['counts']['hf_progress'])
+        self.assertEqual(1, summary['counts']['hf_artifact'])
+        self.assertIn('LIVE DISCOVERY PROGRESS VIEW', output.getvalue())
+        self.assertEqual('demo', summary['artifacts']['run_id'])
 
 
 if __name__ == '__main__':

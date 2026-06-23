@@ -2233,6 +2233,160 @@ def _emit_hf_progress(event: str, payload: dict):
     )
 
 
+def parse_live_progress_line(line: str) -> dict | None:
+    """Parse one live progress line from a local or HF run log."""
+    text = str(line).strip()
+    prefixes = {
+        'HF_PROGRESS ': 'hf_progress',
+        'SCIENTIST_EVENT ': 'scientist_event',
+        'HF_ARTIFACT ': 'hf_artifact',
+    }
+    for prefix, stream in prefixes.items():
+        if not text.startswith(prefix):
+            continue
+        try:
+            payload = json.loads(text[len(prefix):])
+        except json.JSONDecodeError:
+            return {
+                'stream': stream,
+                'event': 'parse_error',
+                'raw': text,
+            }
+        if not isinstance(payload, dict):
+            payload = {'payload': payload}
+        payload = dict(payload)
+        payload.setdefault('event', stream)
+        payload['stream'] = stream
+        return payload
+    return None
+
+
+def run_live_progress_viewer(
+    progress_file: str | None = None,
+    *,
+    follow: bool = False,
+    max_events: int = 0,
+    poll_seconds: float = 1.0,
+) -> dict:
+    """Print a compact live view of HF/scientist progress events."""
+    counts = {
+        'hf_progress': 0,
+        'scientist_event': 0,
+        'hf_artifact': 0,
+        'parse_error': 0,
+    }
+    last_hf = {}
+    last_scientist = {}
+    artifacts = {}
+    printed = 0
+
+    print("=" * 70, flush=True)
+    print("LIVE DISCOVERY PROGRESS VIEW", flush=True)
+    print("=" * 70, flush=True)
+
+    def consume_line(line: str) -> bool:
+        nonlocal printed, last_hf, last_scientist, artifacts
+        event = parse_live_progress_line(line)
+        if event is None:
+            return True
+        if event.get('event') == 'parse_error':
+            counts['parse_error'] += 1
+            print("PARSE_ERROR unable to decode progress JSON", flush=True)
+        elif event['stream'] == 'hf_progress':
+            counts['hf_progress'] += 1
+            last_hf = event
+            print(_format_hf_progress_event(event), flush=True)
+        elif event['stream'] == 'scientist_event':
+            counts['scientist_event'] += 1
+            last_scientist = event
+            print(_format_scientist_event(event), flush=True)
+        elif event['stream'] == 'hf_artifact':
+            counts['hf_artifact'] += 1
+            artifacts = event
+            print(_format_hf_artifact_event(event), flush=True)
+        printed += 1
+        return max_events <= 0 or printed < max_events
+
+    if progress_file:
+        path = Path(progress_file)
+        with path.open('r', encoding='utf-8') as handle:
+            for line in handle:
+                if not consume_line(line):
+                    break
+            if follow and (max_events <= 0 or printed < max_events):
+                while True:
+                    line = handle.readline()
+                    if line:
+                        if not consume_line(line):
+                            break
+                    else:
+                        time.sleep(max(0.1, poll_seconds))
+    else:
+        for line in sys.stdin:
+            if not consume_line(line):
+                break
+
+    summary = {
+        'counts': counts,
+        'last_hf_event': last_hf,
+        'last_scientist_event': last_scientist,
+        'artifacts': artifacts,
+    }
+    print("-" * 70, flush=True)
+    print(
+        "Summary: "
+        f"hf={counts['hf_progress']} "
+        f"scientist={counts['scientist_event']} "
+        f"artifacts={counts['hf_artifact']} "
+        f"parse_errors={counts['parse_error']}",
+        flush=True,
+    )
+    return summary
+
+
+def _format_hf_progress_event(event: dict) -> str:
+    name = str(event.get('event', 'unknown'))
+    pieces = [f"HF {name}"]
+    for key in (
+        'variant',
+        'readiness_score',
+        'readiness_status',
+        'passed_gate_count',
+        'gate_count',
+        'compute_units',
+        'compute_targeted',
+        'long_run_ready',
+        'recommendation',
+    ):
+        if key in event:
+            pieces.append(f"{key}={event[key]}")
+    return ' | '.join(pieces)
+
+
+def _format_scientist_event(event: dict) -> str:
+    name = str(event.get('event', 'unknown'))
+    pieces = [f"SCIENTIST {name}"]
+    for key in (
+        'domain_key',
+        'relation_kind',
+        'status',
+        'priority',
+        'expression',
+        'next_experiment',
+    ):
+        if key in event:
+            pieces.append(f"{key}={event[key]}")
+    return ' | '.join(pieces)
+
+
+def _format_hf_artifact_event(event: dict) -> str:
+    pieces = ["HF_ARTIFACT"]
+    for key in ('run_id', 'summary', 'report', 'memory', 'log'):
+        if key in event:
+            pieces.append(f"{key}={event[key]}")
+    return ' | '.join(pieces)
+
+
 def _hf_compact_theory_memory(
     theory_memory: CumulativeTheoryMemory,
     *,
@@ -2253,6 +2407,7 @@ def _hf_compact_theory_memory(
             keep_recent_records=keep_recent_records,
             keep_recent_operator_outcomes=keep_recent_operator_outcomes,
             source=f'hf_batch:{phase}',
+            force_summary=True,
         )
     else:
         after = before
@@ -3529,6 +3684,14 @@ if __name__ == '__main__':
                         help='Run a Hugging Face friendly non-final discovery campaign')
     parser.add_argument('--hf-adaptive-comparison', action='store_true',
                         help='Compare fixed and adaptive HF non-final campaigns from one memory snapshot')
+    parser.add_argument('--live-progress-view', action='store_true',
+                        help='View HF_PROGRESS, SCIENTIST_EVENT, and HF_ARTIFACT lines from a log')
+    parser.add_argument('--live-progress-file', type=str, default=None,
+                        help='Progress log file to read or follow')
+    parser.add_argument('--live-progress-follow', action='store_true',
+                        help='Keep following the progress file after existing lines are read')
+    parser.add_argument('--live-progress-max-events', type=int, default=0,
+                        help='Stop after this many parsed progress events (0 means no limit)')
     parser.add_argument('--math-final-discovery', action='store_true',
                         help='Run the final math discovery campaign when the user is ready to watch')
     parser.add_argument('--equation-hidden-worlds', type=int, default=0,
@@ -3607,6 +3770,14 @@ if __name__ == '__main__':
         if args.theory_memory_file
         else None
     )
+
+    if args.live_progress_view:
+        run_live_progress_viewer(
+            progress_file=args.live_progress_file,
+            follow=args.live_progress_follow,
+            max_events=args.live_progress_max_events,
+        )
+        raise SystemExit(0)
 
     if args.benchmark_worlds:
         run_benchmark(

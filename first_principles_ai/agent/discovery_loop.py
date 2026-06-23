@@ -2431,6 +2431,10 @@ class CumulativeTheoryMemory:
             1 for outcome in self.planned_outcomes
             if outcome.get('outcome') == 'operator_prior_validation_confirmed'
         )
+        claim_repair_count = sum(
+            1 for experiment in claim_experiments
+            if experiment.get('experiment_kind') == 'operator_prior_domain_repair'
+        )
 
         gate_specs = [
             (
@@ -2487,11 +2491,17 @@ class CumulativeTheoryMemory:
             (
                 'anomaly_repair_loop',
                 'failed priors create anomalies or repair experiments',
-                bool(prior_anomalies) or bool(prior_repairs) or repair_confirmed_count > 0,
+                (
+                    bool(prior_anomalies)
+                    or bool(prior_repairs)
+                    or claim_repair_count > 0
+                    or repair_confirmed_count > 0
+                ),
                 1.0,
                 {
                     'anomaly_count': len(prior_anomalies),
                     'repair_experiment_count': len(prior_repairs),
+                    'claim_repair_experiment_count': claim_repair_count,
                     'repair_confirmed_count': repair_confirmed_count,
                 },
                 'confirm a prior in one context and test it in a context where it breaks',
@@ -4100,7 +4110,55 @@ class CumulativeTheoryMemory:
             ),
             reverse=True,
         )
-        return recommendations[:limit]
+        return self._diversified_experiments(recommendations, limit=limit)
+
+    def _diversified_experiments(
+        self,
+        recommendations: list[dict[str, Any]],
+        *,
+        limit: int,
+        max_per_bucket: int = 2,
+    ) -> list[dict[str, Any]]:
+        """Keep one unresolved question from monopolizing the next-run queue."""
+        if limit <= 0:
+            return []
+        selected = []
+        selected_ids = set()
+        bucket_counts: dict[tuple[str, ...], int] = {}
+        for recommendation in recommendations:
+            bucket = self._experiment_diversity_bucket(recommendation)
+            if bucket_counts.get(bucket, 0) >= max_per_bucket:
+                continue
+            selected.append(recommendation)
+            selected_ids.add(id(recommendation))
+            bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
+            if len(selected) >= limit:
+                return selected
+        for recommendation in recommendations:
+            if id(recommendation) in selected_ids:
+                continue
+            selected.append(recommendation)
+            if len(selected) >= limit:
+                break
+        return selected
+
+    def _experiment_diversity_bucket(
+        self,
+        recommendation: dict[str, Any],
+    ) -> tuple[str, ...]:
+        experiment_kind = str(recommendation.get('experiment_kind', 'unknown'))
+        operator_key = str(recommendation.get('operator_prior_key') or '')
+        if operator_key:
+            return (experiment_kind, 'operator_prior', operator_key)
+        signature = dict(recommendation.get('disagreement_signature') or {})
+        mode = str(signature.get('mode') or '')
+        if experiment_kind == 'model_disagreement_probe' and mode:
+            return (experiment_kind, mode)
+        return (
+            experiment_kind,
+            str(recommendation.get('theory_kind', 'unknown')),
+            str(recommendation.get('target_context', 'unknown')),
+        )
 
     def next_experiments(self, limit: int = 5) -> list[dict]:
         recommendations = [
@@ -4250,6 +4308,7 @@ class CumulativeTheoryMemory:
         keep_recent_operator_outcomes: int = 192,
         max_operator_anchors: int = 2,
         source: str = 'manual_compaction',
+        force_summary: bool = False,
     ) -> dict[str, Any]:
         """
         Move older evidence into quantized shards while retaining recent detail.
@@ -4288,13 +4347,27 @@ class CumulativeTheoryMemory:
             if keep_recent_operator_outcomes
             else []
         )
-        if older_records or older_outcomes:
+        summary_records = list(older_records)
+        summary_outcomes = list(older_outcomes)
+        summary_only = False
+        if force_summary and not summary_records and not summary_outcomes:
+            summary_records = list(self.records)
+            summary_outcomes = list(compactable_outcomes)
+            summary_only = True
+        if summary_records or summary_outcomes:
             shard = build_compressed_experience_shard(
-                records=list(older_records),
-                operator_prior_outcomes=list(older_outcomes),
+                records=list(summary_records),
+                operator_prior_outcomes=list(summary_outcomes),
                 source=source,
             )
-            self.compressed_experience_shards.append(shard)
+            if summary_only:
+                shard['summary_only'] = True
+            seen = {
+                existing.get('shard_id')
+                for existing in self.compressed_experience_shards
+            }
+            if shard.get('shard_id') not in seen:
+                self.compressed_experience_shards.append(shard)
         anchor_indexes = operator_outcome_anchor_indexes(
             list(older_outcomes),
             max_per_operator=max_operator_anchors,
@@ -5360,14 +5433,14 @@ class CumulativeTheoryMemory:
                 item for item in outcomes
                 if item.get('outcome') == 'weak'
             ]
-            if not confirmed and not weak:
-                continue
             unmatched = [
                 item for item in outcomes
                 if item.get('outcome') == 'unmatched'
             ]
+            if not confirmed and not weak and not unmatched:
+                continue
             best = max(
-                confirmed or weak,
+                confirmed or weak or unmatched,
                 key=lambda item: (
                     float(item.get('best_score', 0.0) or 0.0),
                     int(item.get('matching_equation_count', 0) or 0),
@@ -5412,6 +5485,8 @@ class CumulativeTheoryMemory:
                 status = 'validated'
             elif repair_confirmed:
                 status = 'repaired'
+            elif unmatched and not confirmed and not weak:
+                status = 'needs_repair'
             elif excluded:
                 status = 'domain_limited'
             elif confirmed:
@@ -5427,6 +5502,10 @@ class CumulativeTheoryMemory:
             if weak and not confirmed:
                 accepted_because.append(
                     f"weakly signaled in {len(set(item.get('context') for item in weak))} context(s)"
+                )
+            if unmatched and not confirmed and not weak:
+                accepted_because.append(
+                    'failed cleanly enough to define a repair target instead of disappearing'
                 )
             if parameters:
                 accepted_because.append('has an executable generated-operator expression')
@@ -5461,12 +5540,14 @@ class CumulativeTheoryMemory:
                 next_obligation = 'invent or test a domain predicate that separates success from failure contexts'
             elif status == 'supported':
                 next_obligation = 'try the invented operator in a new context or seed'
+            elif status == 'needs_repair':
+                next_obligation = 'run a targeted repair probe in the strongest unmatched context'
             else:
                 next_obligation = 'collect a stronger residual case before promoting the operator'
 
             contexts = included or weak_contexts or sorted({
                 str(item.get('context', 'unknown'))
-                for item in confirmed + weak
+                for item in confirmed + weak + unmatched
             })
             claims.append({
                 'operator_key': operator_key,
@@ -5494,7 +5575,7 @@ class CumulativeTheoryMemory:
                     'repair_confirmed_count': repair_confirmed,
                     'validation_confirmed_count': validation_confirmed,
                     'failed_followup_count': failed_followups,
-                    'context_count': len(set(item.get('context') for item in confirmed + weak)),
+                    'context_count': len(set(item.get('context') for item in confirmed + weak + unmatched)),
                 },
                 'recent_outcomes': related_outcomes[-3:],
             })
@@ -5504,6 +5585,7 @@ class CumulativeTheoryMemory:
             'supported': 3,
             'domain_limited': 2,
             'weak_candidate': 1,
+            'needs_repair': 1,
         }
         claims.sort(
             key=lambda item: (
@@ -5528,7 +5610,71 @@ class CumulativeTheoryMemory:
             operator_key = claim.get('operator_key')
             operator_kind = claim.get('operator_kind')
             parameters = dict(claim.get('parameters') or {})
-            if status in {'repaired', 'supported'}:
+            if status == 'needs_repair':
+                excluded = list(domain.get('excluded_contexts') or [])
+                weak_contexts = list(domain.get('weak_contexts') or [])
+                failure_context = excluded[0] if excluded else (
+                    weak_contexts[0] if weak_contexts else None
+                )
+                if any(
+                    outcome.get('operator_prior_key') == operator_key
+                    and outcome.get('experiment_kind') == 'operator_prior_domain_repair'
+                    and outcome.get('context') == failure_context
+                    for outcome in self.planned_outcomes
+                ):
+                    continue
+                pseudo_anomaly = {
+                    'operator_key': operator_key,
+                    'operator_kind': operator_kind,
+                    'failure_context': failure_context or 'standard',
+                    'parameters': parameters,
+                }
+                priority = min(
+                    0.9,
+                    0.66
+                    + 0.03 * int(evidence.get('unmatched_count', 0) or 0)
+                    + 0.02 * int(evidence.get('weak_count', 0) or 0),
+                )
+                recommendations.append({
+                    'theory_kind': f'operator_prior:{operator_kind}',
+                    'operator_prior_key': operator_key,
+                    'operator_prior_kind': operator_kind,
+                    'operator_prior_parameters': _rounded_dict(parameters),
+                    'operator_prior_domain': domain,
+                    'operator_prior_claim': claim,
+                    'experiment_kind': 'operator_prior_domain_repair',
+                    'priority': round(max(0.2, priority), 3),
+                    'family_status': 'operator_prior_claim_needs_repair',
+                    'target_context': 'operator_prior_failure_context',
+                    'failure_context': failure_context,
+                    'avoid_contexts': [],
+                    'reason': (
+                        'repair provisional invented-operator claim: '
+                        f"{claim['next_obligation']}"
+                    ),
+                    'expected_result': (
+                        'the failed context should reveal a boundary condition, '
+                        'missing factor, or narrower operator expression'
+                    ),
+                    'falsifies_if': (
+                        'the prior remains unmatched and no generated repair '
+                        'improves residual error in the target context'
+                    ),
+                    'proof_evidence': {
+                        'support_count': 0,
+                        'weak_count': int(evidence.get('weak_count', 0) or 0),
+                        'unmatched_count': int(evidence.get('unmatched_count', 0) or 0),
+                        'best_score': evidence.get('best_score', 0.0),
+                        'claim_status': status,
+                    },
+                    'probe_action': self._operator_prior_repair_action(pseudo_anomaly),
+                    'suggested_campaign': {
+                        'command_family': 'equation_campaign',
+                        'world_selection': 'operator_prior_failure_context',
+                        'enable_equation_probes': True,
+                    },
+                })
+            elif status in {'repaired', 'supported'}:
                 if int(evidence.get('validation_confirmed_count', 0) or 0) > 0:
                     continue
                 priority = 0.79 if status == 'supported' else 0.88
@@ -6173,6 +6319,7 @@ class CumulativeTheoryMemory:
             'supported': 0.66,
             'domain_limited': 0.56,
             'weak_candidate': 0.42,
+            'needs_repair': 0.34,
         }
         status = str(claim.get('status', 'supported'))
         return {
