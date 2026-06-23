@@ -21,6 +21,7 @@ from agent.domain_world_discovery import (
     discover_domain_world_manifest,
 )
 from main import (
+    run_autonomous_scientist_loop,
     run_domain_curriculum_preview,
     run_domain_world_discovery_ingest,
     run_hf_non_final_campaign,
@@ -245,14 +246,89 @@ class MathDomainWorldTests(unittest.TestCase):
         self.assertEqual('hf_non_final_campaign', result['run_kind'])
         self.assertEqual(len(MATH_DOMAIN_CURRICULUM), result['domain_world_record_count'])
         self.assertEqual(0, result['prep_result_count'])
+        self.assertIn('autonomous_scientist_report', result)
+        self.assertGreater(
+            result['autonomous_scientist_report']['coverage']['robust_invariant_count'],
+            0,
+        )
         self.assertIn('HF_PROGRESS', text)
         self.assertIn('domain_world_discoveries_recorded', text)
+        self.assertIn('SCIENTIST_EVENT', text)
         self.assertEqual('hf_non_final_campaign', artifact['run_kind'])
         self.assertIn('theory_memory', artifact)
+        self.assertIn('autonomous_scientist_report', artifact)
         self.assertEqual(
             len(MATH_DOMAIN_CURRICULUM),
             len(artifact['theory_memory']['domain_world_records']),
         )
+        self.assertTrue(artifact['theory_memory']['autonomous_scientist_records'])
+
+    def test_autonomous_scientist_loop_adds_all_five_discovery_upgrades(self):
+        memory = CumulativeTheoryMemory()
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            report = run_autonomous_scientist_loop(
+                memory,
+                seed_start=0,
+                seed_count=2,
+                variants=[0, 1],
+                live=True,
+                event_limit=80,
+            )
+
+        text = output.getvalue()
+        coverage = report['coverage']
+        readiness = memory.discovery_readiness_report()
+        packed = memory.to_dict()
+        restored = CumulativeTheoryMemory.from_dict(packed)
+
+        self.assertFalse(report['runs_final'])
+        self.assertEqual('autonomous_scientist_loop', report['run_kind'])
+        self.assertGreater(coverage['robust_invariant_count'], 0)
+        self.assertGreater(coverage['residual_experiment_count'], 0)
+        self.assertGreaterEqual(coverage['stress_world_count'], 4)
+        self.assertGreater(coverage['authored_equation_extension_count'], 0)
+        self.assertGreater(coverage['live_event_count'], 0)
+        self.assertIn('SCIENTIST_EVENT', text)
+        self.assertTrue(any(
+            event['event'] == 'invariant_consolidated'
+            for event in report['live_events']
+        ))
+        self.assertTrue(any(
+            item['status'] == 'robust_law'
+            for item in report['invariant_consolidations']
+        ))
+        self.assertTrue(all(
+            item['designed_next_experiment']
+            and item['falsifies_if']
+            for item in report['residual_experiments'][:5]
+        ))
+        self.assertTrue(any(
+            item['key'] == 'higher_dimensional_projection'
+            for item in report['harder_stress_worlds']
+        ))
+        self.assertTrue(all(
+            item['expression']
+            and item['proof_obligations']
+            and item['falsification_tests']
+            for item in report['authored_equation_extensions'][:5]
+        ))
+        for gate in (
+            'scientist_invariant_consolidation',
+            'scientist_residual_experiment_loop',
+            'scientist_harder_hidden_worlds',
+            'scientist_richer_equation_writing',
+            'scientist_live_trace',
+        ):
+            self.assertTrue(readiness['gates'][gate]['passed'], gate)
+        self.assertTrue(packed['autonomous_scientist_records'])
+        self.assertTrue(packed['latest_autonomous_scientist_report'])
+        self.assertEqual(
+            len(memory.autonomous_scientist_records),
+            len(restored.autonomous_scientist_records),
+        )
+        self.assertIn('Autonomous scientist loop:', memory.summary())
 
     def test_domain_curriculum_preview_is_non_final_and_lists_worlds(self):
         output = io.StringIO()

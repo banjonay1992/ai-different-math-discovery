@@ -1490,6 +1490,79 @@ def run_domain_world_discovery_ingest(
     return records
 
 
+def run_autonomous_scientist_loop(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    seed_start: int = 0,
+    seed_count: int = 3,
+    variants: list[int] | None = None,
+    live: bool = False,
+    event_limit: int = 80,
+) -> dict:
+    """Run and persist the non-final scientist loop over domain worlds."""
+    theory_memory = theory_memory or CumulativeTheoryMemory()
+    variants = variants or [0]
+    report = theory_memory.record_autonomous_scientist_loop(
+        seed_start=seed_start,
+        seed_count=seed_count,
+        variants=variants,
+        event_limit=event_limit,
+    )
+    coverage = dict(report.get('coverage') or {})
+
+    print("=" * 70)
+    print("AUTONOMOUS SCIENTIST LOOP")
+    print("=" * 70)
+    print("Final discovery run: not run")
+    print(
+        f"Seeds: {seed_start}..{seed_start + max(1, seed_count) - 1} | "
+        f"Variants: {', '.join(str(item) for item in variants)}"
+    )
+    print(
+        f"Invariants: {coverage.get('invariant_count', 0)} "
+        f"(robust={coverage.get('robust_invariant_count', 0)}) | "
+        f"Residual probes: {coverage.get('residual_experiment_count', 0)} | "
+        f"Stress worlds: {coverage.get('stress_world_count', 0)} | "
+        f"Equation rewrites: {coverage.get('authored_equation_extension_count', 0)}"
+    )
+    print()
+    print(f"{'Invariant':32s} {'Status':>18s} {'Support':>7s} Expression")
+    print("-" * 104)
+    for item in list(report.get('invariant_consolidations') or [])[:8]:
+        expression = str(item.get('law_expression', ''))
+        if len(expression) > 42:
+            expression = expression[:39] + '...'
+        print(
+            f"{str(item.get('relation_kind')):32s} "
+            f"{str(item.get('status')):>18s} "
+            f"{int(item.get('support_count', 0) or 0):7d} "
+            f"{expression}"
+        )
+    print()
+    print("Top residual-driven experiments:")
+    for item in list(report.get('residual_experiments') or [])[:5]:
+        print(
+            f"  {item.get('domain_key')}:{item.get('relation_kind')} "
+            f"priority={float(item.get('priority', 0.0) or 0.0):.2f}"
+        )
+        print(f"    next: {item.get('designed_next_experiment')}")
+    print()
+    print("Harder non-final stress worlds:")
+    for item in list(report.get('harder_stress_worlds') or [])[:5]:
+        print(
+            f"  {item.get('key')}: world={item.get('world_type')} "
+            f"priority={float(item.get('priority', 0.0) or 0.0):.2f}"
+        )
+        print(f"    pressure: {item.get('pressure')}")
+    if live:
+        for event in list(report.get('live_events') or []):
+            print(
+                "SCIENTIST_EVENT "
+                + json.dumps(event, sort_keys=True),
+                flush=True,
+            )
+    return report
+
+
 def run_hf_non_final_campaign(
     theory_memory: CumulativeTheoryMemory | None = None,
     seeds: int = 1,
@@ -1501,6 +1574,11 @@ def run_hf_non_final_campaign(
     output_file: str | None = None,
     domain_seed: int = 0,
     domain_variant: int = 0,
+    domain_seed_count: int = 1,
+    domain_variants: list[int] | None = None,
+    scientist_seed_count: int = 3,
+    scientist_variants: list[int] | None = None,
+    live_scientist: bool = True,
     include_prep: bool = True,
 ) -> dict:
     """
@@ -1512,6 +1590,8 @@ def run_hf_non_final_campaign(
     theory_memory = theory_memory or CumulativeTheoryMemory()
     object_counts = object_counts or [3]
     world_types = world_types or ['standard']
+    domain_variants = domain_variants or [domain_variant]
+    scientist_variants = scientist_variants or domain_variants
 
     _emit_hf_progress('start', {
         'runs_final': False,
@@ -1520,11 +1600,18 @@ def run_hf_non_final_campaign(
         'steps': steps,
         'object_counts': object_counts,
         'hidden_worlds': hidden_worlds,
+        'domain_seed_count': domain_seed_count,
+        'domain_variants': domain_variants,
+        'scientist_seed_count': scientist_seed_count,
+        'scientist_variants': scientist_variants,
     })
-    domain_records = theory_memory.record_domain_world_discoveries(
-        seed=domain_seed,
-        variant=domain_variant,
-    )
+    domain_records = []
+    for variant in domain_variants:
+        for seed_offset in range(max(1, int(domain_seed_count or 1))):
+            domain_records.extend(theory_memory.record_domain_world_discoveries(
+                seed=domain_seed + seed_offset,
+                variant=variant,
+            ))
     _emit_hf_progress('domain_world_discoveries_recorded', {
         'record_count': len(domain_records),
         'covered_domains': [
@@ -1533,6 +1620,31 @@ def run_hf_non_final_campaign(
             if float(record.get('benchmark_coverage', 0.0) or 0.0) >= 1.0
         ],
     })
+    scientist_report = theory_memory.record_autonomous_scientist_loop(
+        seed_start=domain_seed,
+        seed_count=scientist_seed_count,
+        variants=scientist_variants,
+        event_limit=80,
+    )
+    scientist_coverage = dict(scientist_report.get('coverage') or {})
+    _emit_hf_progress('autonomous_scientist_finish', {
+        'status': scientist_report.get('status'),
+        'invariant_count': scientist_coverage.get('invariant_count'),
+        'robust_invariant_count': scientist_coverage.get('robust_invariant_count'),
+        'residual_experiment_count': scientist_coverage.get('residual_experiment_count'),
+        'stress_world_count': scientist_coverage.get('stress_world_count'),
+        'authored_equation_extension_count': scientist_coverage.get(
+            'authored_equation_extension_count'
+        ),
+        'live_event_count': scientist_coverage.get('live_event_count'),
+    })
+    if live_scientist:
+        for event in list(scientist_report.get('live_events') or []):
+            print(
+                "SCIENTIST_EVENT "
+                + json.dumps(event, sort_keys=True),
+                flush=True,
+            )
 
     prep_results = []
     if include_prep:
@@ -1566,6 +1678,7 @@ def run_hf_non_final_campaign(
         'prep_result_count': len(prep_results),
         'readiness': readiness,
         'prep_results': prep_results,
+        'autonomous_scientist_report': scientist_report,
         'theory_memory': theory_memory.to_dict(),
     }
     if output_file:
@@ -2833,6 +2946,8 @@ if __name__ == '__main__':
                         help='Preview generated math-domain worlds without running final discovery')
     parser.add_argument('--domain-world-discovery-ingest', action='store_true',
                         help='Record generated domain-world discoveries into theory memory')
+    parser.add_argument('--autonomous-scientist-loop', action='store_true',
+                        help='Run the non-final scientist loop over repeated domain-world discoveries')
     parser.add_argument('--hf-non-final-campaign', action='store_true',
                         help='Run a Hugging Face friendly non-final discovery campaign')
     parser.add_argument('--math-final-discovery', action='store_true',
@@ -2857,8 +2972,22 @@ if __name__ == '__main__':
                         help='First seed in the autonomous exploration pool (default: 0)')
     parser.add_argument('--domain-world-seed', type=int, default=0,
                         help='Seed offset for generated math-domain world discovery')
+    parser.add_argument('--domain-world-seed-count', type=int, default=1,
+                        help='Number of domain-world seeds to record in HF/non-final campaigns')
     parser.add_argument('--domain-world-variant', type=int, default=0,
                         help='Variant for generated math-domain world discovery')
+    parser.add_argument('--domain-world-variants', type=str, default=None,
+                        help='Comma-separated generated math-domain variants for larger campaigns')
+    parser.add_argument('--scientist-seed-start', type=int, default=0,
+                        help='First seed for the autonomous scientist loop')
+    parser.add_argument('--scientist-seed-count', type=int, default=3,
+                        help='Number of seeds for the autonomous scientist loop')
+    parser.add_argument('--scientist-variants', type=str, default='0',
+                        help='Comma-separated variants for the autonomous scientist loop')
+    parser.add_argument('--scientist-live', action='store_true',
+                        help='Print SCIENTIST_EVENT JSON lines during scientist loop commands')
+    parser.add_argument('--scientist-event-limit', type=int, default=80,
+                        help='Maximum live scientist events to retain/print')
     parser.add_argument('--seeds', type=int, default=5,
                         help='Number of seeds to run in benchmark mode (default: 5)')
     parser.add_argument('--benchmark-steps', type=int, default=800,
@@ -2875,6 +3004,8 @@ if __name__ == '__main__':
                         help='Optional JSON artifact path for HF non-final campaign output')
     parser.add_argument('--hf-skip-prep', action='store_true',
                         help='HF non-final campaign records domain worlds without running prep cases')
+    parser.add_argument('--hf-no-live-scientist', action='store_true',
+                        help='Suppress SCIENTIST_EVENT lines in HF non-final campaign logs')
     parser.add_argument('--no-save-memory', action='store_true',
                         help='Load memory without writing updates back to disk')
     parser.add_argument('--no-save-theory-memory', action='store_true',
@@ -2947,6 +3078,24 @@ if __name__ == '__main__':
             theory_memory.save(args.theory_memory_file)
         raise SystemExit(0)
 
+    if args.autonomous_scientist_loop:
+        theory_memory = theory_memory or CumulativeTheoryMemory()
+        run_autonomous_scientist_loop(
+            theory_memory=theory_memory,
+            seed_start=args.scientist_seed_start,
+            seed_count=args.scientist_seed_count,
+            variants=_parse_csv_ints(args.scientist_variants),
+            live=args.scientist_live,
+            event_limit=args.scientist_event_limit,
+        )
+        if (
+            args.theory_memory_file
+            and theory_memory is not None
+            and not args.no_save_theory_memory
+        ):
+            theory_memory.save(args.theory_memory_file)
+        raise SystemExit(0)
+
     if args.hf_non_final_campaign:
         theory_memory = theory_memory or CumulativeTheoryMemory()
         run_hf_non_final_campaign(
@@ -2960,6 +3109,15 @@ if __name__ == '__main__':
             output_file=args.hf_output_file,
             domain_seed=args.domain_world_seed,
             domain_variant=args.domain_world_variant,
+            domain_seed_count=args.domain_world_seed_count,
+            domain_variants=(
+                _parse_csv_ints(args.domain_world_variants)
+                if args.domain_world_variants
+                else [args.domain_world_variant]
+            ),
+            scientist_seed_count=args.scientist_seed_count,
+            scientist_variants=_parse_csv_ints(args.scientist_variants),
+            live_scientist=not args.hf_no_live_scientist,
             include_prep=not args.hf_skip_prep,
         )
         if (

@@ -1955,6 +1955,7 @@ class DiscoveryLoopTests(unittest.TestCase):
                 'distance_exponent': 2.1,
             },
         })
+        memory.record_autonomous_scientist_loop(seed_count=2, variants=[0, 1])
 
         readiness = memory.discovery_readiness_report()
         packed = memory.to_dict()
@@ -1979,6 +1980,19 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertTrue(
             readiness['gates']['self_authored_equation_synthesis']['passed']
         )
+        self.assertTrue(
+            readiness['gates']['scientist_invariant_consolidation']['passed']
+        )
+        self.assertTrue(
+            readiness['gates']['scientist_residual_experiment_loop']['passed']
+        )
+        self.assertTrue(
+            readiness['gates']['scientist_harder_hidden_worlds']['passed']
+        )
+        self.assertTrue(
+            readiness['gates']['scientist_richer_equation_writing']['passed']
+        )
+        self.assertTrue(readiness['gates']['scientist_live_trace']['passed'])
         self.assertGreaterEqual(
             readiness['gates']['operator_discovery_claims']['evidence']['chain_count'],
             1,
@@ -2026,11 +2040,14 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertIn('adaptive_dimension_agenda', packed)
         self.assertIn('algebraic_foundation_baseline', packed)
         self.assertIn('algebraic_expression_agenda', packed)
+        self.assertIn('autonomous_scientist_records', packed)
+        self.assertIn('autonomous_scientist_evidence', packed)
         self.assertIn('Discovery readiness:', memory.summary())
         self.assertIn('Discovery evidence dossier:', memory.summary())
         self.assertIn('Self-authored equations:', memory.summary())
         self.assertIn('Adaptive dimensions:', memory.summary())
         self.assertIn('Algebraic foundation:', memory.summary())
+        self.assertIn('Autonomous scientist loop:', memory.summary())
 
         empty_readiness = CumulativeTheoryMemory().discovery_readiness_report()
         self.assertEqual('early', empty_readiness['status'])
@@ -2044,11 +2061,17 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertEqual([], empty_readiness['evidence_dossier']['planned_tests'])
         self.assertEqual([], empty_readiness['evidence_dossier']['self_authored_equations'])
         self.assertTrue(empty_readiness['recommended_actions'])
-        self.assertEqual(
-            'non_final_equation_campaign',
-            empty_readiness['recommended_actions'][0]['action_kind'],
+        self.assertIn(
+            'non_final_autonomous_scientist_loop',
+            {
+                action['action_kind']
+                for action in empty_readiness['recommended_actions']
+            },
         )
-        self.assertFalse(empty_readiness['recommended_actions'][0]['runs_final'])
+        self.assertTrue(all(
+            not action['runs_final']
+            for action in empty_readiness['recommended_actions']
+        ))
 
     def test_equation_followup_cases_replan_after_each_outcome(self):
         loop = AutonomousDiscoveryLoop()

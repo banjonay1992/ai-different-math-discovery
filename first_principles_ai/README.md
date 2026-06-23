@@ -117,8 +117,14 @@ python3 main.py --domain-curriculum-preview --theory-memory-file tmp/theory-memo
 # Persist generated domain-world discoveries into the theory notebook
 python3 main.py --domain-world-discovery-ingest --theory-memory-file tmp/theory-memory.json
 
+# Consolidate domain discoveries into invariants, residual probes, harder worlds, and live events
+python3 main.py --autonomous-scientist-loop --scientist-seed-count 3 --scientist-variants 0,1 --scientist-live --theory-memory-file tmp/theory-memory.json
+
 # HF-friendly non-final run: emits HF_PROGRESS lines and writes a JSON artifact
 python3 main.py --hf-non-final-campaign --benchmark-steps 80 --world-types standard --object-counts 3 --equation-hidden-worlds 0 --theory-memory-file tmp/theory-memory.json --hf-output-file tmp/hf-non-final-report.json
+
+# Bigger HF non-final run with multi-seed domain discovery and live scientist trace
+python3 main.py --hf-non-final-campaign --benchmark-steps 160 --seeds 2 --world-types standard,sideways_wind,vortex,localized_gravity,time_varying,inverse_square_repulsion --object-counts 3,4 --equation-hidden-worlds 2 --domain-world-seed-count 4 --domain-world-variants 0,1 --scientist-seed-count 4 --scientist-variants 0,1 --theory-memory-file tmp/theory-memory.json --hf-output-file tmp/hf-non-final-report.json
 
 # Heavy/final campaigns should be launched on Hugging Face compute where practical
 # so local preview and tests stay lightweight.

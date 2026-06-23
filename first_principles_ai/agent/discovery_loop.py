@@ -1411,6 +1411,7 @@ class CumulativeTheoryMemory:
         self.disagreement_records: list[dict] = []
         self.operator_prior_outcomes: list[dict] = []
         self.domain_world_records: list[dict] = []
+        self.autonomous_scientist_records: list[dict] = []
 
     def record_result(self, context: str, seed: int, report) -> dict:
         report_dict = self._report_dict(report)
@@ -1711,6 +1712,64 @@ class CumulativeTheoryMemory:
         if len(self.domain_world_records) > 96:
             self.domain_world_records = self.domain_world_records[-96:]
         return records
+
+    def record_autonomous_scientist_loop(
+        self,
+        seed_start: int = 0,
+        seed_count: int = 3,
+        variants: list[int] | tuple[int, ...] = (0,),
+        event_limit: int = 80,
+    ) -> dict[str, Any]:
+        """Persist a non-final scientist pass over repeated domain worlds."""
+        try:
+            from agent.autonomous_scientist import run_domain_scientist_cycle
+        except ImportError:  # pragma: no cover - package import fallback
+            from first_principles_ai.agent.autonomous_scientist import (
+                run_domain_scientist_cycle,
+            )
+
+        report = run_domain_scientist_cycle(
+            seed_start=seed_start,
+            seed_count=seed_count,
+            variants=tuple(variants or (0,)),
+            event_limit=event_limit,
+        )
+        record = {
+            'phase': 'autonomous_scientist_loop',
+            'seed_start': int(seed_start),
+            'seed_count': int(seed_count),
+            'variants': [int(variant) for variant in (variants or (0,))],
+            'coverage': dict(report.get('coverage') or {}),
+            'status': report.get('status'),
+            'invariant_consolidations': list(
+                report.get('invariant_consolidations') or []
+            )[:24],
+            'residual_experiments': list(report.get('residual_experiments') or [])[:24],
+            'harder_stress_worlds': list(report.get('harder_stress_worlds') or [])[:12],
+            'authored_equation_extensions': list(
+                report.get('authored_equation_extensions') or []
+            )[:36],
+            'live_events': list(report.get('live_events') or [])[:event_limit],
+            'next_actions': list(report.get('next_actions') or []),
+        }
+        key = (
+            record['seed_start'],
+            record['seed_count'],
+            tuple(record['variants']),
+        )
+        existing = {
+            (
+                int(item.get('seed_start', 0) or 0),
+                int(item.get('seed_count', 0) or 0),
+                tuple(int(variant) for variant in item.get('variants', [])),
+            )
+            for item in self.autonomous_scientist_records
+        }
+        if key not in existing:
+            self.autonomous_scientist_records.append(record)
+        if len(self.autonomous_scientist_records) > 24:
+            self.autonomous_scientist_records = self.autonomous_scientist_records[-24:]
+        return report
 
     def _operator_prior_plan_evidence(
         self,
@@ -2291,6 +2350,7 @@ class CumulativeTheoryMemory:
             limit=len(MATH_DOMAIN_TRANSFER_BRIDGES),
         )
         domain_transfer_experiments = self.domain_transfer_experiments(limit=5)
+        autonomous_scientist = self.autonomous_scientist_evidence()
         repair_confirmed_count = sum(
             1 for outcome in self.planned_outcomes
             if outcome.get('outcome') == 'operator_prior_repair_confirmed'
@@ -2552,6 +2612,70 @@ class CumulativeTheoryMemory:
                 'derive transfer evidence from discovered domain-world relation bases',
             ),
             (
+                'scientist_invariant_consolidation',
+                'repeated runs are consolidated into robust invariant law candidates',
+                (
+                    autonomous_scientist['record_count'] > 0
+                    and autonomous_scientist['robust_invariant_count'] > 0
+                ),
+                1.0,
+                {
+                    'scientist_record_count': autonomous_scientist['record_count'],
+                    'invariant_count': autonomous_scientist['invariant_count'],
+                    'robust_invariant_count': autonomous_scientist[
+                        'robust_invariant_count'
+                    ],
+                },
+                'run the autonomous scientist loop across multiple domain-world seeds',
+            ),
+            (
+                'scientist_residual_experiment_loop',
+                'candidate failures or untested falsifiers design the next experiment',
+                autonomous_scientist['residual_experiment_count'] > 0,
+                1.0,
+                {
+                    'residual_experiment_count': autonomous_scientist[
+                        'residual_experiment_count'
+                    ],
+                    'next_action_count': len(autonomous_scientist['latest_next_actions']),
+                },
+                'turn domain-world candidate residuals into explicit next experiments',
+            ),
+            (
+                'scientist_harder_hidden_worlds',
+                'the loop selects harder hidden worlds for stress-testing laws',
+                autonomous_scientist['stress_world_count'] >= 4,
+                1.0,
+                {
+                    'stress_world_count': autonomous_scientist['stress_world_count'],
+                    'latest_status': autonomous_scientist['latest_status'],
+                },
+                'select localized, time-varying, mixed-law, noisy, and higher-dimensional stress worlds',
+            ),
+            (
+                'scientist_richer_equation_writing',
+                'the loop rewrites local equations into richer reusable equation grammar',
+                autonomous_scientist['authored_equation_extension_count'] > 0,
+                1.0,
+                {
+                    'authored_equation_extension_count': autonomous_scientist[
+                        'authored_equation_extension_count'
+                    ],
+                    'latest_input_candidate_count': autonomous_scientist[
+                        'latest_coverage'
+                    ].get('input_candidate_count', 0),
+                },
+                'let the scientist loop write equation extensions from consolidated invariants',
+            ),
+            (
+                'scientist_live_trace',
+                'live events expose what the scientist is seeing and doing',
+                autonomous_scientist['live_event_count'] > 0,
+                1.0,
+                {'live_event_count': autonomous_scientist['live_event_count']},
+                'emit a live scientist event stream during non-final campaigns',
+            ),
+            (
                 'autonomous_next_experiments',
                 'the memory notebook can emit concrete next experiments',
                 bool(next_experiments) and bool(planned_experiments),
@@ -2616,6 +2740,7 @@ class CumulativeTheoryMemory:
                 domain_world_blueprints=domain_world_blueprints,
                 domain_world_discoveries=domain_world_discoveries,
                 domain_world_transfer_evidence=domain_world_transfer_evidence,
+                autonomous_scientist=self.latest_autonomous_scientist_report(),
             ),
             'first_principles_basis': first_principles,
             'adaptive_dimension_agenda': adaptive_dimensions,
@@ -2628,6 +2753,7 @@ class CumulativeTheoryMemory:
             'domain_world_discoveries': domain_world_discoveries,
             'domain_world_transfer_evidence': domain_world_transfer_evidence,
             'domain_transfer_experiments': domain_transfer_experiments,
+            'autonomous_scientist_evidence': autonomous_scientist,
         }
 
     def discovery_evidence_dossier(
@@ -2645,6 +2771,7 @@ class CumulativeTheoryMemory:
         domain_world_blueprints: list[dict[str, Any]] | None = None,
         domain_world_discoveries: list[dict[str, Any]] | None = None,
         domain_world_transfer_evidence: list[dict[str, Any]] | None = None,
+        autonomous_scientist: dict[str, Any] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Compact evidence trail for the non-final readiness score."""
         chains = (
@@ -2716,6 +2843,11 @@ class CumulativeTheoryMemory:
             domain_world_transfer_evidence
             if domain_world_transfer_evidence is not None
             else self.domain_world_transfer_evidence(limit=limit)
+        )
+        scientist = (
+            autonomous_scientist
+            if autonomous_scientist is not None
+            else self.latest_autonomous_scientist_report()
         )
 
         chain_summaries = []
@@ -2874,6 +3006,27 @@ class CumulativeTheoryMemory:
                 'falsifies_if': item.get('falsifies_if'),
             })
 
+        scientist_summaries = []
+        if scientist:
+            coverage = dict(scientist.get('coverage') or {})
+            next_actions = list(scientist.get('next_actions') or [])
+            scientist_summaries.append({
+                'status': scientist.get('status'),
+                'invariant_count': int(coverage.get('invariant_count', 0) or 0),
+                'robust_invariant_count': int(
+                    coverage.get('robust_invariant_count', 0) or 0
+                ),
+                'residual_experiment_count': int(
+                    coverage.get('residual_experiment_count', 0) or 0
+                ),
+                'stress_world_count': int(coverage.get('stress_world_count', 0) or 0),
+                'authored_equation_extension_count': int(
+                    coverage.get('authored_equation_extension_count', 0) or 0
+                ),
+                'live_event_count': int(coverage.get('live_event_count', 0) or 0),
+                'top_next_action': next_actions[0] if next_actions else {},
+            })
+
         return {
             'chains': chain_summaries,
             'claims': claim_summaries,
@@ -2886,6 +3039,7 @@ class CumulativeTheoryMemory:
             'domain_world_blueprints': domain_world_summaries,
             'domain_world_discoveries': domain_discovery_summaries,
             'domain_world_transfer_evidence': domain_transfer_evidence_summaries,
+            'autonomous_scientist': scientist_summaries,
         }
 
     def _discovery_readiness_actions(
@@ -2920,6 +3074,23 @@ class CumulativeTheoryMemory:
                 'reason': 'inspect domain coverage and bridge probes before expanding simulator worlds',
                 'command': (
                     'python3 first_principles_ai/main.py --discovery-readiness '
+                    '--theory-memory-file tmp/theory-memory.json'
+                ),
+                'runs_final': False,
+            })
+        if missing & {
+            'scientist_invariant_consolidation',
+            'scientist_residual_experiment_loop',
+            'scientist_harder_hidden_worlds',
+            'scientist_richer_equation_writing',
+            'scientist_live_trace',
+        }:
+            actions.append({
+                'action_kind': 'non_final_autonomous_scientist_loop',
+                'reason': 'consolidate domain-world equations into invariants and next experiments',
+                'command': (
+                    'python3 first_principles_ai/main.py --autonomous-scientist-loop '
+                    '--scientist-seed-count 3 --scientist-variants 0,1 '
                     '--theory-memory-file tmp/theory-memory.json'
                 ),
                 'runs_final': False,
@@ -3330,6 +3501,58 @@ class CumulativeTheoryMemory:
             MATH_DOMAIN_TRANSFER_BRIDGES,
             limit=limit,
         )
+
+    def autonomous_scientist_evidence(self) -> dict[str, Any]:
+        """Aggregate persisted scientist-loop evidence for readiness gates."""
+        latest = (
+            self.autonomous_scientist_records[-1]
+            if self.autonomous_scientist_records
+            else {}
+        )
+        records = list(self.autonomous_scientist_records)
+        invariant_count = sum(
+            len(record.get('invariant_consolidations') or [])
+            for record in records
+        )
+        robust_invariant_count = sum(
+            1
+            for record in records
+            for item in record.get('invariant_consolidations') or []
+            if item.get('status') == 'robust_law'
+        )
+        residual_count = sum(
+            len(record.get('residual_experiments') or [])
+            for record in records
+        )
+        stress_world_count = sum(
+            len(record.get('harder_stress_worlds') or [])
+            for record in records
+        )
+        equation_count = sum(
+            len(record.get('authored_equation_extensions') or [])
+            for record in records
+        )
+        live_event_count = sum(
+            len(record.get('live_events') or [])
+            for record in records
+        )
+        return {
+            'record_count': len(records),
+            'latest_status': latest.get('status'),
+            'invariant_count': invariant_count,
+            'robust_invariant_count': robust_invariant_count,
+            'residual_experiment_count': residual_count,
+            'stress_world_count': stress_world_count,
+            'authored_equation_extension_count': equation_count,
+            'live_event_count': live_event_count,
+            'latest_coverage': dict(latest.get('coverage') or {}),
+            'latest_next_actions': list(latest.get('next_actions') or []),
+        }
+
+    def latest_autonomous_scientist_report(self) -> dict[str, Any]:
+        if not self.autonomous_scientist_records:
+            return {}
+        return dict(self.autonomous_scientist_records[-1])
 
     def _domain_world_discovery_report_objects(
         self,
@@ -3814,6 +4037,7 @@ class CumulativeTheoryMemory:
             'disagreement_records': list(self.disagreement_records),
             'operator_prior_outcomes': list(self.operator_prior_outcomes),
             'domain_world_records': list(self.domain_world_records),
+            'autonomous_scientist_records': list(self.autonomous_scientist_records),
             'families': {
                 key: family.to_dict()
                 for key, family in self.families.items()
@@ -3835,6 +4059,8 @@ class CumulativeTheoryMemory:
             'domain_world_discoveries': self.domain_world_discovery_reports(),
             'domain_world_transfer_evidence': self.domain_world_transfer_evidence(),
             'domain_transfer_experiments': self.domain_transfer_experiments(),
+            'autonomous_scientist_evidence': self.autonomous_scientist_evidence(),
+            'latest_autonomous_scientist_report': self.latest_autonomous_scientist_report(),
             'representation_agenda': self.representation_agenda(),
             'generated_operator_priors': self.generated_operator_priors(),
             'operator_prior_feedback': self.operator_prior_feedback(),
@@ -3871,6 +4097,9 @@ class CumulativeTheoryMemory:
         memory.disagreement_records = list(data.get('disagreement_records', []))
         memory.operator_prior_outcomes = list(data.get('operator_prior_outcomes', []))
         memory.domain_world_records = list(data.get('domain_world_records', []))
+        memory.autonomous_scientist_records = list(
+            data.get('autonomous_scientist_records', [])
+        )
         memory.families = {
             str(key): TheoryFamily.from_dict(family_data)
             for key, family_data in data.get('families', {}).items()
@@ -4443,6 +4672,22 @@ class CumulativeTheoryMemory:
                 source = ','.join(item.get('source_matches', [])[:3]) or 'none'
                 target = ','.join(item.get('target_matches', [])[:3]) or 'none'
                 lines.append(f"      basis: {source} -> {target}")
+        scientist = self.latest_autonomous_scientist_report()
+        if scientist:
+            coverage = dict(scientist.get('coverage') or {})
+            lines.append("  Autonomous scientist loop:")
+            lines.append(
+                f"    status={scientist.get('status')}, "
+                f"invariants={coverage.get('invariant_count', 0)}, "
+                f"residual_probes={coverage.get('residual_experiment_count', 0)}, "
+                f"stress_worlds={coverage.get('stress_world_count', 0)}, "
+                f"equations={coverage.get('authored_equation_extension_count', 0)}"
+            )
+            for event in list(scientist.get('live_events') or [])[:2]:
+                lines.append(
+                    f"      event: {event.get('event')} "
+                    f"{event.get('relation_kind') or event.get('key') or ''}"
+                )
         domain_transfers = self.domain_transfer_experiments(limit=limit)
         if domain_transfers:
             lines.append("  Domain transfer probes:")
