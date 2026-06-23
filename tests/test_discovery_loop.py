@@ -1044,6 +1044,28 @@ class DiscoveryLoopTests(unittest.TestCase):
                 report={},
             )['outcome'],
         )
+        failed_domain_outcome = memory.evaluate_planned_result(
+            domain_plan,
+            context='standard',
+            seed=domain_plan['seed'],
+            report={},
+            operator_prior_records=[{
+                'context': 'standard',
+                'operator_key': prior['key'],
+                'operator_kind': prior['operator_kind'],
+                'outcome': 'confirmed',
+                'best_score': 0.82,
+                'matching_equation_count': 1,
+                'parameters': prior['parameters'],
+            }],
+        )
+        failed_memory = CumulativeTheoryMemory.from_dict(memory.to_dict())
+        failed_memory.planned_outcomes.append(failed_domain_outcome)
+        repeated_predicates = [
+            item for item in failed_memory.operator_prior_claim_experiments(limit=8)
+            if item['operator_prior_key'] == prior['key']
+            and item['experiment_kind'] == 'operator_prior_domain_predicate_validation'
+        ]
         domain_outcome = memory.evaluate_planned_result(
             domain_plan,
             context='standard',
@@ -1059,6 +1081,11 @@ class DiscoveryLoopTests(unittest.TestCase):
                 'parameters': prior['parameters'],
             }],
         )
+        self.assertEqual(
+            'operator_prior_domain_predicate_failed',
+            failed_domain_outcome['outcome'],
+        )
+        self.assertEqual([], repeated_predicates)
         self.assertEqual(
             'operator_prior_domain_predicate_confirmed',
             domain_outcome['outcome'],

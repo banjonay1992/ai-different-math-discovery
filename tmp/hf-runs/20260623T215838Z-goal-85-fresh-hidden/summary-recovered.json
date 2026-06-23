@@ -1,0 +1,183 @@
+{
+  "artifact_upload_note": "HF job completed, but upload to Banjonay/ai-different-math-discovery-runs failed with 403, so compact log chunks were decoded and persisted here.",
+  "branch": "codex/discovery-law-race-holdouts",
+  "delta_counts": {
+    "equation_case_records": 12,
+    "planned_outcomes": 12,
+    "records": 12
+  },
+  "job_id": "6a3b018ed530f3857e66da6d",
+  "merged_counts": {
+    "equation_case_records": 12,
+    "planned_outcomes": 12,
+    "records": 12
+  },
+  "progress_after": {
+    "blockers": [
+      "heldout_law_stability",
+      "blind_holdout_validation"
+    ],
+    "evidence_summary": {
+      "blind_holdout_confirmed_count": 0,
+      "blind_holdout_conflicted_count": 2,
+      "blind_holdout_plan_count": 2,
+      "conflict_resolution_settled_count": 2,
+      "planned_outcome_count": 24,
+      "selected_law_replay_confirmed_count": 0,
+      "selected_law_replay_conflicted_count": 2,
+      "selected_theorem_count": 2
+    },
+    "progress_percent": 79.8,
+    "run_id": "goal-85-fresh-hidden-465daea-1782251924",
+    "status": "approaching_85",
+    "target_reached": false
+  },
+  "result_rows": [
+    {
+      "context": "repulsion",
+      "experiment_kind": "selected_law_conflict_resolution",
+      "followup_iteration": 1,
+      "interesting_expression": "k * taper(separation, 6_207) * unit_generated_center_vector / separation^1",
+      "interesting_score": 0.908,
+      "label_leak_count": 0,
+      "outcome": "conflict_rival_supported",
+      "seed": 6,
+      "steps": 170,
+      "world_type": "repulsion"
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "experiment_kind": "selected_law_conflict_resolution",
+      "followup_iteration": 2,
+      "interesting_expression": "k * unit_local_inferred_vector / separation^2",
+      "interesting_score": 0.848,
+      "label_leak_count": 0,
+      "outcome": "conflict_rival_supported",
+      "seed": 5,
+      "steps": 170,
+      "world_type": "inverse_square_repulsion"
+    },
+    {
+      "context": "hidden_03_0003",
+      "experiment_kind": "blind_holdout_validation",
+      "followup_iteration": 3,
+      "interesting_expression": "k * perpendicular(unit_local_inferred_vector) / separation^1",
+      "interesting_score": 0.446,
+      "label_leak_count": 0,
+      "outcome": "blind_holdout_absent",
+      "seed": 3,
+      "steps": 260,
+      "world_type": "hidden_procedural"
+    },
+    {
+      "context": "hidden_04_0004",
+      "experiment_kind": "blind_holdout_validation",
+      "followup_iteration": 4,
+      "interesting_expression": "k * taper(separation, 8_491) * unit_generated_center_vector / separation^0_75",
+      "interesting_score": 0.501,
+      "label_leak_count": 0,
+      "outcome": "blind_holdout_absent",
+      "seed": 4,
+      "steps": 260,
+      "world_type": "hidden_procedural"
+    },
+    {
+      "context": "localized_gravity",
+      "experiment_kind": "localized_gravity_structure_probe",
+      "followup_iteration": 5,
+      "interesting_expression": "k * taper(separation, 7_055) * unit_generated_center_vector / separation^1",
+      "interesting_score": 0.89,
+      "label_leak_count": 0,
+      "outcome": "localized_gravity_structure_found",
+      "seed": 2,
+      "steps": 180,
+      "world_type": "localized_gravity"
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "experiment_kind": "model_disagreement_probe",
+      "followup_iteration": 6,
+      "interesting_expression": "k * taper(separation, 8_945) * unit_generated_center_vector / separation^0_5",
+      "interesting_score": 0.841,
+      "label_leak_count": 0,
+      "outcome": "disagreement_still_open",
+      "seed": 6,
+      "steps": 260,
+      "world_type": "inverse_square_repulsion"
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "experiment_kind": "model_disagreement_probe",
+      "followup_iteration": 7,
+      "interesting_expression": "k * unit_local_inferred_vector / separation^2",
+      "interesting_score": 0.874,
+      "label_leak_count": 0,
+      "outcome": "target_confirmed",
+      "seed": 7,
+      "steps": 260,
+      "world_type": "inverse_square_repulsion"
+    },
+    {
+      "context": "repulsion",
+      "experiment_kind": "model_disagreement_probe",
+      "followup_iteration": 8,
+      "interesting_expression": "k * taper(separation, 6_207) * unit_generated_center_vector / separation^0_5",
+      "interesting_score": 0.914,
+      "label_leak_count": 0,
+      "outcome": "evidence_absent",
+      "seed": 7,
+      "steps": 260,
+      "world_type": "repulsion"
+    },
+    {
+      "context": "repulsion",
+      "experiment_kind": "transfer_test",
+      "followup_iteration": 9,
+      "interesting_expression": "k * taper(separation, 6_065) * unit_generated_center_vector / separation^1",
+      "interesting_score": 0.908,
+      "label_leak_count": 0,
+      "outcome": "transfer_absent",
+      "seed": 8,
+      "steps": 260,
+      "world_type": "repulsion"
+    },
+    {
+      "context": "hidden_03_0003",
+      "experiment_kind": "operator_prior_domain_predicate_validation",
+      "followup_iteration": 10,
+      "interesting_expression": "x + vx * dt",
+      "interesting_score": 0.97,
+      "label_leak_count": 0,
+      "outcome": "operator_prior_domain_predicate_failed",
+      "seed": 0,
+      "steps": 260,
+      "world_type": "hidden_03_0003"
+    },
+    {
+      "context": "hidden_03_0003",
+      "experiment_kind": "operator_prior_domain_predicate_validation",
+      "followup_iteration": 11,
+      "interesting_expression": "x + vx * dt",
+      "interesting_score": 0.97,
+      "label_leak_count": 0,
+      "outcome": "operator_prior_domain_predicate_failed",
+      "seed": 1,
+      "steps": 260,
+      "world_type": "hidden_03_0003"
+    },
+    {
+      "context": "hidden_03_0003",
+      "experiment_kind": "operator_prior_domain_predicate_validation",
+      "followup_iteration": 12,
+      "interesting_expression": "x + vx * dt",
+      "interesting_score": 0.97,
+      "label_leak_count": 0,
+      "outcome": "operator_prior_domain_predicate_failed",
+      "seed": 2,
+      "steps": 260,
+      "world_type": "hidden_03_0003"
+    }
+  ],
+  "run_id": "goal-85-fresh-hidden-465daea-1782251924",
+  "runs_final": false
+}

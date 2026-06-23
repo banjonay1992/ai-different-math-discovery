@@ -9886,18 +9886,19 @@ class CumulativeTheoryMemory:
                     },
                 })
             elif status == 'domain_limited':
-                if any(
-                    outcome.get('operator_prior_key') == operator_key
-                    and outcome.get('experiment_kind') == 'operator_prior_domain_predicate_validation'
-                    and outcome.get('outcome') == 'operator_prior_domain_predicate_confirmed'
-                    for outcome in self.planned_outcomes
-                ):
-                    continue
                 included = list(domain.get('included_contexts') or [])
                 excluded = list(domain.get('excluded_contexts') or [])
                 if not included and not excluded:
                     continue
                 failure_context = excluded[0] if excluded else None
+                predicate_stats = self._operator_prior_domain_predicate_outcome_stats(
+                    operator_key,
+                    failure_context,
+                )
+                if predicate_stats['confirmed_count'] > 0:
+                    continue
+                if predicate_stats['failed_count'] > 0:
+                    continue
                 priority = min(
                     0.93,
                     0.74
@@ -9905,6 +9906,7 @@ class CumulativeTheoryMemory:
                     + 0.03 * int(evidence.get('unmatched_count', 0) or 0)
                     + (0.04 if failure_context else 0.0),
                 )
+                priority -= min(0.24, 0.08 * predicate_stats['attempt_count'])
                 recommendations.append({
                     'theory_kind': f'operator_prior:{operator_kind}',
                     'operator_prior_key': operator_key,
@@ -9942,6 +9944,8 @@ class CumulativeTheoryMemory:
                         'excluded_context_count': len(excluded),
                         'best_score': evidence.get('best_score', 0.0),
                         'claim_status': status,
+                        'predicate_attempt_count': predicate_stats['attempt_count'],
+                        'predicate_failed_count': predicate_stats['failed_count'],
                     },
                     'suggested_campaign': {
                         'command_family': 'equation_campaign',
@@ -10006,6 +10010,40 @@ class CumulativeTheoryMemory:
             reverse=True,
         )
         return recommendations[:limit]
+
+    def _operator_prior_domain_predicate_outcome_stats(
+        self,
+        operator_key: str,
+        failure_context: str | None,
+    ) -> dict[str, int]:
+        outcomes = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('operator_prior_key') == operator_key
+            and outcome.get('experiment_kind') == 'operator_prior_domain_predicate_validation'
+            and (
+                not failure_context
+                or outcome.get('context') == failure_context
+                or outcome.get('failure_context') == failure_context
+            )
+        ]
+        confirmed_count = sum(
+            1 for outcome in outcomes
+            if outcome.get('outcome') == 'operator_prior_domain_predicate_confirmed'
+        )
+        failed_count = sum(
+            1 for outcome in outcomes
+            if outcome.get('outcome') == 'operator_prior_domain_predicate_failed'
+        )
+        weak_count = sum(
+            1 for outcome in outcomes
+            if outcome.get('outcome') == 'operator_prior_domain_predicate_weak'
+        )
+        return {
+            'attempt_count': confirmed_count + failed_count + weak_count,
+            'confirmed_count': confirmed_count,
+            'failed_count': failed_count,
+            'weak_count': weak_count,
+        }
 
     def operator_prior_anomalies(self, limit: int = 5) -> list[dict[str, Any]]:
         """Find places where a remembered operator prior broke its own domain story."""
