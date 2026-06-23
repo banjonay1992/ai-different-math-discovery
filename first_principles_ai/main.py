@@ -1202,6 +1202,62 @@ def _equation_campaign_artifact_summary(
     }
 
 
+def _hf_upload_requires_create_pr(error: Exception) -> bool:
+    message = str(error).lower()
+    return (
+        'create_pr' in message
+        and 'pull request' in message
+        and ('403' in message or 'forbidden' in message)
+    )
+
+
+def upload_hf_artifact_file(
+    api,
+    *,
+    path_or_fileobj,
+    path_in_repo: str,
+    repo_id: str,
+    repo_type: str = 'dataset',
+    create_pr: bool = False,
+    create_pr_on_forbidden: bool = True,
+    **kwargs,
+) -> dict:
+    upload_kwargs = {
+        'path_or_fileobj': path_or_fileobj,
+        'path_in_repo': path_in_repo,
+        'repo_id': repo_id,
+        'repo_type': repo_type,
+        'create_pr': create_pr,
+    }
+    upload_kwargs.update(kwargs)
+    try:
+        uploaded = api.upload_file(**upload_kwargs)
+        return {
+            'status': 'uploaded_via_pr' if create_pr else 'uploaded',
+            'path_in_repo': path_in_repo,
+            'repo_id': repo_id,
+            'repo_type': repo_type,
+            'create_pr': create_pr,
+            'url': str(uploaded),
+        }
+    except Exception as error:
+        if not create_pr and create_pr_on_forbidden:
+            if _hf_upload_requires_create_pr(error):
+                retry_kwargs = dict(upload_kwargs)
+                retry_kwargs['create_pr'] = True
+                uploaded = api.upload_file(**retry_kwargs)
+                return {
+                    'status': 'uploaded_via_pr',
+                    'path_in_repo': path_in_repo,
+                    'repo_id': repo_id,
+                    'repo_type': repo_type,
+                    'create_pr': True,
+                    'fallback_reason': 'create_pr_required',
+                    'url': str(uploaded),
+                }
+        raise
+
+
 def _run_equation_followup_cases(
     theory_memory: CumulativeTheoryMemory,
     world_types: list[str],

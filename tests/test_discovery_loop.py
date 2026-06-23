@@ -21,6 +21,7 @@ from main import (
     parse_live_progress_line,
     run_live_progress_viewer,
     run_memory_efficiency_review,
+    upload_hf_artifact_file,
 )
 
 
@@ -3745,6 +3746,47 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertIn('theorem_consolidations', summary)
         self.assertIn('domain_predicate_learning_agenda', summary)
         self.assertIn('planned_outcomes_tail', summary)
+
+    def test_hf_artifact_upload_retries_with_create_pr_when_required(self):
+        class FakeApi:
+            def __init__(self):
+                self.calls = []
+
+            def upload_file(self, **kwargs):
+                self.calls.append(dict(kwargs))
+                if len(self.calls) == 1:
+                    raise RuntimeError(
+                        '403 Forbidden: pass create_pr=1 as a query parameter '
+                        'to create a Pull Request.'
+                    )
+                return 'https://huggingface.test/pr/1'
+
+        api = FakeApi()
+        result = upload_hf_artifact_file(
+            api,
+            path_or_fileobj='tmp/summary.json',
+            path_in_repo='runs/demo/summary.json',
+            repo_id='demo/artifacts',
+        )
+
+        self.assertEqual('uploaded_via_pr', result['status'])
+        self.assertEqual('create_pr_required', result['fallback_reason'])
+        self.assertFalse(api.calls[0]['create_pr'])
+        self.assertTrue(api.calls[1]['create_pr'])
+        self.assertEqual('runs/demo/summary.json', api.calls[1]['path_in_repo'])
+
+    def test_hf_artifact_upload_does_not_swallow_unrelated_errors(self):
+        class FakeApi:
+            def upload_file(self, **kwargs):
+                raise RuntimeError('network dropped before upload started')
+
+        with self.assertRaisesRegex(RuntimeError, 'network dropped'):
+            upload_hf_artifact_file(
+                FakeApi(),
+                path_or_fileobj='tmp/summary.json',
+                path_in_repo='runs/demo/summary.json',
+                repo_id='demo/artifacts',
+            )
 
     def test_summary_only_compaction_makes_efficient_runs_long_ready(self):
         memory = CumulativeTheoryMemory()
