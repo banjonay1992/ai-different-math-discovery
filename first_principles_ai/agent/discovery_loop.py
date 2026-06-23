@@ -2228,6 +2228,12 @@ class CumulativeTheoryMemory:
         domain_world_blueprints = self.domain_world_blueprints(
             limit=len(MATH_DOMAIN_CURRICULUM),
         )
+        domain_world_discoveries = self.domain_world_discovery_reports(
+            limit=len(MATH_DOMAIN_CURRICULUM),
+        )
+        domain_world_transfer_evidence = self.domain_world_transfer_evidence(
+            limit=len(MATH_DOMAIN_TRANSFER_BRIDGES),
+        )
         domain_transfer_experiments = self.domain_transfer_experiments(limit=5)
         repair_confirmed_count = sum(
             1 for outcome in self.planned_outcomes
@@ -2441,6 +2447,55 @@ class CumulativeTheoryMemory:
                 'generate cross-domain transfer experiments with expected results and falsifiers',
             ),
             (
+                'domain_world_discovery_loop',
+                'generated domain worlds yield self-authored candidate equations and falsifiers',
+                (
+                    len(domain_world_discoveries) >= domain_curriculum['domain_count']
+                    and all(
+                        int(item.get('candidate_count', 0) or 0) > 0
+                        and item.get('self_authored_equations')
+                        and int(item.get('falsification_test_count', 0) or 0) > 0
+                        and float(item.get('benchmark_coverage', 0.0) or 0.0) >= 1.0
+                        and not item.get('leaked_manifest')
+                        for item in domain_world_discoveries
+                    )
+                ),
+                1.0,
+                {
+                    'discovery_report_count': len(domain_world_discoveries),
+                    'covered_domain_count': sum(
+                        1 for item in domain_world_discoveries
+                        if float(item.get('benchmark_coverage', 0.0) or 0.0) >= 1.0
+                    ),
+                    'candidate_count': sum(
+                        int(item.get('candidate_count', 0) or 0)
+                        for item in domain_world_discoveries
+                    ),
+                },
+                'run generated domain observations through the lightweight discovery evaluator',
+            ),
+            (
+                'domain_world_transfer_evidence',
+                'discovered relation bases connect source and target math domains',
+                (
+                    len(domain_world_transfer_evidence) >= domain_curriculum['transfer_bridge_count']
+                    and all(
+                        item.get('status') == 'transfer_link_ready'
+                        and item.get('falsifies_if')
+                        for item in domain_world_transfer_evidence
+                    )
+                ),
+                1.0,
+                {
+                    'transfer_evidence_count': len(domain_world_transfer_evidence),
+                    'ready_transfer_count': sum(
+                        1 for item in domain_world_transfer_evidence
+                        if item.get('status') == 'transfer_link_ready'
+                    ),
+                },
+                'derive transfer evidence from discovered domain-world relation bases',
+            ),
+            (
                 'autonomous_next_experiments',
                 'the memory notebook can emit concrete next experiments',
                 bool(next_experiments) and bool(planned_experiments),
@@ -2503,6 +2558,8 @@ class CumulativeTheoryMemory:
                     domain_transfer_experiments if self.records else []
                 ),
                 domain_world_blueprints=domain_world_blueprints,
+                domain_world_discoveries=domain_world_discoveries,
+                domain_world_transfer_evidence=domain_world_transfer_evidence,
             ),
             'first_principles_basis': first_principles,
             'adaptive_dimension_agenda': adaptive_dimensions,
@@ -2512,6 +2569,8 @@ class CumulativeTheoryMemory:
             'math_domain_curriculum': domain_curriculum,
             'domain_curriculum_agenda': self.domain_curriculum_agenda(limit=12),
             'domain_world_blueprints': domain_world_blueprints,
+            'domain_world_discoveries': domain_world_discoveries,
+            'domain_world_transfer_evidence': domain_world_transfer_evidence,
             'domain_transfer_experiments': domain_transfer_experiments,
         }
 
@@ -2528,6 +2587,8 @@ class CumulativeTheoryMemory:
         self_authored_equations: list[dict[str, Any]] | None = None,
         domain_transfer_experiments: list[dict[str, Any]] | None = None,
         domain_world_blueprints: list[dict[str, Any]] | None = None,
+        domain_world_discoveries: list[dict[str, Any]] | None = None,
+        domain_world_transfer_evidence: list[dict[str, Any]] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Compact evidence trail for the non-final readiness score."""
         chains = (
@@ -2589,6 +2650,16 @@ class CumulativeTheoryMemory:
             domain_world_blueprints
             if domain_world_blueprints is not None
             else self.domain_world_blueprints(limit=limit)
+        )
+        domain_discoveries = (
+            domain_world_discoveries
+            if domain_world_discoveries is not None
+            else self.domain_world_discovery_reports(limit=limit)
+        )
+        domain_transfer_evidence = (
+            domain_world_transfer_evidence
+            if domain_world_transfer_evidence is not None
+            else self.domain_world_transfer_evidence(limit=limit)
         )
 
         chain_summaries = []
@@ -2718,6 +2789,35 @@ class CumulativeTheoryMemory:
                 'next_pressure': blueprint.get('next_pressure'),
             })
 
+        domain_discovery_summaries = []
+        for discovery in domain_discoveries[:limit]:
+            equations = list(discovery.get('self_authored_equations') or [])
+            domain_discovery_summaries.append({
+                'domain_key': discovery.get('domain_key'),
+                'candidate_count': int(discovery.get('candidate_count', 0) or 0),
+                'benchmark_coverage': float(discovery.get('benchmark_coverage', 0.0) or 0.0),
+                'comparison_hits': list(discovery.get('comparison_hits') or [])[:limit],
+                'falsification_test_count': int(
+                    discovery.get('falsification_test_count', 0) or 0
+                ),
+                'top_expression': (
+                    equations[0].get('expression')
+                    if equations else None
+                ),
+            })
+
+        domain_transfer_evidence_summaries = []
+        for item in domain_transfer_evidence[:limit]:
+            domain_transfer_evidence_summaries.append({
+                'bridge_key': item.get('bridge_key'),
+                'source_domain': item.get('source_domain'),
+                'target_domain': item.get('target_domain'),
+                'status': item.get('status'),
+                'source_matches': list(item.get('source_matches') or [])[:limit],
+                'target_matches': list(item.get('target_matches') or [])[:limit],
+                'falsifies_if': item.get('falsifies_if'),
+            })
+
         return {
             'chains': chain_summaries,
             'claims': claim_summaries,
@@ -2728,6 +2828,8 @@ class CumulativeTheoryMemory:
             'self_authored_equations': authored_summaries,
             'domain_transfer_probes': domain_transfer_summaries,
             'domain_world_blueprints': domain_world_summaries,
+            'domain_world_discoveries': domain_discovery_summaries,
+            'domain_world_transfer_evidence': domain_transfer_evidence_summaries,
         }
 
     def _discovery_readiness_actions(
@@ -2754,6 +2856,8 @@ class CumulativeTheoryMemory:
             'broad_domain_curriculum',
             'executable_domain_worlds',
             'domain_transfer_loop',
+            'domain_world_discovery_loop',
+            'domain_world_transfer_evidence',
         }:
             actions.append({
                 'action_kind': 'non_final_domain_curriculum_review',
@@ -3124,6 +3228,78 @@ class CumulativeTheoryMemory:
             reverse=True,
         )
         return blueprints[:limit]
+
+    def domain_world_discovery_reports(
+        self,
+        limit: int = 12,
+        seed: int = 0,
+        variant: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Run lightweight discovery over generated domain-world observations."""
+        reports = self._domain_world_discovery_report_objects(
+            seed=seed,
+            variant=variant,
+        )
+        packed = [report.to_dict() for report in reports]
+        packed.sort(
+            key=lambda item: (
+                float(item.get('benchmark_coverage', 0.0) or 0.0),
+                int(item.get('candidate_count', 0) or 0),
+                str(item.get('domain_key', '')),
+            ),
+            reverse=True,
+        )
+        return packed[:limit]
+
+    def domain_world_transfer_evidence(
+        self,
+        limit: int = 12,
+        seed: int = 0,
+        variant: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Score transfer bridges using discovered relation bases."""
+        try:
+            from agent.domain_world_discovery import build_domain_transfer_evidence
+        except ImportError:  # pragma: no cover - package import fallback
+            from first_principles_ai.agent.domain_world_discovery import (
+                build_domain_transfer_evidence,
+            )
+
+        reports = self._domain_world_discovery_report_objects(
+            seed=seed,
+            variant=variant,
+        )
+        return build_domain_transfer_evidence(
+            reports,
+            MATH_DOMAIN_TRANSFER_BRIDGES,
+            limit=limit,
+        )
+
+    def _domain_world_discovery_report_objects(
+        self,
+        seed: int = 0,
+        variant: int = 0,
+    ):
+        try:
+            from agent.domain_world_discovery import discover_domain_world_manifest
+            from world.math_domain_worlds import generate_math_domain_world_manifest
+        except ImportError:  # pragma: no cover - package import fallback
+            from first_principles_ai.agent.domain_world_discovery import (
+                discover_domain_world_manifest,
+            )
+            from first_principles_ai.world.math_domain_worlds import (
+                generate_math_domain_world_manifest,
+            )
+
+        reports = []
+        for domain in MATH_DOMAIN_CURRICULUM:
+            manifest = generate_math_domain_world_manifest(
+                str(domain['key']),
+                seed=seed + int(domain.get('curriculum_order', 0) or 0),
+                variant=variant,
+            )
+            reports.append(discover_domain_world_manifest(manifest))
+        return reports
 
     def _domain_curriculum_evidence(self, domain: dict[str, Any]) -> dict[str, Any]:
         keywords = self._domain_keywords(domain)
@@ -3584,6 +3760,8 @@ class CumulativeTheoryMemory:
             'math_domain_curriculum': self.math_domain_curriculum(),
             'domain_curriculum_agenda': self.domain_curriculum_agenda(),
             'domain_world_blueprints': self.domain_world_blueprints(),
+            'domain_world_discoveries': self.domain_world_discovery_reports(),
+            'domain_world_transfer_evidence': self.domain_world_transfer_evidence(),
             'domain_transfer_experiments': self.domain_transfer_experiments(),
             'representation_agenda': self.representation_agenda(),
             'generated_operator_priors': self.generated_operator_priors(),
@@ -4169,6 +4347,29 @@ class CumulativeTheoryMemory:
                 )
                 targets = ','.join(item.get('transfer_targets', [])[:3]) or 'none'
                 lines.append(f"      transfer: {targets}")
+        domain_discoveries = self.domain_world_discovery_reports(limit=limit)
+        if domain_discoveries:
+            lines.append("  Domain world discoveries:")
+            for item in domain_discoveries:
+                equations = list(item.get('self_authored_equations') or [])
+                expression = equations[0].get('expression') if equations else 'none'
+                lines.append(
+                    f"    {item['domain_key']}: candidates={item['candidate_count']}, "
+                    f"coverage={item['benchmark_coverage']:.0%}, "
+                    f"falsifiers={item['falsification_test_count']}"
+                )
+                lines.append(f"      expression: {expression}")
+        domain_transfer_evidence = self.domain_world_transfer_evidence(limit=limit)
+        if domain_transfer_evidence:
+            lines.append("  Domain world transfer evidence:")
+            for item in domain_transfer_evidence:
+                lines.append(
+                    f"    {item['source_domain']}->{item['target_domain']}: "
+                    f"status={item['status']}"
+                )
+                source = ','.join(item.get('source_matches', [])[:3]) or 'none'
+                target = ','.join(item.get('target_matches', [])[:3]) or 'none'
+                lines.append(f"      basis: {source} -> {target}")
         domain_transfers = self.domain_transfer_experiments(limit=limit)
         if domain_transfers:
             lines.append("  Domain transfer probes:")

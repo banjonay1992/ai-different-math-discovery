@@ -114,6 +114,9 @@ python3 main.py --discovery-readiness --theory-memory-file tmp/theory-memory.jso
 # Preview generated math-domain worlds without running the final
 python3 main.py --domain-curriculum-preview --theory-memory-file tmp/theory-memory.json
 
+# Heavy/final campaigns should be launched on Hugging Face compute where practical
+# so local preview and tests stay lightweight.
+
 # Run the watched final math/equation discovery performance campaign
 python3 main.py --math-final-discovery --benchmark-steps 600 --object-counts 5 --equation-hidden-worlds 3 --theory-memory-file tmp/theory-memory.json
 

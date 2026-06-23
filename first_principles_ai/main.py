@@ -1427,19 +1427,29 @@ def run_domain_curriculum_preview(
     """Print generated domain-world blueprints without running simulations."""
     theory_memory = theory_memory or CumulativeTheoryMemory()
     blueprints = theory_memory.domain_world_blueprints(limit=limit)
+    discoveries = {
+        item['domain_key']: item
+        for item in theory_memory.domain_world_discovery_reports(limit=limit)
+    }
 
     print("=" * 70)
     print("DOMAIN CURRICULUM WORLD PREVIEW")
     print("=" * 70)
     print("Final discovery run: not run")
     print()
-    print(f"{'Domain':28s} {'Samples':>7s} {'Fals':>5s} {'Leaks':>5s} Transfer")
-    print("-" * 92)
+    print(
+        f"{'Domain':28s} {'Samples':>7s} {'Cand':>5s} "
+        f"{'Cov':>5s} {'Fals':>5s} {'Leaks':>5s} Transfer"
+    )
+    print("-" * 104)
     for item in blueprints:
+        discovery = discoveries.get(item['domain_key'], {})
         transfers = ','.join(item.get('transfer_targets', [])[:3]) or 'none'
         print(
             f"{item['domain_key']:28s} "
             f"{item['sample_count']:7d} "
+            f"{int(discovery.get('candidate_count', 0) or 0):5d} "
+            f"{float(discovery.get('benchmark_coverage', 0.0) or 0.0):5.0%} "
             f"{item['falsifier_count']:5d} "
             f"{item['leaky_observation_count']:5d} "
             f"{transfers}"
@@ -2021,6 +2031,8 @@ def _dossier_has_entries(dossier: dict) -> bool:
             'disagreement_probes',
             'self_authored_equations',
             'domain_world_blueprints',
+            'domain_world_discoveries',
+            'domain_world_transfer_evidence',
             'domain_transfer_probes',
         )
     )
@@ -2076,6 +2088,27 @@ def _print_discovery_evidence_dossier(
             f"leaks={int(blueprint['leaks_benchmark_truth'])}"
         )
         print(f"    next: {blueprint['next_pressure']}")
+    for discovery in dossier.get('domain_world_discoveries', [])[:2]:
+        print(
+            f"  domain discovery {discovery['domain_key']}: "
+            f"candidates={discovery['candidate_count']} "
+            f"coverage={discovery['benchmark_coverage']:.0%} "
+            f"falsifiers={discovery['falsification_test_count']}"
+        )
+        if discovery.get('top_expression'):
+            print(f"    expression: {discovery['top_expression']}")
+    for item in dossier.get('domain_world_transfer_evidence', [])[:2]:
+        print(
+            f"  domain transfer evidence "
+            f"{item['source_domain']}->{item['target_domain']}: "
+            f"status={item['status']}"
+        )
+        print(
+            "    basis: "
+            + ','.join(item.get('source_matches') or ['none'])
+            + " -> "
+            + ','.join(item.get('target_matches') or ['none'])
+        )
     for transfer in dossier.get('domain_transfer_probes', [])[:2]:
         print(
             f"  domain transfer {transfer['source_domain']}->{transfer['target_domain']}: "
@@ -2099,6 +2132,8 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     math_domain_curriculum = theory_memory.math_domain_curriculum()
     domain_curriculum_agenda = theory_memory.domain_curriculum_agenda(limit=3)
     domain_world_blueprints = theory_memory.domain_world_blueprints(limit=3)
+    domain_world_discoveries = theory_memory.domain_world_discovery_reports(limit=3)
+    domain_world_transfer_evidence = theory_memory.domain_world_transfer_evidence(limit=3)
     domain_transfer_experiments = theory_memory.domain_transfer_experiments(limit=3)
     representation_agenda = theory_memory.representation_agenda(limit=3)
     generated_operator_priors = theory_memory.generated_operator_priors(limit=3)
@@ -2138,6 +2173,8 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         math_domain_curriculum,
         domain_curriculum_agenda,
         domain_world_blueprints,
+        domain_world_discoveries,
+        domain_world_transfer_evidence,
         domain_transfer_experiments,
         representation_agenda,
         generated_operator_priors,
@@ -2304,6 +2341,27 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
             )
             targets = ','.join(item.get('transfer_targets', [])[:3]) or 'none'
             print(f"    transfer: {targets}")
+    if domain_world_discoveries:
+        print("Theory domain world discoveries:")
+        for item in domain_world_discoveries:
+            equations = list(item.get('self_authored_equations') or [])
+            expression = equations[0].get('expression') if equations else 'none'
+            print(
+                f"  {item['domain_key']}: candidates={item['candidate_count']} "
+                f"coverage={item['benchmark_coverage']:.0%} "
+                f"falsifiers={item['falsification_test_count']}"
+            )
+            print(f"    expression: {expression}")
+    if domain_world_transfer_evidence:
+        print("Theory domain world transfer evidence:")
+        for item in domain_world_transfer_evidence:
+            print(
+                f"  {item['source_domain']} -> {item['target_domain']}: "
+                f"status={item['status']}"
+            )
+            source = ','.join(item.get('source_matches', [])[:3]) or 'none'
+            target = ','.join(item.get('target_matches', [])[:3]) or 'none'
+            print(f"    basis: {source} -> {target}")
     if domain_transfer_experiments:
         print("Theory domain transfer probes:")
         for item in domain_transfer_experiments:
