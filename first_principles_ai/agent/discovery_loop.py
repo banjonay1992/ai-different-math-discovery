@@ -4430,17 +4430,19 @@ class CumulativeTheoryMemory:
             )
             theorem_status = str(benchmark.get('theorem_status') or '')
             conflicted_bonus = 0.055 if theorem_status == 'holdout_conflicted' else 0.0
+            retry_in_source_context = outcome_stats['settled_count'] > 0
+            source_retry_bonus = 0.16 if retry_in_source_context else 0.0
             priority = max(
                 0.2,
                 min(
-                    0.97,
+                    0.985,
                     0.86
                     + min(0.06, 0.01 * int(invariant.get('support_count', 0) or 0))
                     + conflicted_bonus
+                    + source_retry_bonus
                     - min(0.20, 0.08 * outcome_stats['attempt_count']),
                 ),
             )
-            retry_in_source_context = outcome_stats['settled_count'] > 0
             target_context = (
                 'selected_law_holdout_context'
                 if retry_in_source_context
@@ -9917,6 +9919,7 @@ class CumulativeTheoryMemory:
                 predicate_stats = self._operator_prior_domain_predicate_outcome_stats(
                     operator_key,
                     failure_context,
+                    theory_kind=f'operator_prior:{operator_kind}',
                 )
                 if predicate_stats['confirmed_count'] > 0:
                     continue
@@ -10038,10 +10041,18 @@ class CumulativeTheoryMemory:
         self,
         operator_key: str,
         failure_context: str | None,
+        theory_kind: str | None = None,
     ) -> dict[str, int]:
         outcomes = [
             outcome for outcome in self.planned_outcomes
-            if outcome.get('operator_prior_key') == operator_key
+            if (
+                outcome.get('operator_prior_key') == operator_key
+                or (
+                    not outcome.get('operator_prior_key')
+                    and theory_kind
+                    and outcome.get('theory_kind') == theory_kind
+                )
+            )
             and outcome.get('experiment_kind') == 'operator_prior_domain_predicate_validation'
             and (
                 not failure_context

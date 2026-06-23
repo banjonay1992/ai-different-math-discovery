@@ -1066,6 +1066,19 @@ class DiscoveryLoopTests(unittest.TestCase):
             if item['operator_prior_key'] == prior['key']
             and item['experiment_kind'] == 'operator_prior_domain_predicate_validation'
         ]
+        legacy_failed_memory = CumulativeTheoryMemory.from_dict(memory.to_dict())
+        legacy_failed_memory.planned_outcomes.append({
+            'theory_kind': f"operator_prior:{prior['operator_kind']}",
+            'experiment_kind': 'operator_prior_domain_predicate_validation',
+            'outcome': 'operator_prior_domain_predicate_failed',
+            'context': 'standard',
+            'seed': domain_plan['seed'],
+        })
+        legacy_repeated_predicates = [
+            item for item in legacy_failed_memory.operator_prior_claim_experiments(limit=8)
+            if item['operator_prior_key'] == prior['key']
+            and item['experiment_kind'] == 'operator_prior_domain_predicate_validation'
+        ]
         domain_outcome = memory.evaluate_planned_result(
             domain_plan,
             context='standard',
@@ -1086,6 +1099,7 @@ class DiscoveryLoopTests(unittest.TestCase):
             failed_domain_outcome['outcome'],
         )
         self.assertEqual([], repeated_predicates)
+        self.assertEqual([], legacy_repeated_predicates)
         self.assertEqual(
             'operator_prior_domain_predicate_confirmed',
             domain_outcome['outcome'],
@@ -2066,8 +2080,28 @@ class DiscoveryLoopTests(unittest.TestCase):
         )
         memory.planned_outcomes.append(absent)
         memory.record_result('hidden_00_0000', 0, {'theories': []})
+        loop = AutonomousDiscoveryLoop()
+        for seed in range(2):
+            memory.record_result(
+                'inverse_square_repulsion',
+                20 + seed,
+                loop.build_report([
+                    equation(
+                        key=f'raw_eq:residual_inferred_direction_distance_2_{seed}',
+                        role='residual_distance_scaled_direction_equation',
+                        expression='k * unit_inferred_vector / separation^2',
+                        parameters={
+                            'center_x': 8.0 + seed,
+                            'center_y': 12.0,
+                            'distance_exponent': 2.0,
+                            'distance_mse_improvement': 0.42,
+                        },
+                    )
+                ], step=170 + seed),
+            )
 
         retry = memory.blind_holdout_validation_experiments(limit=1)[0]
+        prioritized = memory.next_experiments(limit=3)[0]
         plans = memory.planned_experiments(
             world_types=['hidden_procedural', 'localized_gravity'],
             object_counts=[5],
@@ -2103,6 +2137,7 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertTrue(retry['proof_evidence']['retry_in_source_context'])
         self.assertIn('fresh selected-source seed', retry['reason'])
         self.assertEqual('selected_law_holdout_context', retry['target_context'])
+        self.assertEqual('blind_holdout_validation', prioritized['experiment_kind'])
         self.assertEqual('localized_gravity', retry_plan['world_type'])
         self.assertFalse(retry_plan['hidden_holdout'])
         self.assertEqual('blind_holdout_confirmed', confirmed['outcome'])
