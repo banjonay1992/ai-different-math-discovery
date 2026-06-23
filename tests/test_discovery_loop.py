@@ -1297,6 +1297,445 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertEqual(1, outcome['matching_theory_count'])
         self.assertEqual(0, outcome['rival_theory_count'])
 
+    def test_selected_invariant_exponent_consolidates_and_replays_law(self):
+        memory = CumulativeTheoryMemory()
+        cases = [
+            (0, 'k * unit_anchor_vector / separation^3', 0.76, 3.0),
+            (1, 'k * unit_anchor_vector / separation^2', 0.63, 2.0),
+            (3, 'k * unit_anchor_vector / separation^3', 0.77, 3.0),
+        ]
+        for seed, expression, score, exponent in cases:
+            memory.record_equation_case_result(
+                'repulsion',
+                seed,
+                {
+                    'interesting_equation': {
+                        'target': 'baseline_adjusted_delta_velocity',
+                        'expression': expression,
+                        'role': 'generated_operator_distance_scaled_direction_equation',
+                        'score': score,
+                        'parameters': {'distance_exponent': exponent},
+                    },
+                    'passed': True,
+                    'label_leaks': [],
+                },
+                phase='math_final_discovery',
+            )
+
+        resolution = memory.equation_invariant_resolution_experiments(limit=1)[0]
+        selected = memory.evaluate_planned_result(
+            resolution,
+            context='repulsion',
+            seed=5,
+            report={
+                'theories': [{
+                    'theory_kind': 'distance_scaled_direction_residual',
+                    'parameters': {'distance_exponent': 3.0},
+                    'score': 0.82,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(selected)
+        invariant = memory.operator_prior_invariant_consolidations(limit=1)[0]
+        replay = memory.selected_law_replay_agenda(limit=1)[0]
+        replay_outcome = memory.evaluate_planned_result(
+            replay,
+            context='repulsion',
+            seed=6,
+            report={
+                'theories': [{
+                    'theory_kind': 'distance_scaled_direction_residual',
+                    'parameters': {'distance_exponent': 3.0},
+                    'score': 0.84,
+                }],
+                'proof_checks': [],
+            },
+        )
+
+        self.assertEqual('robust_law_parameter_selected', invariant['status'])
+        self.assertEqual(3.0, invariant['selected_distance_exponent'])
+        self.assertTrue(any(
+            candidate.get('selected') and candidate['value'] == 3.0
+            for candidate in invariant['parameter_candidates']
+        ))
+        self.assertIn('replay the selected exponent', invariant['next_experiment'])
+        self.assertEqual([], memory.equation_invariant_resolution_experiments(limit=1))
+        self.assertEqual('selected_law_replay', replay['experiment_kind'])
+        self.assertEqual(
+            'distance_scaled_direction_residual/separation^-3.0',
+            replay['primary_theory_label'],
+        )
+        self.assertIn(
+            'distance_scaled_direction_residual/separation^-2.0',
+            replay['rival_theory_labels'],
+        )
+        self.assertEqual(
+            'planned_selected_law_replay',
+            _planned_probe_actions(replay)[0]['source'],
+        )
+        self.assertEqual(
+            'selected_law_replay_confirmed',
+            replay_outcome['outcome'],
+        )
+        self.assertEqual(
+            replay['selected_law_replay_key'],
+            replay_outcome['selected_law_replay_key'],
+        )
+        self.assertIn('selected_law_replay_agenda', memory.to_dict())
+        self.assertIn('Selected-law replay agenda:', memory.summary())
+        memory.planned_outcomes.append(replay_outcome)
+        self.assertEqual(
+            'heldout_confirmed',
+            memory.theorem_memory(limit=1)[0]['status'],
+        )
+
+    def _build_selected_tapered_law_memory(self) -> CumulativeTheoryMemory:
+        memory = CumulativeTheoryMemory()
+        for seed, exponent in [(0, 0.5), (1, 1.5), (2, 0.5)]:
+            memory.record_equation_case_result(
+                'localized_gravity',
+                seed,
+                {
+                    'interesting_equation': {
+                        'target': 'baseline_adjusted_delta_velocity',
+                        'expression': (
+                            'k * taper(separation, 9) * '
+                            'unit_generated_center_vector / '
+                            f"separation^{str(exponent).replace('.', '_')}"
+                        ),
+                        'role': 'generated_operator_distance_scaled_direction_equation',
+                        'score': 0.74,
+                        'parameters': {
+                            'cutoff_radius': 9.0,
+                            'distance_exponent': exponent,
+                        },
+                    },
+                    'passed': True,
+                    'label_leaks': [],
+                },
+                phase='math_final_discovery',
+            )
+        resolution = memory.equation_invariant_resolution_experiments(limit=1)[0]
+        selected = memory.evaluate_planned_result(
+            resolution,
+            context='localized_gravity',
+            seed=5,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 0.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.79,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(selected)
+        return memory
+
+    def test_domain_design_theorem_and_blind_holdout_memory_are_connected(self):
+        memory = CumulativeTheoryMemory()
+        for seed, exponent in [(0, 0.5), (1, 1.5), (2, 0.5)]:
+            memory.record_equation_case_result(
+                'localized_gravity',
+                seed,
+                {
+                    'interesting_equation': {
+                        'target': 'baseline_adjusted_delta_velocity',
+                        'expression': (
+                            'k * taper(separation, 9) * '
+                            'unit_generated_center_vector / '
+                            f"separation^{str(exponent).replace('.', '_')}"
+                        ),
+                        'role': 'generated_operator_distance_scaled_direction_equation',
+                        'score': 0.74,
+                        'parameters': {
+                            'cutoff_radius': 9.0,
+                            'distance_exponent': exponent,
+                        },
+                    },
+                    'passed': True,
+                    'label_leaks': [],
+                },
+                phase='math_final_discovery',
+            )
+        resolution = memory.equation_invariant_resolution_experiments(limit=1)[0]
+        selected = memory.evaluate_planned_result(
+            resolution,
+            context='localized_gravity',
+            seed=5,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {'distance_exponent': 0.5},
+                    'score': 0.79,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(selected)
+
+        domain_plans = memory.domain_rediscovery_experiments(limit=20)
+        designs = memory.autonomous_experiment_design_agenda(limit=20)
+        theorems = memory.theorem_memory(limit=5)
+        blind = memory.blind_holdout_benchmark_report(limit=8)
+        packed = memory.to_dict()
+        printed_output = io.StringIO()
+        with contextlib.redirect_stdout(printed_output):
+            _print_cumulative_theory_review(memory)
+        printed = printed_output.getvalue()
+
+        self.assertTrue({
+            'algebra_equations',
+            'logic_proof',
+            'higher_dimensions',
+        } <= {item['domain_key'] for item in domain_plans})
+        self.assertTrue(all(
+            item['experiment_kind'] == 'domain_world_rediscovery_probe'
+            and item['leak_constraints']['withhold_manifest']
+            and not item['leak_constraints']['leaks_benchmark_truth']
+            for item in domain_plans
+        ))
+        self.assertIn(
+            'selected_law_replay',
+            {item['source'] for item in designs},
+        )
+        self.assertIn(
+            'domain_rediscovery',
+            {item['source'] for item in designs},
+        )
+        selected_theorem = next(
+            item for item in theorems
+            if item['theorem_kind'] == 'selected_equation_invariant'
+        )
+        self.assertEqual(
+            {'distance_exponent': 0.5},
+            selected_theorem['selected_parameters'],
+        )
+        self.assertIn(
+            'blind_holdout_counterexample',
+            selected_theorem['proof_obligations'],
+        )
+        self.assertTrue(blind['ready_for_blind_run'])
+        self.assertEqual(0, blind['leak_blocker_count'])
+        self.assertIn(
+            'selected_law_blind_holdout',
+            blind['benchmark_kinds'],
+        )
+        self.assertIn('domain_world_withheld_manifest', blind['benchmark_kinds'])
+        self.assertIn('domain_rediscovery_experiments', packed)
+        self.assertIn('autonomous_experiment_design_agenda', packed)
+        self.assertIn('theorem_memory', packed)
+        self.assertIn('blind_holdout_benchmark', packed)
+        self.assertIn('Theorem memory:', memory.summary())
+        self.assertIn('Autonomous experiment designs:', memory.summary())
+        self.assertIn('Blind holdout benchmark:', memory.summary())
+        self.assertIn('Theory theorem memory:', printed)
+        self.assertIn('Theory blind holdout benchmark:', printed)
+
+        replay = memory.selected_law_replay_agenda(limit=1)[0]
+        conflicted = memory.evaluate_planned_result(
+            replay,
+            context='localized_gravity',
+            seed=6,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {'distance_exponent': 1.5},
+                    'score': 0.82,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(conflicted)
+        self.assertEqual('selected_law_replay_conflicted', conflicted['outcome'])
+        self.assertEqual(
+            'holdout_conflicted',
+            memory.theorem_memory(limit=1)[0]['status'],
+        )
+
+    def test_selected_law_conflict_designs_multi_parameter_race_and_domain_split(self):
+        memory = self._build_selected_tapered_law_memory()
+        replay = memory.selected_law_replay_agenda(limit=1)[0]
+        conflicted = memory.evaluate_planned_result(
+            replay,
+            context='localized_gravity',
+            seed=6,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 1.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.82,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.record_equation_case_result(
+            'localized_gravity',
+            6,
+            {
+                'interesting_equation': {
+                    'target': 'baseline_adjusted_delta_velocity',
+                    'expression': (
+                        'k * taper(separation, 9) * '
+                        'unit_generated_center_vector / separation^1_5'
+                    ),
+                    'role': 'generated_operator_distance_scaled_direction_equation',
+                    'score': 0.82,
+                    'parameters': {
+                        'cutoff_radius': 9.0,
+                        'distance_exponent': 1.5,
+                    },
+                },
+                'passed': True,
+                'label_leaks': [],
+            },
+            phase='equation_followup',
+        )
+        memory.planned_outcomes.append(conflicted)
+
+        conflict = memory.selected_law_conflict_experiments(limit=1)[0]
+        domain_split = memory.law_domain_split_hypotheses(limit=1)[0]
+        plan = memory.planned_experiments(
+            world_types=['localized_gravity'],
+            object_counts=[5],
+            steps=240,
+            limit=1,
+        )[0]
+        actions = _planned_probe_actions(plan)
+        outcome = memory.evaluate_planned_result(
+            plan,
+            context='localized_gravity',
+            seed=plan['seed'],
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 1.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.84,
+                }],
+                'proof_checks': [],
+            },
+        )
+        packed = memory.to_dict()
+        printed_output = io.StringIO()
+        with contextlib.redirect_stdout(printed_output):
+            _print_cumulative_theory_review(memory)
+        printed = printed_output.getvalue()
+
+        self.assertEqual(
+            'selected_law_replay_conflicted',
+            conflicted['outcome'],
+        )
+        self.assertEqual(
+            'selected_law_conflict_resolution',
+            conflict['experiment_kind'],
+        )
+        self.assertEqual(
+            'multi_parameter_law_race',
+            conflict['disagreement_signature']['mode'],
+        )
+        self.assertEqual('split_suspected', domain_split['status'])
+        self.assertEqual(
+            'selected_law_conflict_resolution',
+            plan['experiment_kind'],
+        )
+        self.assertTrue(plan['selected_multi_parameter_variant'])
+        self.assertTrue(plan['rival_multi_parameter_variants'])
+        self.assertEqual(
+            'planned_selected_law_conflict_resolution',
+            actions[0]['source'],
+        )
+        self.assertEqual('conflict_rival_supported', outcome['outcome'])
+        self.assertEqual(1, outcome['rival_theory_count'])
+        self.assertIn('selected_law_conflict_experiments', packed)
+        self.assertIn('law_domain_split_hypotheses', packed)
+        self.assertIn('Selected-law conflict resolution:', memory.summary())
+        self.assertIn('Law domain split hypotheses:', memory.summary())
+        self.assertIn('Theory selected-law conflict resolution:', printed)
+        self.assertIn('Theory law domain split hypotheses:', printed)
+
+    def test_blind_holdout_validation_executes_selected_law_and_rivals(self):
+        memory = self._build_selected_tapered_law_memory()
+        validation = memory.blind_holdout_validation_experiments(limit=1)[0]
+        plans = memory.planned_experiments(
+            world_types=['localized_gravity'],
+            object_counts=[5],
+            steps=240,
+            limit=4,
+        )
+        plan = next(
+            item for item in plans
+            if item['experiment_kind'] == 'blind_holdout_validation'
+        )
+        actions = _planned_probe_actions(plan)
+        confirmed = memory.evaluate_planned_result(
+            plan,
+            context='hidden:blind',
+            seed=plan['seed'],
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 0.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.81,
+                }],
+                'proof_checks': [],
+            },
+        )
+        conflicted = memory.evaluate_planned_result(
+            plan,
+            context='hidden:blind',
+            seed=plan['seed'],
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 1.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.82,
+                }],
+                'proof_checks': [],
+            },
+        )
+
+        self.assertEqual(
+            'blind_holdout_validation',
+            validation['experiment_kind'],
+        )
+        self.assertEqual(
+            'blind_selected_law_holdout',
+            validation['disagreement_signature']['mode'],
+        )
+        self.assertTrue(validation['rival_multi_parameter_variants'])
+        self.assertEqual('hidden_procedural', plan['world_type'])
+        self.assertTrue(plan['hidden_holdout'])
+        self.assertEqual(
+            'planned_blind_holdout_validation',
+            actions[0]['source'],
+        )
+        self.assertEqual('blind_holdout_confirmed', confirmed['outcome'])
+        self.assertEqual('blind_holdout_conflicted', conflicted['outcome'])
+        self.assertIn(
+            'blind_holdout_validation_experiments',
+            memory.to_dict(),
+        )
+        self.assertIn(
+            'Blind holdout validation agenda:',
+            memory.summary(),
+        )
+
     def test_post_run_replay_agenda_flags_baseline_headline_replay(self):
         memory = CumulativeTheoryMemory()
         for seed in range(4):
@@ -1444,6 +1883,54 @@ class DiscoveryLoopTests(unittest.TestCase):
             'k * unit_local_inferred_vector / separation^2',
             outcome['replay_expression'],
         )
+
+    def test_post_run_replay_parameter_resolution_does_not_repeat_same_case(self):
+        memory = CumulativeTheoryMemory()
+        cases = [
+            (0, 'k * taper(separation, 6) * unit_generated_center_vector / separation^0_5', 0.89, 0.5),
+            (1, 'k * taper(separation, 6) * unit_generated_center_vector / separation^1_5', 0.91, 1.5),
+            (2, 'k * taper(separation, 6) * unit_generated_center_vector / separation^0_5', 0.90, 0.5),
+        ]
+        for seed, expression, score, exponent in cases:
+            memory.record_equation_case_result(
+                'repulsion',
+                seed,
+                {
+                    'interesting_equation': {
+                        'target': 'baseline_adjusted_delta_velocity',
+                        'expression': expression,
+                        'role': 'generated_operator_distance_scaled_direction_equation',
+                        'score': score,
+                        'parameters': {
+                            'cutoff_radius': 6.0,
+                            'distance_exponent': exponent,
+                        },
+                    },
+                    'passed': True,
+                    'label_leaks': [],
+                },
+                phase='math_final_discovery',
+            )
+
+        replay = memory.post_run_replay_agenda(limit=3)[0]
+        alternate_issue = (
+            'old_headline_conflicts_with_robust_law'
+            if replay['replay_issue'] != 'old_headline_conflicts_with_robust_law'
+            else 'parameter_variant_needs_replay'
+        )
+        alternate_key = replay['replay_key'].rsplit(':', 1)[0] + f':{alternate_issue}'
+        memory.planned_outcomes.append({
+            'experiment_kind': 'post_run_replay_revision',
+            'replay_key': alternate_key,
+            'outcome': 'replay_needs_parameter_resolution',
+        })
+        replay_keys = {
+            item['replay_key']
+            for item in memory.post_run_replay_agenda(limit=5)
+        }
+
+        self.assertNotIn(replay['replay_key'], replay_keys)
+        self.assertTrue(memory.equation_invariant_resolution_experiments(limit=1))
 
     def test_domain_counterexample_adds_representation_domain_predicate(self):
         loop = AutonomousDiscoveryLoop()

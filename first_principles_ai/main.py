@@ -1241,11 +1241,16 @@ def _print_equation_followup_progress(event: str, payload: dict):
 def _planned_probe_actions(plan: dict, max_actions: int = 4) -> list[dict]:
     signature = dict(plan.get('disagreement_signature') or {})
     actions = []
-    source = (
-        'planned_equation_invariant_resolution'
-        if plan.get('experiment_kind') == 'equation_invariant_exponent_resolution'
-        else 'planned_model_disagreement_probe'
-    )
+    if plan.get('experiment_kind') == 'equation_invariant_exponent_resolution':
+        source = 'planned_equation_invariant_resolution'
+    elif plan.get('experiment_kind') == 'selected_law_replay':
+        source = 'planned_selected_law_replay'
+    elif plan.get('experiment_kind') == 'selected_law_conflict_resolution':
+        source = 'planned_selected_law_conflict_resolution'
+    elif plan.get('experiment_kind') == 'blind_holdout_validation':
+        source = 'planned_blind_holdout_validation'
+    else:
+        source = 'planned_model_disagreement_probe'
     for point in list(signature.get('probe_points') or [])[:max_actions]:
         if not {'x', 'y'} <= set(point):
             continue
@@ -1266,7 +1271,13 @@ def _planned_probe_actions(plan: dict, max_actions: int = 4) -> list[dict]:
         return actions
     action = dict(plan.get('probe_action') or {})
     if action.get('type') in {'spawn', 'wait', 'push', 'remove'}:
-        action.setdefault('source', 'planned_theory_probe')
+        if plan.get('experiment_kind') in {
+            'selected_law_conflict_resolution',
+            'blind_holdout_validation',
+        }:
+            action['source'] = source
+        else:
+            action.setdefault('source', 'planned_theory_probe')
         return [action]
     return []
 
@@ -3158,12 +3169,20 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     domain_world_discoveries = theory_memory.domain_world_discovery_reports(limit=3)
     domain_world_transfer_evidence = theory_memory.domain_world_transfer_evidence(limit=3)
     domain_transfer_experiments = theory_memory.domain_transfer_experiments(limit=3)
+    domain_rediscovery_experiments = theory_memory.domain_rediscovery_experiments(limit=3)
+    autonomous_designs = theory_memory.autonomous_experiment_design_agenda(limit=3)
+    theorem_memory = theory_memory.theorem_memory(limit=3)
+    blind_holdout_benchmark = theory_memory.blind_holdout_benchmark_report(limit=3)
     representation_agenda = theory_memory.representation_agenda(limit=3)
     generated_operator_priors = theory_memory.generated_operator_priors(limit=3)
     operator_prior_invariants = theory_memory.operator_prior_invariant_consolidations(limit=3)
     invariant_resolution_experiments = (
         theory_memory.equation_invariant_resolution_experiments(limit=3)
     )
+    selected_law_replay_agenda = theory_memory.selected_law_replay_agenda(limit=3)
+    selected_law_conflicts = theory_memory.selected_law_conflict_experiments(limit=3)
+    law_domain_splits = theory_memory.law_domain_split_hypotheses(limit=3)
+    blind_holdout_validations = theory_memory.blind_holdout_validation_experiments(limit=3)
     post_run_replay_agenda = theory_memory.post_run_replay_agenda(limit=3)
     operator_prior_feedback = theory_memory.operator_prior_feedback(limit=3)
     operator_prior_domains = theory_memory.operator_prior_domains(limit=3)
@@ -3204,10 +3223,18 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         domain_world_discoveries,
         domain_world_transfer_evidence,
         domain_transfer_experiments,
+        domain_rediscovery_experiments,
+        autonomous_designs,
+        theorem_memory,
+        blind_holdout_benchmark.get('plan'),
         representation_agenda,
         generated_operator_priors,
         operator_prior_invariants,
         invariant_resolution_experiments,
+        selected_law_replay_agenda,
+        selected_law_conflicts,
+        law_domain_splits,
+        blind_holdout_validations,
         post_run_replay_agenda,
         operator_prior_feedback,
         operator_prior_domains,
@@ -3441,6 +3468,40 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
                 f"context={item.get('source_context')} exponents={exponents}"
             )
             print(f"    next: {item['expected_result']}")
+    if selected_law_replay_agenda:
+        print("Theory selected-law replay agenda:")
+        for item in selected_law_replay_agenda:
+            print(
+                f"  {item['primary_theory_label']}: "
+                f"context={item.get('source_context')} priority={item['priority']:.2f}"
+            )
+            print(f"    next: {item['expected_result']}")
+    if selected_law_conflicts:
+        print("Theory selected-law conflict resolution:")
+        for item in selected_law_conflicts:
+            rivals = ','.join(item.get('rival_theory_labels', [])[:3]) or 'none'
+            print(
+                f"  {item['primary_theory_label']} vs {rivals}: "
+                f"context={item.get('source_context')} priority={item['priority']:.2f}"
+            )
+            print(f"    next: {item['expected_result']}")
+    if law_domain_splits:
+        print("Theory law domain split hypotheses:")
+        for item in law_domain_splits:
+            contexts = ','.join(item.get('conflict_contexts', [])[:3]) or 'none'
+            print(
+                f"  {item['invariant_key']}: status={item['status']} "
+                f"kind={item['split_kind']} contexts={contexts}"
+            )
+            print(f"    question: {item['question']}")
+    if blind_holdout_validations:
+        print("Theory blind holdout validation agenda:")
+        for item in blind_holdout_validations:
+            print(
+                f"  {item['primary_theory_label']}: "
+                f"priority={item['priority']:.2f}"
+            )
+            print(f"    next: {item['expected_result']}")
     if post_run_replay_agenda:
         print("Theory post-run replay agenda:")
         for item in post_run_replay_agenda:
@@ -3450,6 +3511,38 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
             )
             print(f"    why: {item['reason']}")
             print(f"    expected: {item['expected_result']}")
+    if theorem_memory:
+        print("Theory theorem memory:")
+        for item in theorem_memory:
+            evidence = item.get('evidence', {})
+            print(
+                f"  {item['theorem_kind']}: status={item['status']} "
+                f"support={evidence.get('support_count', 0)}"
+            )
+            print(f"    statement: {item.get('statement')}")
+    if domain_rediscovery_experiments:
+        print("Theory domain rediscovery agenda:")
+        for item in domain_rediscovery_experiments:
+            print(
+                f"  {item['domain_key']}: status={item['family_status']} "
+                f"priority={item['priority']:.2f}"
+            )
+            print(f"    why: {item['reason']}")
+    if autonomous_designs:
+        print("Theory autonomous experiment designs:")
+        for item in autonomous_designs:
+            print(
+                f"  {item['source']}:{item['experiment_kind']} "
+                f"priority={item['priority']:.2f}"
+            )
+            print(f"    falsifier: {item['falsifies_if']}")
+    if blind_holdout_benchmark.get('plan'):
+        print(
+            "Theory blind holdout benchmark: "
+            f"cases={blind_holdout_benchmark['benchmark_count']} "
+            f"ready={blind_holdout_benchmark['ready_for_blind_run']} "
+            f"leak_blockers={blind_holdout_benchmark['leak_blocker_count']}"
+        )
     if operator_prior_feedback:
         print("Theory operator prior feedback:")
         for item in operator_prior_feedback:

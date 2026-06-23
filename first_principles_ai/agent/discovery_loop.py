@@ -1552,6 +1552,27 @@ class CumulativeTheoryMemory:
                 rival_found=rival_found,
                 rival_proof_passed=rival_proof_passed,
             )
+        elif experiment_kind == 'selected_law_replay':
+            outcome = self._selected_law_replay_outcome_label(
+                target_found=found_family,
+                target_proof_passed=proof_passed,
+                rival_found=rival_found,
+                rival_proof_passed=rival_proof_passed,
+            )
+        elif experiment_kind == 'selected_law_conflict_resolution':
+            outcome = self._selected_law_conflict_outcome_label(
+                target_found=found_family,
+                target_proof_passed=proof_passed,
+                rival_found=rival_found,
+                rival_proof_passed=rival_proof_passed,
+            )
+        elif experiment_kind == 'blind_holdout_validation':
+            outcome = self._blind_holdout_validation_outcome_label(
+                target_found=found_family,
+                target_proof_passed=proof_passed,
+                rival_found=rival_found,
+                rival_proof_passed=rival_proof_passed,
+            )
         else:
             outcome = self._planned_outcome_label(
                 experiment_kind=experiment_kind,
@@ -1577,8 +1598,21 @@ class CumulativeTheoryMemory:
             'rival_scope': self._plan_rival_scope(plan, context),
             'disagreement_mode': plan.get('disagreement_signature', {}).get('mode'),
             'invariant_key': plan.get('invariant_key'),
+            'selected_distance_exponent': plan.get('selected_distance_exponent'),
+            'selected_law_replay_key': plan.get('selected_law_replay_key'),
             'primary_theory_label': plan.get('primary_theory_label'),
             'rival_theory_labels': list(plan.get('rival_theory_labels') or []),
+            'selected_multi_parameter_variant': dict(
+                plan.get('selected_multi_parameter_variant') or {}
+            ),
+            'rival_multi_parameter_variants': [
+                dict(variant)
+                for variant in list(plan.get('rival_multi_parameter_variants') or [])
+            ],
+            'domain_split_hypothesis': dict(
+                plan.get('domain_split_hypothesis') or {}
+            ),
+            'blind_holdout_plan': dict(plan.get('blind_holdout_plan') or {}),
             'found_family': found_family,
             'proof_passed': proof_passed,
             'rival_found': rival_found,
@@ -2471,6 +2505,10 @@ class CumulativeTheoryMemory:
             limit=len(MATH_DOMAIN_TRANSFER_BRIDGES),
         )
         domain_transfer_experiments = self.domain_transfer_experiments(limit=5)
+        domain_rediscovery_experiments = self.domain_rediscovery_experiments(limit=5)
+        autonomous_design_agenda = self.autonomous_experiment_design_agenda(limit=5)
+        theorem_memory = self.theorem_memory(limit=5)
+        blind_holdout_benchmark = self.blind_holdout_benchmark_report(limit=5)
         autonomous_scientist = self.autonomous_scientist_evidence()
         arithmetic_rediscovery = self.arithmetic_rediscovery_evidence()
         canonical_law_compression = self.canonical_law_compression_report()
@@ -2933,6 +2971,10 @@ class CumulativeTheoryMemory:
             'domain_world_discoveries': domain_world_discoveries,
             'domain_world_transfer_evidence': domain_world_transfer_evidence,
             'domain_transfer_experiments': domain_transfer_experiments,
+            'domain_rediscovery_experiments': domain_rediscovery_experiments,
+            'autonomous_experiment_design_agenda': autonomous_design_agenda,
+            'theorem_memory': theorem_memory,
+            'blind_holdout_benchmark': blind_holdout_benchmark,
             'autonomous_scientist_evidence': autonomous_scientist,
             'arithmetic_rediscovery_evidence': arithmetic_rediscovery,
             'canonical_law_compression': canonical_law_compression,
@@ -3578,6 +3620,932 @@ class CumulativeTheoryMemory:
             reverse=True,
         )
         return experiments[:limit]
+
+    def domain_rediscovery_experiments(self, limit: int = 8) -> list[dict[str, Any]]:
+        """Expose non-physics math-domain worlds as explicit rediscovery work."""
+        blueprints = {
+            item['domain_key']: item
+            for item in self.domain_world_blueprints(
+                limit=len(MATH_DOMAIN_CURRICULUM),
+            )
+        }
+        experiments = []
+        for agenda_item in self.domain_curriculum_agenda(
+            limit=len(MATH_DOMAIN_CURRICULUM),
+        ):
+            domain_key = str(agenda_item.get('domain_key'))
+            blueprint = dict(blueprints.get(domain_key) or {})
+            falsifiers = list(blueprint.get('falsifiers') or [])
+            priority = float(agenda_item.get('priority', 0.5) or 0.5)
+            if agenda_item.get('status') == 'seeded_pending_world':
+                priority += 0.05
+            experiments.append({
+                'key': f'domain_rediscovery:{domain_key}',
+                'experiment_kind': 'domain_world_rediscovery_probe',
+                'domain_key': domain_key,
+                'domain_name': agenda_item.get('name'),
+                'priority': round(max(0.1, min(1.0, priority)), 3),
+                'family_status': str(agenda_item.get('status', 'seeded_pending_world')),
+                'target_context': 'math_domain_world',
+                'world_seed': blueprint.get('seed') or self._domain_by_key(domain_key).get('world_seed'),
+                'variant': blueprint.get('variant', 0),
+                'observation_schema': blueprint.get('observation_schema', {}),
+                'target_primitives': list(agenda_item.get('target_primitives') or []),
+                'equation_families': list(agenda_item.get('equation_families') or []),
+                'proof_pressure': list(agenda_item.get('proof_pressure') or []),
+                'reason': (
+                    f"rediscover {agenda_item.get('name')} from public observations "
+                    'before using it as prior math'
+                ),
+                'expected_result': (
+                    'the agent should write a candidate rule from observations, '
+                    'name proof obligations, and keep benchmark truth hidden'
+                ),
+                'falsifies_if': (
+                    falsifiers[0]
+                    if falsifiers
+                    else 'held-out observations contradict the candidate domain rule'
+                ),
+                'leak_constraints': {
+                    'withhold_manifest': True,
+                    'leaks_benchmark_truth': bool(blueprint.get('leaks_benchmark_truth')),
+                    'leaky_observation_count': int(
+                        blueprint.get('leaky_observation_count', 0) or 0
+                    ),
+                },
+                'proof_evidence': {
+                    'support_count': int(agenda_item.get('support_count', 0) or 0),
+                    'context_count': int(
+                        dict(agenda_item.get('evidence') or {}).get(
+                            'domain_world_record_count',
+                            0,
+                        )
+                        or 0
+                    ),
+                    'proof_rate': 0.0,
+                    'bridge_count': int(agenda_item.get('bridge_count', 0) or 0),
+                },
+                'suggested_campaign': {
+                    'command_family': 'domain_world_discovery',
+                    'world_selection': 'math_domain_manifest_public_observations',
+                    'runs_final': False,
+                },
+            })
+        experiments.sort(
+            key=lambda item: (
+                item['priority'],
+                -item['proof_evidence']['support_count'],
+                item['domain_key'],
+            ),
+            reverse=True,
+        )
+        return experiments[:limit]
+
+    def autonomous_experiment_design_agenda(
+        self,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        """Unify residual anomalies, selected laws, domains, and proof gaps into designs."""
+        designs = []
+        sources: list[tuple[str, list[dict[str, Any]]]] = [
+            (
+                'selected_law_conflict',
+                self.selected_law_conflict_experiments(limit=limit),
+            ),
+            (
+                'invariant_resolution',
+                self.equation_invariant_resolution_experiments(limit=limit),
+            ),
+            ('selected_law_replay', self.selected_law_replay_agenda(limit=limit)),
+            ('blind_holdout_validation', self.blind_holdout_validation_experiments(limit=limit)),
+            ('post_run_replay', self.post_run_replay_agenda(limit=limit)),
+            ('operator_anomaly', self.operator_prior_repair_experiments(limit=limit)),
+            ('domain_rediscovery', self.domain_rediscovery_experiments(limit=limit)),
+            ('domain_transfer', self.domain_transfer_experiments(limit=limit)),
+        ]
+        for source, items in sources:
+            for item in items:
+                designs.append(self._autonomous_design_from_recommendation(source, item))
+        for gap in self.proof_gaps()[:limit]:
+            designs.append(self._autonomous_design_from_proof_gap(gap))
+        designs = [design for design in designs if design]
+        designs.sort(
+            key=lambda item: (
+                item['priority'],
+                item['evidence'].get('support_count', 0),
+                item['design_key'],
+            ),
+            reverse=True,
+        )
+        return designs[:limit]
+
+    def theorem_memory(self, limit: int = 8) -> list[dict[str, Any]]:
+        """Promote selected laws and authored equations into proof-tracked theorems."""
+        theorem_items = []
+        for invariant in self.operator_prior_invariant_consolidations(
+            limit=max(5, len(self.equation_case_records)),
+        ):
+            if invariant.get('selected_distance_exponent') is None:
+                continue
+            replay_stats = self._selected_law_replay_outcome_stats(
+                self._selected_law_replay_key(invariant),
+            )
+            if replay_stats['conflicted_count'] > 0:
+                status = 'holdout_conflicted'
+            elif replay_stats['confirmed_count'] > 0:
+                status = 'heldout_confirmed'
+            else:
+                status = 'parameter_selected_needs_holdout'
+            theorem_items.append({
+                'key': f"theorem:equation_invariant:{invariant.get('key')}",
+                'theorem_kind': 'selected_equation_invariant',
+                'status': status,
+                'statement': invariant.get('robust_claim'),
+                'context': invariant.get('context'),
+                'law_family': invariant.get('law_family'),
+                'vector_basis': invariant.get('vector_basis'),
+                'window_kind': invariant.get('window_kind'),
+                'selected_parameters': {
+                    'distance_exponent': invariant.get('selected_distance_exponent'),
+                },
+                'evidence': {
+                    'support_count': int(invariant.get('support_count', 0) or 0),
+                    'support_seeds': list(invariant.get('support_seeds') or []),
+                    'mean_score': float(invariant.get('mean_score', 0.0) or 0.0),
+                    'leak_count': int(invariant.get('leak_count', 0) or 0),
+                    'selected_score': float(
+                        dict(invariant.get('selected_resolution') or {}).get(
+                            'score',
+                            0.0,
+                        )
+                        or 0.0
+                    ),
+                    'selected_law_replay_attempt_count': replay_stats['attempt_count'],
+                    'selected_law_replay_confirmed_count': replay_stats['confirmed_count'],
+                    'selected_law_replay_conflicted_count': replay_stats['conflicted_count'],
+                    'selected_law_replay_settled_count': replay_stats['settled_count'],
+                },
+                'proof_obligations': [
+                    'parameter_resolution_replay',
+                    'fresh_seed_replay',
+                    'blind_holdout_counterexample',
+                    'label_leak_cleanliness',
+                ],
+                'falsifiers': [
+                    invariant.get('falsifies_if'),
+                    'rival exponent wins on a blind holdout',
+                    'same law only works when benchmark labels leak',
+                ],
+                'next_obligation': invariant.get('next_experiment'),
+            })
+        for equation in self.self_authored_equations(limit=limit):
+            theorem_items.append({
+                'key': f"theorem:self_authored:{equation.get('key')}",
+                'theorem_kind': 'self_authored_equation',
+                'status': equation.get('status'),
+                'statement': equation.get('expression'),
+                'context': None,
+                'law_family': equation.get('equation_kind'),
+                'vector_basis': None,
+                'window_kind': None,
+                'selected_parameters': dict(equation.get('dominant_parameters') or {}),
+                'evidence': {
+                    'support_count': int(equation.get('support_count', 0) or 0),
+                    'confidence': float(equation.get('confidence', 0.0) or 0.0),
+                    'score': float(equation.get('mean_score', 0.0) or 0.0),
+                },
+                'proof_obligations': list(equation.get('proof_obligations') or []),
+                'falsifiers': list(equation.get('falsification_tests') or []),
+                'next_obligation': (
+                    'convert authored equation into selected-law replay and blind holdout tests'
+                ),
+            })
+        theorem_items.sort(
+            key=lambda item: (
+                item['status'] == 'parameter_selected_needs_holdout',
+                item['evidence'].get('support_count', 0),
+                item['evidence'].get('selected_score', item['evidence'].get('confidence', 0.0)),
+                item['key'],
+            ),
+            reverse=True,
+        )
+        return theorem_items[:limit]
+
+    def selected_law_conflict_experiments(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Turn conflicted selected laws into sharper whole-law races."""
+        recommendations = []
+        for invariant in self.operator_prior_invariant_consolidations(
+            limit=max(5, len(self.equation_case_records)),
+        ):
+            if invariant.get('selected_distance_exponent') is None:
+                continue
+            replay_key = self._selected_law_replay_key(invariant)
+            replay_stats = self._selected_law_replay_outcome_stats(replay_key)
+            if replay_stats['conflicted_count'] <= 0:
+                continue
+            conflict_stats = self._selected_law_conflict_outcome_stats(replay_key)
+            if conflict_stats['settled_count'] > 0:
+                continue
+            conflict_outcomes = self._selected_law_replay_outcomes(
+                replay_key,
+                outcomes={'selected_law_replay_conflicted'},
+            )
+            conflict_records = self._records_for_planned_outcomes(conflict_outcomes)
+            theory_kind = self._equation_invariant_theory_kind(invariant)
+            selected_variant = self._multi_parameter_variant_from_invariant(
+                invariant,
+                theory_kind,
+                variant_role='selected',
+            )
+            rival_variants = self._rival_variants_from_conflict(
+                invariant,
+                conflict_records,
+                theory_kind,
+            )
+            if not rival_variants:
+                continue
+            signature = self._multi_parameter_law_race_signature(
+                invariant,
+                selected_variant,
+                rival_variants,
+                conflict_records,
+            )
+            support_count = int(invariant.get('support_count', 0) or 0)
+            score = float(invariant.get('mean_score', 0.0) or 0.0)
+            priority = max(
+                0.35,
+                min(
+                    0.995,
+                    0.97
+                    + min(0.02, 0.004 * support_count)
+                    - min(0.18, 0.06 * conflict_stats['attempt_count']),
+                ),
+            )
+            recommendations.append({
+                'theory_kind': theory_kind,
+                'experiment_kind': 'selected_law_conflict_resolution',
+                'priority': round(priority, 3),
+                'family_status': 'holdout_conflicted',
+                'target_context': 'selected_law_conflict_context',
+                'source_context': invariant.get('context'),
+                'avoid_contexts': [],
+                'reason': (
+                    'resolve selected-law holdout conflict by racing exponent, '
+                    'taper/window, cutoff radius, and domain regime together: '
+                    f"{invariant.get('robust_claim')}"
+                ),
+                'expected_result': (
+                    'one whole-law variant should win, or the evidence should '
+                    'force a domain split instead of one universal equation'
+                ),
+                'falsifies_if': (
+                    'fresh evidence keeps alternating between variants without '
+                    'a domain predicate, cutoff, or hidden regime explaining it'
+                ),
+                'proof_evidence': {
+                    'support_count': support_count,
+                    'context_count': 1,
+                    'proof_rate': 0.0,
+                    'mean_score': score,
+                    'conflicted_count': replay_stats['conflicted_count'],
+                    'attempt_count': conflict_stats['attempt_count'],
+                },
+                'invariant_key': invariant.get('key'),
+                'selected_law_replay_key': replay_key,
+                'equation_invariant': dict(invariant),
+                'primary_theory_label': selected_variant['label'],
+                'selected_multi_parameter_variant': selected_variant,
+                'rival_multi_parameter_variants': rival_variants,
+                'rival_theory_kinds': [],
+                'rival_theory_labels': [variant['label'] for variant in rival_variants],
+                'disagreement_signature': signature,
+                'probe_action': self._selected_law_probe_action(invariant),
+                'domain_split_hypothesis': self._domain_split_hypothesis_for_invariant(
+                    invariant,
+                    conflict_records,
+                    selected_variant,
+                    rival_variants,
+                ),
+                'suggested_campaign': {
+                    'command_family': 'equation_campaign',
+                    'world_selection': 'selected_source_context_fresh_seed',
+                    'enable_equation_probes': True,
+                    'runs_final': False,
+                },
+            })
+        recommendations.sort(
+            key=lambda item: (
+                item['priority'],
+                item['proof_evidence']['conflicted_count'],
+                item['proof_evidence']['support_count'],
+                item.get('invariant_key', ''),
+            ),
+            reverse=True,
+        )
+        return recommendations[:limit]
+
+    def blind_holdout_validation_experiments(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Convert blind benchmark plans into executable hidden-world probes."""
+        recommendations = []
+        invariants_by_key = {
+            str(invariant.get('key')): invariant
+            for invariant in self.operator_prior_invariant_consolidations(
+                limit=max(5, len(self.equation_case_records)),
+            )
+        }
+        for benchmark in self.blind_holdout_benchmark_plan(limit=limit * 2):
+            if benchmark.get('benchmark_kind') != 'selected_law_blind_holdout':
+                continue
+            theorem_key = str(benchmark.get('theorem_key') or '')
+            invariant_key = theorem_key.replace('theorem:equation_invariant:', '', 1)
+            invariant = dict(invariants_by_key.get(invariant_key) or {})
+            if not invariant:
+                continue
+            replay_key = self._selected_law_replay_key(invariant)
+            outcome_stats = self._blind_holdout_validation_outcome_stats(replay_key)
+            if outcome_stats['settled_count'] > 0:
+                continue
+            theory_kind = self._equation_invariant_theory_kind(invariant)
+            selected_variant = self._multi_parameter_variant_from_invariant(
+                invariant,
+                theory_kind,
+                variant_role='selected',
+            )
+            rival_variants = self._rival_variants_from_conflict(
+                invariant,
+                [],
+                theory_kind,
+            )
+            priority = max(
+                0.2,
+                min(
+                    0.86,
+                    0.74
+                    + min(0.06, 0.01 * int(invariant.get('support_count', 0) or 0))
+                    - min(0.20, 0.08 * outcome_stats['attempt_count']),
+                ),
+            )
+            recommendations.append({
+                'theory_kind': theory_kind,
+                'experiment_kind': 'blind_holdout_validation',
+                'priority': round(priority, 3),
+                'family_status': 'blind_holdout_needed',
+                'target_context': 'blind_holdout_benchmark_context',
+                'source_context': invariant.get('context'),
+                'avoid_contexts': [],
+                'reason': (
+                    'execute blind holdout benchmark for selected law: '
+                    f"{invariant.get('robust_claim')}"
+                ),
+                'expected_result': benchmark.get('expected_result'),
+                'falsifies_if': benchmark.get('falsifies_if'),
+                'proof_evidence': {
+                    'support_count': int(invariant.get('support_count', 0) or 0),
+                    'context_count': 1,
+                    'proof_rate': 0.0,
+                    'attempt_count': outcome_stats['attempt_count'],
+                },
+                'invariant_key': invariant.get('key'),
+                'selected_law_replay_key': replay_key,
+                'equation_invariant': invariant,
+                'primary_theory_label': selected_variant['label'],
+                'selected_multi_parameter_variant': selected_variant,
+                'rival_multi_parameter_variants': rival_variants,
+                'rival_theory_labels': [variant['label'] for variant in rival_variants],
+                'disagreement_signature': {
+                    'mode': 'blind_selected_law_holdout',
+                    'resolution_source': 'theorem_memory',
+                    'invariant_key': invariant.get('key'),
+                    'selected_variant': selected_variant,
+                    'rival_variants': rival_variants[:5],
+                    'question': (
+                        'Does the selected law survive in a label-hidden world, '
+                        'or does a rival exponent/window/cutoff explain it better?'
+                    ),
+                },
+                'blind_holdout_plan': dict(benchmark),
+                'probe_action': self._selected_law_probe_action(invariant),
+                'suggested_campaign': {
+                    'command_family': 'equation_campaign',
+                    'world_selection': 'hidden_procedural',
+                    'runs_final': False,
+                },
+            })
+        recommendations.sort(
+            key=lambda item: (
+                item['priority'],
+                item['proof_evidence']['support_count'],
+                item.get('invariant_key', ''),
+            ),
+            reverse=True,
+        )
+        return recommendations[:limit]
+
+    def law_domain_split_hypotheses(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Summarize selected-law conflicts as possible domain or regime splits."""
+        hypotheses = []
+        for experiment in self.selected_law_conflict_experiments(
+            limit=max(5, len(self.equation_case_records)),
+        ):
+            hypothesis = dict(experiment.get('domain_split_hypothesis') or {})
+            if hypothesis:
+                hypotheses.append(hypothesis)
+        hypotheses.sort(
+            key=lambda item: (
+                item.get('severity', 0.0),
+                item.get('conflict_count', 0),
+                item.get('invariant_key', ''),
+            ),
+            reverse=True,
+        )
+        return hypotheses[:limit]
+
+    def blind_holdout_benchmark_plan(self, limit: int = 8) -> list[dict[str, Any]]:
+        """Design label-hidden benchmarks for selected laws and domain worlds."""
+        benchmarks = []
+        for theorem in self.theorem_memory(limit=limit):
+            if theorem.get('theorem_kind') != 'selected_equation_invariant':
+                continue
+            benchmarks.append({
+                'key': f"blind_holdout:{theorem.get('key')}",
+                'benchmark_kind': 'selected_law_blind_holdout',
+                'priority': 1.2,
+                'theorem_key': theorem.get('key'),
+                'target_context': 'hidden_procedural_or_selected_source_context',
+                'world_selection': 'fresh hidden/off-center world without manifest labels',
+                'expected_result': (
+                    'the selected law is recovered with the same exponent and no label leaks'
+                ),
+                'falsifies_if': theorem.get('falsifiers', ['selected law fails'])[0],
+                'selected_parameters': dict(theorem.get('selected_parameters') or {}),
+                'leak_constraints': [
+                    'do not expose hidden manifest fields to the discovery loop',
+                    'require label_leak_count == 0',
+                    'score law after discovery rather than naming the target law upfront',
+                ],
+                'evidence': dict(theorem.get('evidence') or {}),
+            })
+        for domain in self.domain_world_blueprints(limit=limit):
+            benchmarks.append({
+                'key': f"blind_holdout:domain:{domain.get('domain_key')}",
+                'benchmark_kind': 'domain_world_withheld_manifest',
+                'priority': round(float(domain.get('priority', 0.5) or 0.5), 3),
+                'domain_key': domain.get('domain_key'),
+                'target_context': 'math_domain_world_blind',
+                'world_selection': domain.get('seed'),
+                'expected_result': (
+                    'candidate relation is inferred from observations while expected '
+                    'discoveries and falsifiers stay benchmark-only'
+                ),
+                'falsifies_if': (
+                    list(domain.get('falsifiers') or ['held-out falsifier contradicts the candidate'])[0]
+                ),
+                'selected_parameters': {},
+                'leak_constraints': [
+                    'strip manifest and expected_discoveries from observations',
+                    'reject any observation carrying benchmark truth',
+                ],
+                'evidence': {
+                    'sample_count': int(domain.get('sample_count', 0) or 0),
+                    'falsifier_count': int(domain.get('falsifier_count', 0) or 0),
+                    'leaky_observation_count': int(
+                        domain.get('leaky_observation_count', 0) or 0
+                    ),
+                },
+            })
+        benchmarks.sort(
+            key=lambda item: (
+                item['priority'],
+                item['evidence'].get('sample_count', item['evidence'].get('support_count', 0)),
+                item['key'],
+            ),
+            reverse=True,
+        )
+        return benchmarks[:limit]
+
+    def blind_holdout_benchmark_report(self, limit: int = 8) -> dict[str, Any]:
+        plan = self.blind_holdout_benchmark_plan(limit=limit)
+        leak_blockers = [
+            item for item in plan
+            if int(dict(item.get('evidence') or {}).get('leaky_observation_count', 0) or 0) > 0
+        ]
+        kinds = sorted({
+            str(item.get('benchmark_kind', 'unknown'))
+            for item in plan
+        })
+        return {
+            'benchmark_count': len(plan),
+            'benchmark_kinds': kinds,
+            'leak_blocker_count': len(leak_blockers),
+            'ready_for_blind_run': bool(plan) and not leak_blockers,
+            'plan': plan,
+        }
+
+    def _selected_law_replay_outcomes(
+        self,
+        replay_key: str,
+        outcomes: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        wanted = set(outcomes or [])
+        rows = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'selected_law_replay'
+            and outcome.get('selected_law_replay_key') == replay_key
+            and (not wanted or outcome.get('outcome') in wanted)
+        ]
+        rows.sort(
+            key=lambda item: (
+                int(item.get('seed', 0) or 0),
+                str(item.get('context', '')),
+                str(item.get('outcome', '')),
+            )
+        )
+        return rows
+
+    def _records_for_planned_outcomes(
+        self,
+        outcomes: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        records = []
+        seen: set[tuple[str, int]] = set()
+        for outcome in outcomes:
+            context = str(outcome.get('context') or '')
+            seed = outcome.get('seed')
+            if not context or not isinstance(seed, int):
+                continue
+            candidates = [
+                record for record in self.equation_case_records
+                if record.get('context') == context
+                and record.get('seed') == seed
+            ]
+            if not candidates:
+                continue
+            candidates.sort(
+                key=lambda record: (
+                    float(record.get('score', 0.0) or 0.0),
+                    str(record.get('phase', '')),
+                    str(record.get('expression', '')),
+                ),
+                reverse=True,
+            )
+            record = dict(candidates[0])
+            key = (context, int(seed))
+            if key in seen:
+                continue
+            seen.add(key)
+            record['planned_outcome'] = dict(outcome)
+            records.append(record)
+        return records
+
+    def _selected_law_conflict_outcome_stats(self, replay_key: str) -> dict[str, int]:
+        outcomes = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'selected_law_conflict_resolution'
+            and outcome.get('selected_law_replay_key') == replay_key
+        ]
+        return {
+            'attempt_count': len(outcomes),
+            'settled_count': sum(
+                1 for outcome in outcomes
+                if outcome.get('outcome') in {
+                    'conflict_selected_restored',
+                    'conflict_rival_supported',
+                    'conflict_domain_split_supported',
+                }
+            ),
+        }
+
+    def _blind_holdout_validation_outcome_stats(self, replay_key: str) -> dict[str, int]:
+        outcomes = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'blind_holdout_validation'
+            and outcome.get('selected_law_replay_key') == replay_key
+        ]
+        return {
+            'attempt_count': len(outcomes),
+            'settled_count': sum(
+                1 for outcome in outcomes
+                if outcome.get('outcome') in {
+                    'blind_holdout_confirmed',
+                    'blind_holdout_conflicted',
+                    'blind_holdout_absent',
+                }
+            ),
+        }
+
+    def _multi_parameter_variant_from_invariant(
+        self,
+        invariant: dict[str, Any],
+        theory_kind: str,
+        *,
+        variant_role: str,
+    ) -> dict[str, Any]:
+        parameters = dict(invariant.get('dominant_parameters') or {})
+        selected_exponent = invariant.get('selected_distance_exponent')
+        if selected_exponent is not None:
+            parameters['distance_exponent'] = selected_exponent
+        variant = {
+            'variant_role': variant_role,
+            'theory_kind': theory_kind,
+            'law_family': invariant.get('law_family'),
+            'vector_basis': invariant.get('vector_basis'),
+            'window_kind': invariant.get('window_kind'),
+            'distance_exponent': parameters.get('distance_exponent'),
+            'cutoff_radius': parameters.get('cutoff_radius'),
+            'center_x': parameters.get('center_x'),
+            'center_y': parameters.get('center_y'),
+            'context': invariant.get('context'),
+            'support_count': int(invariant.get('support_count', 0) or 0),
+            'score': float(invariant.get('mean_score', 0.0) or 0.0),
+        }
+        variant['label'] = self._multi_parameter_variant_label(variant)
+        return _rounded_dict(variant)
+
+    def _rival_variants_from_conflict(
+        self,
+        invariant: dict[str, Any],
+        conflict_records: list[dict[str, Any]],
+        theory_kind: str,
+    ) -> list[dict[str, Any]]:
+        selected_exponent = invariant.get('selected_distance_exponent')
+        selected = (
+            round(float(selected_exponent), 3)
+            if isinstance(selected_exponent, (int, float))
+            else None
+        )
+        variants: dict[str, dict[str, Any]] = {}
+        for record in conflict_records:
+            variant = self._multi_parameter_variant_from_record(
+                record,
+                variant_role='conflict_observed',
+            )
+            if variant:
+                variants[variant['label']] = variant
+        for candidate in list(invariant.get('parameter_candidates') or []):
+            exponent = candidate.get('value')
+            if not isinstance(exponent, (int, float)):
+                continue
+            if selected is not None and round(float(exponent), 3) == selected:
+                continue
+            candidate_invariant = {
+                **dict(invariant),
+                'selected_distance_exponent': round(float(exponent), 3),
+            }
+            variant = self._multi_parameter_variant_from_invariant(
+                candidate_invariant,
+                theory_kind,
+                variant_role='parameter_candidate',
+            )
+            variant['support_count'] = int(candidate.get('support', 0) or 0)
+            variants.setdefault(variant['label'], variant)
+        return sorted(
+            variants.values(),
+            key=lambda item: (
+                float(item.get('score', 0.0) or 0.0),
+                int(item.get('support_count', 0) or 0),
+                item.get('label', ''),
+            ),
+            reverse=True,
+        )
+
+    def _multi_parameter_variant_from_record(
+        self,
+        record: dict[str, Any],
+        *,
+        variant_role: str,
+    ) -> dict[str, Any] | None:
+        expression = str(record.get('expression') or '')
+        if not expression:
+            return None
+        law_family = self._equation_law_family(record)
+        vector_basis = self._equation_vector_basis(expression)
+        window_kind = self._equation_window_kind(expression)
+        theory_kind = self._equation_record_theory_kind(record)
+        parameters = dict(record.get('parameters') or {})
+        variant = {
+            'variant_role': variant_role,
+            'theory_kind': theory_kind,
+            'law_family': law_family,
+            'vector_basis': vector_basis,
+            'window_kind': window_kind,
+            'distance_exponent': self._equation_distance_exponent(record),
+            'cutoff_radius': parameters.get('cutoff_radius'),
+            'center_x': parameters.get('center_x'),
+            'center_y': parameters.get('center_y'),
+            'context': record.get('context'),
+            'seed': record.get('seed'),
+            'support_count': 1,
+            'score': float(record.get('score', 0.0) or 0.0),
+            'expression': expression,
+        }
+        variant['label'] = self._multi_parameter_variant_label(variant)
+        return _rounded_dict(variant)
+
+    def _equation_record_theory_kind(self, record: dict[str, Any]) -> str:
+        invariant_like = {
+            'law_family': self._equation_law_family(record),
+            'vector_basis': self._equation_vector_basis(str(record.get('expression') or '')),
+        }
+        return self._equation_invariant_theory_kind(invariant_like)
+
+    def _multi_parameter_variant_label(self, variant: dict[str, Any]) -> str:
+        parts = [str(variant.get('theory_kind') or 'equation')]
+        exponent = variant.get('distance_exponent')
+        if isinstance(exponent, (int, float)):
+            parts.append(f"separation^-{round(float(exponent), 3)}")
+        window = variant.get('window_kind')
+        if window and window != 'global':
+            parts.append(str(window))
+        cutoff = variant.get('cutoff_radius')
+        if isinstance(cutoff, (int, float)):
+            parts.append(f"cutoff~{round(float(cutoff), 3)}")
+        basis = variant.get('vector_basis')
+        if basis:
+            parts.append(str(basis))
+        return '/'.join(parts)
+
+    def _multi_parameter_law_race_signature(
+        self,
+        invariant: dict[str, Any],
+        selected_variant: dict[str, Any],
+        rival_variants: list[dict[str, Any]],
+        conflict_records: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        base_signature = self._equation_invariant_resolution_signature(invariant)
+        return {
+            'mode': 'multi_parameter_law_race',
+            'resolution_source': 'selected_law_holdout_conflict',
+            'invariant_key': invariant.get('key'),
+            'question': (
+                'Did the replay conflict come from the exponent, taper/window, '
+                'cutoff radius, vector basis, or a domain split?'
+            ),
+            'selected_variant': selected_variant,
+            'rival_variants': rival_variants[:5],
+            'candidate_variants': [selected_variant, *rival_variants[:5]],
+            'probe_points': list(base_signature.get('probe_points') or []),
+            'expected_discriminators': [
+                'near/mid/far residual magnitude ratios',
+                'inside/outside cutoff behavior',
+                'center-vector alignment',
+                'same-context seed stability',
+            ],
+            'conflict_contexts': sorted({
+                str(record.get('context'))
+                for record in conflict_records
+                if record.get('context')
+            }),
+            'conflict_seeds': sorted({
+                int(record.get('seed'))
+                for record in conflict_records
+                if isinstance(record.get('seed'), int)
+            }),
+        }
+
+    def _domain_split_hypothesis_for_invariant(
+        self,
+        invariant: dict[str, Any],
+        conflict_records: list[dict[str, Any]],
+        selected_variant: dict[str, Any],
+        rival_variants: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        source_context = str(invariant.get('context') or 'unknown')
+        conflict_contexts = sorted({
+            str(record.get('context'))
+            for record in conflict_records
+            if record.get('context')
+        })
+        split_kind = (
+            'within_context_regime_suspected'
+            if conflict_contexts and set(conflict_contexts) == {source_context}
+            else 'context_domain_split_suspected'
+        )
+        observed = [selected_variant, *rival_variants[:5]]
+        return {
+            'key': f"domain_split:{invariant.get('key', 'unknown')}",
+            'invariant_key': invariant.get('key'),
+            'split_kind': split_kind,
+            'status': 'split_suspected',
+            'source_context': source_context,
+            'conflict_contexts': conflict_contexts,
+            'conflict_count': len(conflict_records),
+            'selected_variant': selected_variant,
+            'observed_variants': observed,
+            'question': (
+                'Is this one universal law, or a piecewise/domain-limited law '
+                'whose exponent, taper, or cutoff changes by regime?'
+            ),
+            'candidate_predicates': [
+                'inside_vs_outside_cutoff_region',
+                'near_mid_far_distance_band',
+                'same_context_seed_regime',
+                'hidden_world_or_context_family',
+            ],
+            'falsifies_if': (
+                'a fresh probe keeps switching variants while every proposed '
+                'domain predicate fails to separate the cases'
+            ),
+            'severity': round(min(1.0, 0.68 + 0.05 * len(conflict_records)), 3),
+        }
+
+    def _autonomous_design_from_recommendation(
+        self,
+        source: str,
+        recommendation: dict[str, Any],
+    ) -> dict[str, Any]:
+        key = (
+            recommendation.get('key')
+            or recommendation.get('selected_law_replay_key')
+            or recommendation.get('replay_key')
+            or recommendation.get('invariant_key')
+            or recommendation.get('operator_prior_key')
+            or recommendation.get('theory_kind')
+            or recommendation.get('domain_key')
+            or source
+        )
+        signature = dict(recommendation.get('disagreement_signature') or {})
+        question = (
+            signature.get('question')
+            or recommendation.get('transfer_question')
+            or recommendation.get('reason')
+            or recommendation.get('expected_result')
+            or 'which experiment most sharply tests this candidate law?'
+        )
+        evidence = dict(recommendation.get('proof_evidence') or {})
+        if 'support_count' not in evidence:
+            evidence['support_count'] = int(recommendation.get('support_count', 0) or 0)
+        return {
+            'design_key': f'autonomous_design:{source}:{key}',
+            'source': source,
+            'experiment_kind': recommendation.get('experiment_kind'),
+            'priority': round(float(recommendation.get('priority', 0.5) or 0.5), 3),
+            'question': question,
+            'hypothesis': (
+                recommendation.get('primary_theory_label')
+                or recommendation.get('theory_kind')
+                or recommendation.get('domain_key')
+                or recommendation.get('source_domain')
+            ),
+            'experiment': recommendation.get('reason') or recommendation.get('expected_result'),
+            'expected_result': recommendation.get('expected_result'),
+            'falsifies_if': recommendation.get('falsifies_if'),
+            'next_action': self._autonomous_next_action(source, recommendation),
+            'probe_or_world': (
+                recommendation.get('probe_action')
+                or recommendation.get('suggested_world_seed')
+                or recommendation.get('world_seed')
+                or recommendation.get('suggested_campaign')
+                or {}
+            ),
+            'evidence': evidence,
+        }
+
+    def _autonomous_design_from_proof_gap(
+        self,
+        gap: dict[str, Any],
+    ) -> dict[str, Any]:
+        evidence = dict(gap.get('proof_evidence') or {})
+        return {
+            'design_key': f"autonomous_design:proof_gap:{gap.get('theory_kind')}",
+            'source': 'proof_gap',
+            'experiment_kind': 'proof_gap_holdout',
+            'priority': round(float(gap.get('priority', 0.72) or 0.72), 3),
+            'question': gap.get('next_check'),
+            'hypothesis': gap.get('theory_kind'),
+            'experiment': 'seek the smallest hidden or rival context that can break the proof gap',
+            'expected_result': 'the theory either survives the holdout or narrows its domain',
+            'falsifies_if': 'a hidden or rival context breaks the family without a domain explanation',
+            'next_action': 'run blind holdout before promoting this candidate to theorem memory',
+            'probe_or_world': {'world_selection': 'hidden_or_rival_context'},
+            'evidence': {
+                'support_count': int(evidence.get('support_count', 0) or 0),
+                'proof_rate': float(evidence.get('proof_rate', 0.0) or 0.0),
+                'context_count': int(evidence.get('context_count', 0) or 0),
+            },
+        }
+
+    def _autonomous_next_action(
+        self,
+        source: str,
+        recommendation: dict[str, Any],
+    ) -> str:
+        if source == 'selected_law_conflict':
+            return 'race whole-law variants and promote a domain split if no single law survives'
+        if source == 'invariant_resolution':
+            return 'run discriminating near/mid/far probes and record the winning exponent'
+        if source == 'selected_law_replay':
+            return 'rerun the selected law on a fresh seed, then queue a blind holdout'
+        if source == 'blind_holdout_validation':
+            return 'execute the blind holdout with labels withheld and record pass or conflict'
+        if source == 'post_run_replay':
+            return 'replay the old case from the start using the newer invariant memory'
+        if source == 'operator_anomaly':
+            return 'test a repaired operator or domain predicate against the failure context'
+        if source == 'domain_rediscovery':
+            return 'generate public observations only, hide the manifest, and rediscover the relation'
+        if source == 'domain_transfer':
+            return 'move the source-domain rule across the bridge and score the target falsifier'
+        return str(recommendation.get('reason') or 'run the sharpest available falsifier')
 
     def domain_world_blueprints(
         self,
@@ -4243,12 +5211,27 @@ class CumulativeTheoryMemory:
                 ),
                 'parameter_candidates': parameter_candidates,
             }
+            selected_resolution = self._selected_invariant_resolution(item['key'])
+            if selected_resolution:
+                selected_exponent = selected_resolution.get('distance_exponent')
+                item['selected_resolution'] = selected_resolution
+                item['selected_distance_exponent'] = selected_exponent
+                item['status'] = 'robust_law_parameter_selected'
+                item['parameter_candidates'] = self._mark_selected_parameter_candidate(
+                    parameter_candidates,
+                    selected_exponent,
+                )
+                if selected_exponent is not None:
+                    dominant = dict(item.get('dominant_parameters') or {})
+                    dominant['distance_exponent'] = selected_exponent
+                    item['dominant_parameters'] = _rounded_dict(dominant)
             item['robust_claim'] = self._equation_invariant_claim(item)
             item['next_experiment'] = self._equation_invariant_next_experiment(item)
             item['falsifies_if'] = self._equation_invariant_falsifier(item)
             consolidations.append(item)
 
         status_priority = {
+            'robust_law_parameter_selected': 5,
             'robust_law': 4,
             'robust_family_parameter_unresolved': 3,
             'candidate_family': 2,
@@ -4343,6 +5326,136 @@ class CumulativeTheoryMemory:
         except ValueError:
             return None
 
+    def _selected_invariant_resolution(
+        self,
+        invariant_key: str,
+    ) -> dict[str, Any] | None:
+        selections = []
+        for index, outcome in enumerate(self.planned_outcomes):
+            if outcome.get('experiment_kind') != 'equation_invariant_exponent_resolution':
+                continue
+            if outcome.get('invariant_key') != invariant_key:
+                continue
+            result = outcome.get('outcome')
+            if result not in {
+                'invariant_exponent_selected',
+                'invariant_rival_exponent_selected',
+            }:
+                continue
+            if result == 'invariant_rival_exponent_selected':
+                selected_scope = outcome.get('rival_scope')
+                selected_label = self._selected_label_from_scope(
+                    selected_scope,
+                    list(outcome.get('rival_theory_labels') or [])[:1],
+                )
+                score = float(outcome.get('rival_best_score', 0.0) or 0.0)
+            else:
+                selected_scope = outcome.get('target_scope')
+                selected_label = self._selected_label_from_scope(
+                    selected_scope,
+                    [outcome.get('primary_theory_label')],
+                )
+                score = float(outcome.get('best_score', 0.0) or 0.0)
+            exponent = self._distance_exponent_from_scope_or_label(
+                selected_scope,
+                selected_label,
+            )
+            if exponent is None:
+                continue
+            selections.append({
+                'invariant_key': invariant_key,
+                'outcome': result,
+                'distance_exponent': exponent,
+                'selected_scope': selected_scope,
+                'selected_label': selected_label,
+                'score': round(score, 3),
+                'seed': outcome.get('seed'),
+                'context': outcome.get('context'),
+                'evidence_index': index,
+                'expected_result': outcome.get('expected_result'),
+                'falsifies_if': outcome.get('falsifies_if'),
+            })
+        if not selections:
+            return None
+        return max(
+            selections,
+            key=lambda item: (
+                float(item.get('score', 0.0) or 0.0),
+                int(item.get('evidence_index', 0) or 0),
+            ),
+        )
+
+    def _selected_label_from_scope(
+        self,
+        scope: Any,
+        fallback_labels: list[Any],
+    ) -> str | None:
+        if scope:
+            text = str(scope)
+            if '/' in text:
+                parts = text.split('/')
+                if len(parts) >= 2:
+                    return '/'.join(parts[-2:])
+        for label in fallback_labels:
+            if label:
+                return str(label)
+        return None
+
+    def _distance_exponent_from_scope_or_label(
+        self,
+        *values: Any,
+    ) -> float | None:
+        for value in values:
+            text = str(value or '')
+            marker = 'separation^-'
+            if marker not in text:
+                marker = 'separation^'
+            if marker not in text:
+                continue
+            token = text.split(marker, 1)[1].strip().split('/')[0].split()[0]
+            cleaned = ''.join(
+                char for char in token
+                if char.isdigit() or char in {'-', '.', '_'}
+            ).replace('_', '.')
+            if cleaned.startswith('-') and marker == 'separation^-':
+                cleaned = cleaned[1:]
+            try:
+                return round(abs(float(cleaned)), 3)
+            except ValueError:
+                continue
+        return None
+
+    def _mark_selected_parameter_candidate(
+        self,
+        parameter_candidates: list[dict[str, Any]],
+        selected_exponent: Any,
+    ) -> list[dict[str, Any]]:
+        selected = (
+            round(float(selected_exponent), 3)
+            if isinstance(selected_exponent, (int, float))
+            else None
+        )
+        marked = []
+        found = False
+        for candidate in parameter_candidates:
+            item = dict(candidate)
+            value = item.get('value')
+            item['selected'] = (
+                selected is not None
+                and isinstance(value, (int, float))
+                and round(float(value), 3) == selected
+            )
+            found = found or bool(item['selected'])
+            marked.append(item)
+        if selected is not None and not found:
+            marked.append({
+                'name': 'distance_exponent',
+                'value': selected,
+                'support': 0,
+                'selected': True,
+            })
+        return marked
+
     def _equation_invariant_status(
         self,
         support_count: int,
@@ -4358,6 +5471,13 @@ class CumulativeTheoryMemory:
 
     def _equation_invariant_claim(self, item: dict[str, Any]) -> str:
         parameters = item.get('parameter_candidates') or []
+        if item['status'] == 'robust_law_parameter_selected':
+            selected = item.get('selected_distance_exponent')
+            return (
+                f"{item['context']} repeatedly fits {item['law_family']} "
+                f"using {item['vector_basis']}; exponent {selected} was "
+                "selected by the invariant resolution run"
+            )
         if item['status'] == 'robust_family_parameter_unresolved':
             values = ', '.join(str(parameter['value']) for parameter in parameters)
             return (
@@ -4376,6 +5496,11 @@ class CumulativeTheoryMemory:
         )
 
     def _equation_invariant_next_experiment(self, item: dict[str, Any]) -> str:
+        if item.get('selected_distance_exponent') is not None:
+            return (
+                'replay the selected exponent on fresh seeds and blind holdouts '
+                'before treating it as a theorem'
+            )
         if len(item.get('parameter_candidates') or []) > 1:
             return (
                 'run matched near/far residual probes to choose the distance '
@@ -4388,6 +5513,11 @@ class CumulativeTheoryMemory:
         return 'repeat on another seed before treating this as reusable theory'
 
     def _equation_invariant_falsifier(self, item: dict[str, Any]) -> str:
+        if item.get('selected_distance_exponent') is not None:
+            return (
+                'fresh-seed or blind holdout residuals prefer a rival exponent, '
+                'different vector basis, or no inverse-separation improvement'
+            )
         if item['law_family'] in {
             'inverse_separation_power',
             'localized_tapered_power',
@@ -4501,6 +5631,95 @@ class CumulativeTheoryMemory:
         )
         return recommendations[:limit]
 
+    def selected_law_replay_agenda(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Plan held-out replays for invariants whose parameter race selected a law."""
+        recommendations = []
+        for invariant in self.operator_prior_invariant_consolidations(
+            limit=max(5, len(self.equation_case_records)),
+        ):
+            selected_exponent = invariant.get('selected_distance_exponent')
+            if selected_exponent is None:
+                continue
+            replay_key = self._selected_law_replay_key(invariant)
+            outcome_stats = self._selected_law_replay_outcome_stats(replay_key)
+            if outcome_stats['settled_count'] > 0:
+                continue
+            theory_kind = self._equation_invariant_theory_kind(invariant)
+            selected_label = self._selected_law_label(invariant, theory_kind)
+            rival_labels = [
+                label for label in self._equation_invariant_variant_labels(
+                    invariant,
+                    theory_kind,
+                )
+                if label != selected_label
+            ]
+            support_count = int(invariant.get('support_count', 0) or 0)
+            score = float(invariant.get('mean_score', 0.0) or 0.0)
+            priority = max(
+                0.35,
+                min(
+                    0.995,
+                    0.9
+                    + min(0.06, 0.012 * support_count)
+                    + min(0.04, 0.04 * score)
+                    - min(0.22, 0.07 * outcome_stats['attempt_count']),
+                ),
+            )
+            probe_action = self._selected_law_probe_action(invariant)
+            recommendations.append({
+                'theory_kind': theory_kind,
+                'experiment_kind': 'selected_law_replay',
+                'priority': round(priority, 3),
+                'family_status': str(invariant.get('status', 'unknown')),
+                'target_context': 'selected_law_holdout_context',
+                'source_context': invariant.get('context'),
+                'avoid_contexts': [],
+                'reason': (
+                    'replay selected equation invariant after exponent race: '
+                    f"{invariant.get('robust_claim')}"
+                ),
+                'expected_result': (
+                    f"fresh observations should recover {selected_label} without "
+                    'reviving rival exponents'
+                ),
+                'falsifies_if': (
+                    'a fresh seed or blind holdout prefers a rival exponent, '
+                    'different vector basis, or no residual improvement'
+                ),
+                'proof_evidence': {
+                    'support_count': support_count,
+                    'context_count': 1,
+                    'proof_rate': 0.0,
+                    'mean_score': score,
+                    'leak_count': int(invariant.get('leak_count', 0) or 0),
+                    'attempt_count': outcome_stats['attempt_count'],
+                    'selected_distance_exponent': selected_exponent,
+                },
+                'invariant_key': invariant.get('key'),
+                'selected_law_replay_key': replay_key,
+                'selected_distance_exponent': selected_exponent,
+                'selected_resolution': dict(invariant.get('selected_resolution') or {}),
+                'equation_invariant': dict(invariant),
+                'primary_theory_label': selected_label,
+                'rival_theory_kinds': [],
+                'rival_theory_labels': rival_labels,
+                'probe_action': _rounded_dict(probe_action),
+                'suggested_campaign': {
+                    'command_family': 'equation_campaign',
+                    'world_selection': 'selected_source_context_fresh_seed',
+                    'enable_equation_probes': True,
+                },
+            })
+        recommendations.sort(
+            key=lambda item: (
+                item['priority'],
+                item['proof_evidence']['support_count'],
+                item.get('invariant_key', ''),
+            ),
+            reverse=True,
+        )
+        return recommendations[:limit]
+
     def post_run_replay_agenda(self, limit: int = 5) -> list[dict[str, Any]]:
         """Plan a second pass over old cases using laws learned after the first pass."""
         invariants = self.operator_prior_invariant_consolidations(
@@ -4535,8 +5754,19 @@ class CumulativeTheoryMemory:
                     continue
                 seen.add(replay_key)
                 outcome_stats = self._post_run_replay_outcome_stats(replay_key)
-                if outcome_stats['settled_count'] > 0:
+                record_outcome_stats = self._post_run_replay_record_outcome_stats(
+                    invariant,
+                    record,
+                )
+                if (
+                    outcome_stats['settled_count'] > 0
+                    or record_outcome_stats['settled_count'] > 0
+                ):
                     continue
+                attempt_count = max(
+                    outcome_stats['attempt_count'],
+                    record_outcome_stats['attempt_count'],
+                )
                 support_count = int(invariant.get('support_count', 0) or 0)
                 score = float(invariant.get('mean_score', 0.0) or 0.0)
                 issue_bonus = {
@@ -4553,7 +5783,7 @@ class CumulativeTheoryMemory:
                         + min(0.06, 0.012 * support_count)
                         + min(0.04, 0.04 * score)
                         + issue_bonus
-                        - min(0.20, 0.06 * outcome_stats['attempt_count']),
+                        - min(0.20, 0.06 * attempt_count),
                     ),
                 )
                 theory_kind = self._post_run_replay_theory_kind(invariant)
@@ -4580,7 +5810,7 @@ class CumulativeTheoryMemory:
                         'proof_rate': 0.0,
                         'mean_score': score,
                         'leak_count': int(invariant.get('leak_count', 0) or 0),
-                        'attempt_count': outcome_stats['attempt_count'],
+                        'attempt_count': attempt_count,
                     },
                     'replay_key': replay_key,
                     'replay_issue': issue,
@@ -4648,7 +5878,13 @@ class CumulativeTheoryMemory:
         )
         parameter_candidates = list(invariant.get('parameter_candidates') or [])
         parameter_match = True
-        if len(parameter_candidates) == 1:
+        selected_exponent = invariant.get('selected_distance_exponent')
+        if selected_exponent is not None:
+            expected = selected_exponent
+            actual = self._equation_distance_exponent(record)
+            if expected is not None and actual is not None:
+                parameter_match = round(float(expected), 3) == round(float(actual), 3)
+        elif len(parameter_candidates) == 1:
             expected = parameter_candidates[0].get('value')
             actual = self._equation_distance_exponent(record)
             if expected is not None and actual is not None:
@@ -4671,12 +5907,94 @@ class CumulativeTheoryMemory:
             f"{record.get('seed', 0)}:{issue}"
         )
 
+    def _selected_law_replay_key(self, invariant: dict[str, Any]) -> str:
+        exponent = invariant.get('selected_distance_exponent', 'unknown')
+        return f"selected_law_replay:{invariant.get('key', 'unknown')}:separation^-{exponent}"
+
+    def _selected_law_replay_outcome_stats(self, replay_key: str) -> dict[str, int]:
+        outcomes = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'selected_law_replay'
+            and outcome.get('selected_law_replay_key') == replay_key
+        ]
+        return {
+            'attempt_count': len(outcomes),
+            'confirmed_count': sum(
+                1 for outcome in outcomes
+                if outcome.get('outcome') == 'selected_law_replay_confirmed'
+            ),
+            'conflicted_count': sum(
+                1 for outcome in outcomes
+                if outcome.get('outcome') == 'selected_law_replay_conflicted'
+            ),
+            'settled_count': sum(
+                1 for outcome in outcomes
+                if outcome.get('outcome') in {
+                    'selected_law_replay_confirmed',
+                    'selected_law_replay_conflicted',
+                }
+            ),
+        }
+
+    def _selected_law_label(
+        self,
+        invariant: dict[str, Any],
+        theory_kind: str,
+    ) -> str:
+        selected = dict(invariant.get('selected_resolution') or {})
+        label = selected.get('selected_label')
+        if label:
+            return str(label)
+        exponent = invariant.get('selected_distance_exponent')
+        family_kind = self._family_key(theory_kind)
+        return f'{family_kind}/separation^-{exponent}'
+
+    def _selected_law_probe_action(self, invariant: dict[str, Any]) -> dict[str, Any]:
+        signature = self._equation_invariant_resolution_signature(invariant)
+        probe_points = list(signature.get('probe_points') or [])
+        if not probe_points:
+            return {}
+        point = probe_points[-1]
+        return {
+            'type': 'spawn',
+            'x': point.get('x'),
+            'y': point.get('y'),
+            'vx': 0.0,
+            'vy': 0.0,
+            'source': 'planned_selected_law_replay',
+            'probe_label': 'heldout_selected_exponent_check',
+            'invariant_key': invariant.get('key'),
+            'selected_distance_exponent': invariant.get('selected_distance_exponent'),
+        }
+
     def _post_run_replay_outcome_stats(self, replay_key: str) -> dict[str, int]:
         outcomes = [
             outcome for outcome in self.planned_outcomes
             if outcome.get('experiment_kind') == 'post_run_replay_revision'
             and outcome.get('replay_key') == replay_key
         ]
+        return self._post_run_replay_stats_for_outcomes(outcomes)
+
+    def _post_run_replay_record_outcome_stats(
+        self,
+        invariant: dict[str, Any],
+        record: dict[str, Any],
+    ) -> dict[str, int]:
+        replay_prefix = (
+            f"post_run_replay:{invariant.get('key', 'unknown')}:"
+            f"{record.get('seed', 0)}:"
+        )
+        outcomes = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'post_run_replay_revision'
+            and str(outcome.get('replay_key') or '').startswith(replay_prefix)
+        ]
+        return self._post_run_replay_stats_for_outcomes(outcomes)
+
+    def _post_run_replay_stats_for_outcomes(
+        self,
+        outcomes: list[dict[str, Any]],
+    ) -> dict[str, int]:
         return {
             'attempt_count': len(outcomes),
             'settled_count': sum(
@@ -4685,6 +6003,9 @@ class CumulativeTheoryMemory:
                     'replay_confirmed_learned_invariant',
                     'replay_found_residual_headline',
                     'replay_demoted_old_headline',
+                    'replay_needs_parameter_resolution',
+                    'replay_conflicted_with_invariant',
+                    'replay_leak_blocked',
                 }
             ),
         }
@@ -5199,10 +6520,13 @@ class CumulativeTheoryMemory:
             family.experiment_recommendation()
             for family in self.families.values()
         ]
+        recommendations.extend(self.selected_law_conflict_experiments(limit=limit * 2))
         recommendations.extend(self.disagreement_experiments(limit=limit * 2))
         recommendations.extend(
             self.equation_invariant_resolution_experiments(limit=limit * 2)
         )
+        recommendations.extend(self.selected_law_replay_agenda(limit=limit * 2))
+        recommendations.extend(self.blind_holdout_validation_experiments(limit=limit * 2))
         recommendations.extend(self.post_run_replay_agenda(limit=limit * 2))
         recommendations.extend(self.operator_prior_claim_experiments(limit=limit * 2))
         recommendations.extend(self.operator_prior_repair_experiments(limit=limit * 2))
@@ -5278,6 +6602,62 @@ class CumulativeTheoryMemory:
                 plan['primary_theory_label'] = recommendation.get('primary_theory_label')
                 plan['rival_theory_kinds'] = recommendation.get('rival_theory_kinds', [])
                 plan['rival_theory_labels'] = recommendation.get('rival_theory_labels', [])
+                plan['probe_action'] = recommendation.get('probe_action', {})
+            if recommendation.get('experiment_kind') == 'selected_law_replay':
+                plan['invariant_key'] = recommendation.get('invariant_key')
+                plan['selected_law_replay_key'] = recommendation.get(
+                    'selected_law_replay_key'
+                )
+                plan['selected_distance_exponent'] = recommendation.get(
+                    'selected_distance_exponent'
+                )
+                plan['selected_resolution'] = recommendation.get(
+                    'selected_resolution',
+                    {},
+                )
+                plan['equation_invariant'] = recommendation.get(
+                    'equation_invariant',
+                    {},
+                )
+                plan['primary_theory_label'] = recommendation.get('primary_theory_label')
+                plan['rival_theory_kinds'] = recommendation.get('rival_theory_kinds', [])
+                plan['rival_theory_labels'] = recommendation.get('rival_theory_labels', [])
+                plan['probe_action'] = recommendation.get('probe_action', {})
+            if recommendation.get('experiment_kind') in {
+                'selected_law_conflict_resolution',
+                'blind_holdout_validation',
+            }:
+                plan['invariant_key'] = recommendation.get('invariant_key')
+                plan['selected_law_replay_key'] = recommendation.get(
+                    'selected_law_replay_key'
+                )
+                plan['equation_invariant'] = recommendation.get(
+                    'equation_invariant',
+                    {},
+                )
+                plan['selected_multi_parameter_variant'] = recommendation.get(
+                    'selected_multi_parameter_variant',
+                    {},
+                )
+                plan['rival_multi_parameter_variants'] = recommendation.get(
+                    'rival_multi_parameter_variants',
+                    [],
+                )
+                plan['primary_theory_label'] = recommendation.get('primary_theory_label')
+                plan['rival_theory_kinds'] = recommendation.get('rival_theory_kinds', [])
+                plan['rival_theory_labels'] = recommendation.get('rival_theory_labels', [])
+                plan['disagreement_signature'] = recommendation.get(
+                    'disagreement_signature',
+                    {},
+                )
+                plan['domain_split_hypothesis'] = recommendation.get(
+                    'domain_split_hypothesis',
+                    {},
+                )
+                plan['blind_holdout_plan'] = recommendation.get(
+                    'blind_holdout_plan',
+                    {},
+                )
                 plan['probe_action'] = recommendation.get('probe_action', {})
             if recommendation.get('probe_action'):
                 plan['probe_action'] = _rounded_dict(
@@ -5490,6 +6870,12 @@ class CumulativeTheoryMemory:
             'domain_world_discoveries': self.domain_world_discovery_reports(),
             'domain_world_transfer_evidence': self.domain_world_transfer_evidence(),
             'domain_transfer_experiments': self.domain_transfer_experiments(),
+            'domain_rediscovery_experiments': self.domain_rediscovery_experiments(),
+            'autonomous_experiment_design_agenda': (
+                self.autonomous_experiment_design_agenda()
+            ),
+            'theorem_memory': self.theorem_memory(),
+            'blind_holdout_benchmark': self.blind_holdout_benchmark_report(),
             'autonomous_scientist_evidence': self.autonomous_scientist_evidence(),
             'arithmetic_rediscovery_evidence': self.arithmetic_rediscovery_evidence(),
             'latest_autonomous_scientist_report': self.latest_autonomous_scientist_report(),
@@ -5501,6 +6887,14 @@ class CumulativeTheoryMemory:
             ),
             'equation_invariant_resolution_experiments': (
                 self.equation_invariant_resolution_experiments()
+            ),
+            'selected_law_replay_agenda': self.selected_law_replay_agenda(),
+            'selected_law_conflict_experiments': (
+                self.selected_law_conflict_experiments()
+            ),
+            'law_domain_split_hypotheses': self.law_domain_split_hypotheses(),
+            'blind_holdout_validation_experiments': (
+                self.blind_holdout_validation_experiments()
             ),
             'post_run_replay_agenda': self.post_run_replay_agenda(),
             'operator_prior_feedback': self.operator_prior_feedback(),
@@ -5789,6 +7183,26 @@ class CumulativeTheoryMemory:
             if context:
                 return str(context)
             return candidates[0] if candidates else 'standard'
+        if target == 'selected_law_holdout_context':
+            source_context = recommendation.get('source_context')
+            if source_context:
+                return str(source_context)
+            invariant = dict(recommendation.get('equation_invariant') or {})
+            context = invariant.get('context')
+            if context:
+                return str(context)
+            return candidates[0] if candidates else 'standard'
+        if target == 'selected_law_conflict_context':
+            source_context = recommendation.get('source_context')
+            if source_context:
+                return str(source_context)
+            invariant = dict(recommendation.get('equation_invariant') or {})
+            context = invariant.get('context')
+            if context:
+                return str(context)
+            return candidates[0] if candidates else 'standard'
+        if target == 'blind_holdout_benchmark_context':
+            return 'hidden_procedural'
         if target == 'operator_prior_unseen_context':
             for world_type in candidates:
                 if world_type not in avoid:
@@ -5895,7 +7309,67 @@ class CumulativeTheoryMemory:
             return 'invariant_resolution_weak'
         return 'invariant_resolution_absent'
 
+    def _selected_law_replay_outcome_label(
+        self,
+        target_found: bool,
+        target_proof_passed: bool,
+        rival_found: bool,
+        rival_proof_passed: bool,
+    ) -> str:
+        if target_found and target_proof_passed and rival_found and rival_proof_passed:
+            return 'selected_law_replay_still_ambiguous'
+        if target_found and target_proof_passed:
+            return 'selected_law_replay_confirmed'
+        if rival_found and rival_proof_passed:
+            return 'selected_law_replay_conflicted'
+        if target_found:
+            return 'selected_law_replay_weak'
+        if rival_found:
+            return 'selected_law_replay_rival_weak'
+        return 'selected_law_replay_absent'
+
+    def _selected_law_conflict_outcome_label(
+        self,
+        target_found: bool,
+        target_proof_passed: bool,
+        rival_found: bool,
+        rival_proof_passed: bool,
+    ) -> str:
+        if target_found and target_proof_passed and rival_found and rival_proof_passed:
+            return 'conflict_domain_split_supported'
+        if target_found and target_proof_passed:
+            return 'conflict_selected_restored'
+        if rival_found and rival_proof_passed:
+            return 'conflict_rival_supported'
+        if target_found and rival_found:
+            return 'conflict_still_ambiguous'
+        if target_found:
+            return 'conflict_selected_weak'
+        if rival_found:
+            return 'conflict_rival_weak'
+        return 'conflict_evidence_absent'
+
+    def _blind_holdout_validation_outcome_label(
+        self,
+        target_found: bool,
+        target_proof_passed: bool,
+        rival_found: bool,
+        rival_proof_passed: bool,
+    ) -> str:
+        if rival_found and rival_proof_passed:
+            return 'blind_holdout_conflicted'
+        if target_found and target_proof_passed:
+            return 'blind_holdout_confirmed'
+        if rival_found:
+            return 'blind_holdout_rival_weak'
+        if target_found:
+            return 'blind_holdout_weak'
+        return 'blind_holdout_absent'
+
     def _matches_plan_target(self, plan: dict, theory: dict) -> bool:
+        variant = dict(plan.get('selected_multi_parameter_variant') or {})
+        if variant:
+            return self._theory_matches_multi_parameter_variant(theory, variant)
         family = self._family_key(str(theory.get('theory_kind', '')))
         primary_label = plan.get('primary_theory_label')
         if primary_label:
@@ -5918,11 +7392,44 @@ class CumulativeTheoryMemory:
         return None
 
     def _matches_plan_rival(self, plan: dict, theory: dict) -> bool:
+        variants = list(plan.get('rival_multi_parameter_variants') or [])
+        if variants:
+            return any(
+                self._theory_matches_multi_parameter_variant(theory, dict(variant))
+                for variant in variants
+            )
         family = self._family_key(str(theory.get('theory_kind', '')))
         label = self._theory_variant_label(theory)
         rival_families = set(plan.get('rival_theory_kinds') or [])
         rival_labels = set(plan.get('rival_theory_labels') or [])
         return family in rival_families or label in rival_labels
+
+    def _theory_matches_multi_parameter_variant(
+        self,
+        theory: dict,
+        variant: dict[str, Any],
+    ) -> bool:
+        theory_family = self._family_key(str(theory.get('theory_kind', '')))
+        variant_family = self._family_key(str(variant.get('theory_kind', '')))
+        if theory_family != variant_family:
+            return False
+        parameters = dict(theory.get('parameters') or {})
+        variant_exponent = variant.get('distance_exponent')
+        if isinstance(variant_exponent, (int, float)):
+            theory_exponent = parameters.get('distance_exponent')
+            if not isinstance(theory_exponent, (int, float)):
+                return False
+            if abs(float(theory_exponent) - float(variant_exponent)) > 0.025:
+                return False
+        variant_cutoff = variant.get('cutoff_radius')
+        theory_cutoff = parameters.get('cutoff_radius')
+        if (
+            isinstance(variant_cutoff, (int, float))
+            and isinstance(theory_cutoff, (int, float))
+            and abs(float(theory_cutoff) - float(variant_cutoff)) > 0.25
+        ):
+            return False
+        return True
 
     def _theory_variant_label(self, theory: dict) -> str:
         theory_kind = str(theory.get('theory_kind', 'unknown'))
@@ -6143,6 +7650,54 @@ class CumulativeTheoryMemory:
                     f"confidence={equation['confidence']:.2f}"
                 )
                 lines.append(f"      expression: {equation['expression']}")
+        theorems = self.theorem_memory(limit=limit)
+        if theorems:
+            lines.append("  Theorem memory:")
+            for theorem in theorems:
+                evidence = dict(theorem.get('evidence') or {})
+                lines.append(
+                    f"    {theorem['theorem_kind']}: status={theorem['status']}, "
+                    f"support={evidence.get('support_count', 0)}"
+                )
+                lines.append(f"      statement: {theorem.get('statement')}")
+        selected_replays = self.selected_law_replay_agenda(limit=limit)
+        if selected_replays:
+            lines.append("  Selected-law replay agenda:")
+            for item in selected_replays:
+                lines.append(
+                    f"    {item['primary_theory_label']}: {item['source_context']} "
+                    f"priority={item['priority']:.2f}"
+                )
+                lines.append(f"      expected: {item['expected_result']}")
+        conflict_experiments = self.selected_law_conflict_experiments(limit=limit)
+        if conflict_experiments:
+            lines.append("  Selected-law conflict resolution:")
+            for item in conflict_experiments:
+                rivals = ','.join(item.get('rival_theory_labels', [])[:3]) or 'none'
+                lines.append(
+                    f"    {item['primary_theory_label']} vs {rivals}: "
+                    f"{item['source_context']} priority={item['priority']:.2f}"
+                )
+                lines.append(f"      expected: {item['expected_result']}")
+        domain_splits = self.law_domain_split_hypotheses(limit=limit)
+        if domain_splits:
+            lines.append("  Law domain split hypotheses:")
+            for item in domain_splits:
+                contexts = ','.join(item.get('conflict_contexts', [])[:3]) or 'none'
+                lines.append(
+                    f"    {item['invariant_key']}: status={item['status']} "
+                    f"kind={item['split_kind']} contexts={contexts}"
+                )
+                lines.append(f"      question: {item['question']}")
+        blind_validations = self.blind_holdout_validation_experiments(limit=limit)
+        if blind_validations:
+            lines.append("  Blind holdout validation agenda:")
+            for item in blind_validations:
+                lines.append(
+                    f"    {item['primary_theory_label']}: hidden_holdout "
+                    f"priority={item['priority']:.2f}"
+                )
+                lines.append(f"      expected: {item['expected_result']}")
         replay_agenda = self.post_run_replay_agenda(limit=limit)
         if replay_agenda:
             lines.append("  Post-run replay agenda:")
@@ -6227,6 +7782,32 @@ class CumulativeTheoryMemory:
                     f"priority={item['priority']:.2f}"
                 )
                 lines.append(f"      question: {item['transfer_question']}")
+        domain_rediscovery = self.domain_rediscovery_experiments(limit=limit)
+        if domain_rediscovery:
+            lines.append("  Domain rediscovery agenda:")
+            for item in domain_rediscovery:
+                lines.append(
+                    f"    {item['domain_key']}: status={item['family_status']}, "
+                    f"priority={item['priority']:.2f}"
+                )
+                lines.append(f"      next: {item['reason']}")
+        designs = self.autonomous_experiment_design_agenda(limit=limit)
+        if designs:
+            lines.append("  Autonomous experiment designs:")
+            for item in designs:
+                lines.append(
+                    f"    {item['source']}:{item['experiment_kind']} "
+                    f"priority={item['priority']:.2f}"
+                )
+                lines.append(f"      falsifier: {item['falsifies_if']}")
+        blind = self.blind_holdout_benchmark_report(limit=limit)
+        if blind['plan']:
+            lines.append(
+                "  Blind holdout benchmark: "
+                f"cases={blind['benchmark_count']}, "
+                f"ready={blind['ready_for_blind_run']}, "
+                f"leak_blockers={blind['leak_blocker_count']}"
+            )
         disagreements = self.disagreement_experiments(limit=limit)
         if disagreements:
             lines.append("  Disagreement probes:")
