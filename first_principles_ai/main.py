@@ -21,6 +21,7 @@ import os
 import contextlib
 import io
 import json
+import time
 from pathlib import Path
 
 # Add project root to path
@@ -47,6 +48,7 @@ from agent.equation_workbench import EquationWorkbench
 from agent.compute_budget import plan_adaptive_compute_budget
 from agent.discovery_loop import CumulativeTheoryMemory
 from agent.math_foundation import MathFoundationWorkbench
+from agent.resource_efficiency import estimate_json_bytes
 from agent.explorer import (
     ExplorationPlanner,
     explain_exploration_outcome,
@@ -1688,6 +1690,18 @@ def run_hf_non_final_campaign(
             if float(record.get('benchmark_coverage', 0.0) or 0.0) >= 1.0
         ],
     })
+    arithmetic_report = theory_memory.record_arithmetic_rediscovery(
+        seed_start=domain_seed,
+        seed_count=max(1, min(2, int(scientist_seed_count or 1))),
+        variants=scientist_variants,
+    )
+    _emit_hf_progress('arithmetic_rediscovery_finish', {
+        'status': arithmetic_report.get('status'),
+        'coverage': arithmetic_report.get('coverage'),
+        'discovered_target_count': arithmetic_report.get('discovered_target_count'),
+        'target_count': arithmetic_report.get('target_count'),
+        'leaked_manifest': arithmetic_report.get('leaked_manifest'),
+    })
     compaction_events.append(_hf_compact_theory_memory(
         theory_memory,
         phase='after_domain_worlds',
@@ -1809,6 +1823,7 @@ def run_hf_non_final_campaign(
         'compaction_events': compaction_events,
         'resource_efficiency': resource_efficiency,
         'prep_results': prep_results,
+        'arithmetic_rediscovery_report': arithmetic_report,
         'autonomous_scientist_report': scientist_report,
         'theory_memory': theory_memory.to_dict(),
     }
@@ -1832,6 +1847,268 @@ def run_hf_non_final_campaign(
     return result
 
 
+def run_hf_adaptive_comparison(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    seeds: int = 1,
+    steps: int = 80,
+    object_counts: list[int] = None,
+    world_types: list[str] = None,
+    hidden_worlds: int = 0,
+    num_agents: int = 2,
+    output_file: str | None = None,
+    domain_seed: int = 0,
+    domain_variant: int = 0,
+    domain_seed_count: int = 1,
+    domain_variants: list[int] | None = None,
+    scientist_seed_count: int = 3,
+    scientist_variants: list[int] | None = None,
+    live_scientist: bool = True,
+    include_prep: bool = True,
+    auto_compact: bool = True,
+    compact_keep_records: int = 96,
+    compact_keep_operator_outcomes: int = 192,
+    max_adaptive_steps: int | None = None,
+    max_adaptive_seeds: int | None = None,
+    max_adaptive_hidden_worlds: int | None = None,
+    prep_runner=None,
+) -> dict:
+    """Run fixed and adaptive non-final campaigns from the same memory snapshot."""
+    base_memory = theory_memory or CumulativeTheoryMemory()
+    base_snapshot = base_memory.to_dict()
+    object_counts = object_counts or [3]
+    world_types = world_types or ['standard']
+    domain_variants = domain_variants or [domain_variant]
+    scientist_variants = scientist_variants or domain_variants
+
+    _emit_hf_progress('adaptive_comparison_start', {
+        'runs_final': False,
+        'world_types': world_types,
+        'seeds': seeds,
+        'steps': steps,
+        'hidden_worlds': hidden_worlds,
+        'domain_seed_count': domain_seed_count,
+        'domain_variants': domain_variants,
+        'scientist_seed_count': scientist_seed_count,
+        'scientist_variants': scientist_variants,
+    })
+    variants = []
+    for name, adaptive_enabled in (
+        ('fixed_budget', False),
+        ('adaptive_budget', True),
+    ):
+        variant_memory = CumulativeTheoryMemory.from_dict(base_snapshot)
+        _emit_hf_progress('adaptive_comparison_variant_start', {
+            'variant': name,
+            'adaptive_compute': adaptive_enabled,
+        })
+        started = time.perf_counter()
+        result = run_hf_non_final_campaign(
+            theory_memory=variant_memory,
+            seeds=seeds,
+            steps=steps,
+            object_counts=object_counts,
+            world_types=world_types,
+            hidden_worlds=hidden_worlds,
+            num_agents=num_agents,
+            output_file=None,
+            domain_seed=domain_seed,
+            domain_variant=domain_variant,
+            domain_seed_count=domain_seed_count,
+            domain_variants=domain_variants,
+            scientist_seed_count=scientist_seed_count,
+            scientist_variants=scientist_variants,
+            live_scientist=live_scientist,
+            include_prep=include_prep,
+            auto_compact=auto_compact,
+            compact_keep_records=compact_keep_records,
+            compact_keep_operator_outcomes=compact_keep_operator_outcomes,
+            adaptive_compute=adaptive_enabled,
+            max_adaptive_steps=max_adaptive_steps,
+            max_adaptive_seeds=max_adaptive_seeds,
+            max_adaptive_hidden_worlds=max_adaptive_hidden_worlds,
+            prep_runner=prep_runner,
+        )
+        elapsed_seconds = time.perf_counter() - started
+        telemetry = _hf_campaign_telemetry(
+            name,
+            result,
+            elapsed_seconds=elapsed_seconds,
+        )
+        variants.append({
+            'variant': name,
+            'adaptive_compute': adaptive_enabled,
+            'telemetry': telemetry,
+            'result': result,
+        })
+        _emit_hf_progress('adaptive_comparison_variant_finish', telemetry)
+
+    comparison = _compare_hf_variant_telemetry(
+        fixed=variants[0]['telemetry'],
+        adaptive=variants[1]['telemetry'],
+    )
+    report = {
+        'run_kind': 'hf_adaptive_comparison',
+        'runs_final': False,
+        'variant_count': len(variants),
+        'comparison': comparison,
+        'variants': variants,
+        'starting_memory': {
+            'records': len(base_memory.records),
+            'operator_prior_outcomes': len(base_memory.operator_prior_outcomes),
+            'domain_world_records': len(base_memory.domain_world_records),
+            'autonomous_scientist_records': len(base_memory.autonomous_scientist_records),
+            'arithmetic_rediscovery_records': len(
+                base_memory.arithmetic_rediscovery_records
+            ),
+            'compressed_experience_shards': len(base_memory.compressed_experience_shards),
+            'canonical_law_shards': len(base_memory.canonical_law_shards),
+        },
+    }
+    if output_file:
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open('w', encoding='utf-8') as handle:
+            json.dump(report, handle, indent=2, sort_keys=True)
+        _emit_hf_progress('artifact_written', {
+            'output_file': str(output_path),
+        })
+    _emit_hf_progress('adaptive_comparison_finish', comparison)
+    return report
+
+
+def _hf_campaign_telemetry(
+    variant: str,
+    result: dict,
+    *,
+    elapsed_seconds: float,
+) -> dict:
+    readiness = dict(result.get('readiness') or {})
+    plan = dict(result.get('compute_budget_plan') or {})
+    requested = dict(plan.get('requested') or {})
+    effective = dict(plan.get('effective') or requested)
+    resource = dict(result.get('resource_efficiency') or {})
+    canonical = dict(resource.get('canonical_law_compression') or {})
+    arithmetic = dict(result.get('arithmetic_rediscovery_report') or {})
+    memory_bytes = estimate_json_bytes(result.get('theory_memory') or {})
+    artifact_bytes = estimate_json_bytes(result)
+    compute_units = _hf_compute_units(effective)
+    readiness_score = float(readiness.get('readiness_score', 0.0) or 0.0)
+    elapsed_seconds = max(0.001, float(elapsed_seconds or 0.001))
+    return {
+        'variant': variant,
+        'elapsed_seconds': round(elapsed_seconds, 3),
+        'readiness_score': round(readiness_score, 3),
+        'readiness_status': readiness.get('status'),
+        'passed_gate_count': readiness.get('passed_gate_count', 0),
+        'gate_count': readiness.get('gate_count', 0),
+        'prep_result_count': result.get('prep_result_count', 0),
+        'prep_ready_count': sum(
+            1 for item in result.get('prep_results') or []
+            if item.get('ready_for_final')
+        ),
+        'compute_requested': requested,
+        'compute_effective': effective,
+        'compute_units': compute_units,
+        'compute_expanded': bool(plan.get('expanded')),
+        'residual_pressure_score': (
+            dict(plan.get('residual_pressure') or {}).get('score', 0.0)
+        ),
+        'artifact_bytes': artifact_bytes,
+        'memory_bytes': memory_bytes,
+        'memory_kb': round(memory_bytes / 1024, 3),
+        'readiness_per_second': round(readiness_score / elapsed_seconds, 5),
+        'readiness_per_compute_unit': round(
+            readiness_score / max(1, compute_units),
+            7,
+        ),
+        'readiness_per_memory_kb': round(
+            readiness_score / max(0.001, memory_bytes / 1024),
+            5,
+        ),
+        'compressed_shards': resource.get('compressed_shard_count', 0),
+        'long_run_ready': resource.get('long_run_ready', False),
+        'canonical_law_shards': canonical.get('canonical_law_shard_count', 0),
+        'canonical_law_count': canonical.get('canonical_law_count', 0),
+        'canonical_law_ready': canonical.get('long_run_law_ready', False),
+        'arithmetic_coverage': arithmetic.get('coverage', 0.0),
+        'arithmetic_status': arithmetic.get('status'),
+    }
+
+
+def _compare_hf_variant_telemetry(
+    *,
+    fixed: dict,
+    adaptive: dict,
+) -> dict:
+    readiness_delta = round(
+        float(adaptive.get('readiness_score', 0.0) or 0.0)
+        - float(fixed.get('readiness_score', 0.0) or 0.0),
+        3,
+    )
+    compute_ratio = _safe_float_ratio(
+        adaptive.get('compute_units', 0),
+        fixed.get('compute_units', 0),
+    )
+    memory_ratio = _safe_float_ratio(
+        adaptive.get('memory_bytes', 0),
+        fixed.get('memory_bytes', 0),
+    )
+    readiness_per_compute_delta = round(
+        float(adaptive.get('readiness_per_compute_unit', 0.0) or 0.0)
+        - float(fixed.get('readiness_per_compute_unit', 0.0) or 0.0),
+        7,
+    )
+    adaptive_kept_quality = (
+        float(adaptive.get('readiness_score', 0.0) or 0.0)
+        >= float(fixed.get('readiness_score', 0.0) or 0.0)
+        and int(adaptive.get('passed_gate_count', 0) or 0)
+        >= int(fixed.get('passed_gate_count', 0) or 0)
+    )
+    adaptive_kept_compression = (
+        bool(adaptive.get('canonical_law_ready'))
+        and bool(adaptive.get('long_run_ready'))
+    )
+    recommendation = (
+        'keep_adaptive_budgeting'
+        if adaptive_kept_quality and adaptive_kept_compression
+        else 'prefer_fixed_until_adaptive_quality_recovers'
+    )
+    return {
+        'fixed_variant': fixed['variant'],
+        'adaptive_variant': adaptive['variant'],
+        'readiness_delta': readiness_delta,
+        'adaptive_kept_or_improved_quality': adaptive_kept_quality,
+        'adaptive_kept_compression_ready': adaptive_kept_compression,
+        'compute_unit_ratio_adaptive_to_fixed': compute_ratio,
+        'memory_byte_ratio_adaptive_to_fixed': memory_ratio,
+        'readiness_per_compute_unit_delta': readiness_per_compute_delta,
+        'fixed_compute_units': fixed.get('compute_units', 0),
+        'adaptive_compute_units': adaptive.get('compute_units', 0),
+        'fixed_memory_bytes': fixed.get('memory_bytes', 0),
+        'adaptive_memory_bytes': adaptive.get('memory_bytes', 0),
+        'fixed_readiness': fixed.get('readiness_score', 0.0),
+        'adaptive_readiness': adaptive.get('readiness_score', 0.0),
+        'recommendation': recommendation,
+    }
+
+
+def _hf_compute_units(effective: dict) -> int:
+    steps = max(1, int(effective.get('steps', 1) or 1))
+    seeds = max(1, int(effective.get('seeds', 1) or 1))
+    hidden_worlds = max(0, int(effective.get('hidden_worlds', 0) or 0))
+    return steps * seeds * max(1, hidden_worlds + 1)
+
+
+def _safe_float_ratio(numerator, denominator) -> float:
+    try:
+        denominator = float(denominator)
+        if denominator <= 0:
+            return 0.0
+        return round(float(numerator) / denominator, 3)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _emit_hf_progress(event: str, payload: dict):
     print(
         "HF_PROGRESS "
@@ -1853,6 +2130,9 @@ def _hf_compact_theory_memory(
         recommended_operator_window=keep_recent_operator_outcomes,
     )
     if enabled:
+        canonical = theory_memory.compact_canonical_laws(
+            source=f'hf_batch:{phase}',
+        )
         after = theory_memory.compact_experience(
             keep_recent_records=keep_recent_records,
             keep_recent_operator_outcomes=keep_recent_operator_outcomes,
@@ -1860,6 +2140,7 @@ def _hf_compact_theory_memory(
         )
     else:
         after = before
+        canonical = theory_memory.canonical_law_compression_report()
     event = {
         'phase': phase,
         'enabled': enabled,
@@ -1870,6 +2151,9 @@ def _hf_compact_theory_memory(
         'compressed_shards': after['compressed_shard_count'],
         'detail_reduction_ratio': after['detail_reduction_ratio'],
         'long_run_ready': after['long_run_ready'],
+        'canonical_law_shards': canonical['canonical_law_shard_count'],
+        'canonical_law_count': canonical['canonical_law_count'],
+        'canonical_law_ready': canonical['long_run_law_ready'],
     }
     _emit_hf_progress('memory_compaction_checkpoint', event)
     return event
@@ -3127,6 +3411,8 @@ if __name__ == '__main__':
                         help='Run the non-final scientist loop over repeated domain-world discoveries')
     parser.add_argument('--hf-non-final-campaign', action='store_true',
                         help='Run a Hugging Face friendly non-final discovery campaign')
+    parser.add_argument('--hf-adaptive-comparison', action='store_true',
+                        help='Compare fixed and adaptive HF non-final campaigns from one memory snapshot')
     parser.add_argument('--math-final-discovery', action='store_true',
                         help='Run the final math discovery campaign when the user is ready to watch')
     parser.add_argument('--equation-hidden-worlds', type=int, default=0,
@@ -3298,6 +3584,50 @@ if __name__ == '__main__':
             and not args.no_save_theory_memory
         ):
             theory_memory.save(args.theory_memory_file)
+        raise SystemExit(0)
+
+    if args.hf_adaptive_comparison:
+        theory_memory = theory_memory or CumulativeTheoryMemory()
+        comparison_report = run_hf_adaptive_comparison(
+            theory_memory=theory_memory,
+            seeds=args.seeds,
+            steps=args.benchmark_steps,
+            object_counts=_parse_csv_ints(args.object_counts),
+            world_types=_parse_csv_worlds(args.world_types),
+            hidden_worlds=args.equation_hidden_worlds,
+            num_agents=args.agents,
+            output_file=args.hf_output_file,
+            domain_seed=args.domain_world_seed,
+            domain_variant=args.domain_world_variant,
+            domain_seed_count=args.domain_world_seed_count,
+            domain_variants=(
+                _parse_csv_ints(args.domain_world_variants)
+                if args.domain_world_variants
+                else [args.domain_world_variant]
+            ),
+            scientist_seed_count=args.scientist_seed_count,
+            scientist_variants=_parse_csv_ints(args.scientist_variants),
+            live_scientist=not args.hf_no_live_scientist,
+            include_prep=not args.hf_skip_prep,
+            auto_compact=not args.hf_no_auto_compact,
+            compact_keep_records=args.memory_keep_records,
+            compact_keep_operator_outcomes=args.memory_keep_operator_outcomes,
+            max_adaptive_steps=args.hf_max_adaptive_steps,
+            max_adaptive_seeds=args.hf_max_adaptive_seeds,
+            max_adaptive_hidden_worlds=args.hf_max_adaptive_hidden_worlds,
+        )
+        if (
+            args.theory_memory_file
+            and not args.no_save_theory_memory
+            and comparison_report.get('variants')
+        ):
+            adaptive_memory = comparison_report['variants'][-1]['result'].get(
+                'theory_memory',
+                {},
+            )
+            CumulativeTheoryMemory.from_dict(adaptive_memory).save(
+                args.theory_memory_file
+            )
         raise SystemExit(0)
 
     if args.hf_non_final_campaign:

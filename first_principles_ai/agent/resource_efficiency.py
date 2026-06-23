@@ -67,6 +67,57 @@ def build_compressed_experience_shard(
     return shard
 
 
+def build_canonical_law_shard(
+    *,
+    domain_world_records: list[dict[str, Any]],
+    autonomous_scientist_records: list[dict[str, Any]],
+    arithmetic_rediscovery_records: list[dict[str, Any]] | None = None,
+    operator_prior_outcomes: list[dict[str, Any]] | None = None,
+    source: str = 'canonical_law_compaction',
+    sample_limit: int = 3,
+) -> dict[str, Any]:
+    """Distill repeated equations/invariants into compact canonical law rows."""
+    arithmetic_rediscovery_records = arithmetic_rediscovery_records or []
+    operator_prior_outcomes = operator_prior_outcomes or []
+    law_events = [
+        *_law_events_from_domain_worlds(domain_world_records),
+        *_law_events_from_scientist_records(autonomous_scientist_records),
+        *_law_events_from_arithmetic_records(arithmetic_rediscovery_records),
+        *_law_events_from_operator_outcomes(operator_prior_outcomes),
+    ]
+    laws = _canonical_law_summaries(law_events, sample_limit=sample_limit)
+    raw_payload = {
+        'domain_world_records': domain_world_records,
+        'autonomous_scientist_records': autonomous_scientist_records,
+        'arithmetic_rediscovery_records': arithmetic_rediscovery_records,
+        'operator_prior_outcomes': operator_prior_outcomes,
+    }
+    compressed_payload = {'canonical_laws': laws}
+    shard = {
+        'version': 1,
+        'source': source,
+        'source_counts': {
+            'domain_world_records': len(domain_world_records),
+            'autonomous_scientist_records': len(autonomous_scientist_records),
+            'arithmetic_rediscovery_records': len(arithmetic_rediscovery_records),
+            'operator_prior_outcomes': len(operator_prior_outcomes),
+            'law_events': len(law_events),
+        },
+        'canonical_laws': laws,
+        'estimated_raw_bytes': estimate_json_bytes(raw_payload),
+        'estimated_canonical_bytes': estimate_json_bytes(compressed_payload),
+    }
+    shard['compression_ratio'] = _safe_ratio(
+        shard['estimated_raw_bytes'],
+        shard['estimated_canonical_bytes'],
+    )
+    shard['shard_id'] = _stable_digest({
+        'source_counts': shard['source_counts'],
+        'canonical_laws': laws,
+    })
+    return shard
+
+
 def resource_efficiency_report(
     *,
     records: list[dict[str, Any]],
@@ -178,6 +229,49 @@ def resource_efficiency_report(
     }
 
 
+def canonical_law_compression_report(
+    *,
+    canonical_law_shards: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize whether canonical law compression is active and useful."""
+    canonical_law_count = sum(
+        len(shard.get('canonical_laws') or [])
+        for shard in canonical_law_shards
+    )
+    robust_law_count = sum(
+        1
+        for shard in canonical_law_shards
+        for law in shard.get('canonical_laws') or []
+        if law.get('status') in {'robust_law', 'arithmetic_ready', 'confirmed_operator'}
+    )
+    raw_bytes = sum(
+        int(shard.get('estimated_raw_bytes', 0) or 0)
+        for shard in canonical_law_shards
+    )
+    canonical_bytes = sum(
+        int(shard.get('estimated_canonical_bytes', 0) or 0)
+        for shard in canonical_law_shards
+    )
+    actions = []
+    if not canonical_law_shards:
+        actions.append({
+            'action_kind': 'compact_canonical_laws',
+            'reason': 'long runs need reusable law summaries in addition to raw event shards',
+            'runs_final': False,
+        })
+    return {
+        'version': 1,
+        'canonical_law_shard_count': len(canonical_law_shards),
+        'canonical_law_count': canonical_law_count,
+        'robust_law_count': robust_law_count,
+        'estimated_raw_law_bytes': raw_bytes,
+        'estimated_canonical_law_bytes': canonical_bytes,
+        'estimated_law_compression_ratio': _safe_ratio(raw_bytes, canonical_bytes),
+        'long_run_law_ready': bool(canonical_law_shards) and canonical_law_count > 0,
+        'recommended_actions': actions,
+    }
+
+
 def operator_outcome_anchor_indexes(
     outcomes: list[dict[str, Any]],
     *,
@@ -209,6 +303,256 @@ def operator_outcome_anchor_indexes(
         for index, _ in ranked[:max_per_operator]:
             anchors.add(index)
     return anchors
+
+
+def _law_events_from_domain_worlds(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    events = []
+    for record in records:
+        domain_key = str(record.get('domain_key', 'unknown'))
+        for equation in list(record.get('self_authored_equations') or []):
+            expression = str(equation.get('expression') or '')
+            if not expression:
+                continue
+            events.append({
+                'law_family': _law_family_from_expression(expression),
+                'status': 'domain_world_candidate',
+                'expression': expression,
+                'context': domain_key,
+                'score': float(equation.get('confidence', 0.0) or 0.0),
+                'source_kind': 'domain_world',
+                'falsification_tests': list(equation.get('falsification_tests') or []),
+            })
+    return events
+
+
+def _law_events_from_scientist_records(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    events = []
+    for record in records:
+        variants = ','.join(str(item) for item in record.get('variants') or [])
+        context = f"scientist:{record.get('seed_start')}:{variants}"
+        for invariant in list(record.get('invariant_consolidations') or []):
+            expression = str(
+                invariant.get('dominant_expression')
+                or invariant.get('expression')
+                or invariant.get('law_family')
+                or invariant.get('domain_key')
+                or ''
+            )
+            if not expression:
+                continue
+            events.append({
+                'law_family': str(
+                    invariant.get('law_family')
+                    or invariant.get('relation_kind')
+                    or _law_family_from_expression(expression)
+                ),
+                'status': str(invariant.get('status') or 'scientist_candidate'),
+                'expression': expression,
+                'context': context,
+                'score': float(invariant.get('confidence', 0.0) or 0.0),
+                'source_kind': 'autonomous_scientist',
+                'falsification_tests': list(invariant.get('falsification_tests') or []),
+            })
+        for equation in list(record.get('authored_equation_extensions') or []):
+            expression = str(equation.get('expression') or '')
+            if not expression:
+                continue
+            events.append({
+                'law_family': str(
+                    equation.get('equation_kind')
+                    or equation.get('grammar_key')
+                    or _law_family_from_expression(expression)
+                ),
+                'status': 'authored_equation_extension',
+                'expression': expression,
+                'context': context,
+                'score': float(equation.get('confidence', 0.0) or 0.0),
+                'source_kind': 'autonomous_scientist',
+                'falsification_tests': list(equation.get('falsification_tests') or []),
+            })
+    return events
+
+
+def _law_events_from_arithmetic_records(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    events = []
+    for record in records:
+        context = f"arithmetic:{record.get('seed_start')}:{','.join(str(v) for v in record.get('variants') or [])}"
+        for equation in list(record.get('self_authored_equations') or []):
+            expression = str(equation.get('expression') or '')
+            if not expression:
+                continue
+            events.append({
+                'law_family': str(equation.get('target') or _law_family_from_expression(expression)),
+                'status': str(record.get('status') or 'arithmetic_candidate'),
+                'expression': expression,
+                'context': context,
+                'score': float(equation.get('confidence', 0.0) or 0.0),
+                'source_kind': 'arithmetic_rediscovery',
+                'falsification_tests': list(equation.get('falsification_tests') or []),
+            })
+    return events
+
+
+def _law_events_from_operator_outcomes(
+    outcomes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    events = []
+    for outcome in outcomes:
+        outcome_status = str(outcome.get('outcome') or '')
+        if outcome_status not in {'confirmed', 'operator_prior_repair_confirmed', 'weak'}:
+            continue
+        parameters = dict(
+            outcome.get('operator_prior_refined_parameters')
+            or outcome.get('refined_parameters')
+            or outcome.get('parameters')
+            or {}
+        )
+        operator_kind = str(outcome.get('operator_kind') or outcome.get('operator_key') or 'operator')
+        relation = str(parameters.get('relation') or 'unknown_relation')
+        exponent = parameters.get('distance_exponent')
+        expression = f"{operator_kind}:{relation}"
+        if exponent is not None:
+            expression = f"{expression}:distance_exponent~{_quantize(exponent, DEFAULT_PARAMETER_STEP)}"
+        events.append({
+            'law_family': operator_kind,
+            'status': 'confirmed_operator' if 'confirmed' in outcome_status else outcome_status,
+            'expression': expression,
+            'context': str(outcome.get('context') or 'unknown'),
+            'score': float(outcome.get('best_score', 0.0) or 0.0),
+            'source_kind': 'operator_prior',
+            'falsification_tests': [],
+        })
+    return events
+
+
+def _canonical_law_summaries(
+    events: list[dict[str, Any]],
+    *,
+    sample_limit: int,
+) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for event in events:
+        signature = {
+            'law_family': str(event.get('law_family', 'unknown')),
+            'expression_signature': _expression_signature(str(event.get('expression', ''))),
+        }
+        key = _stable_json(signature)
+        group = groups.setdefault(
+            key,
+            {
+                **signature,
+                'support_count': 0,
+                'contexts': set(),
+                'source_kinds': set(),
+                'statuses': set(),
+                'best_score': 0.0,
+                'falsification_tests': [],
+                'examples': [],
+            },
+        )
+        group['support_count'] += 1
+        group['contexts'].add(str(event.get('context') or 'unknown'))
+        group['source_kinds'].add(str(event.get('source_kind') or 'unknown'))
+        group['statuses'].add(str(event.get('status') or 'unknown'))
+        group['best_score'] = max(
+            float(group['best_score']),
+            float(event.get('score', 0.0) or 0.0),
+        )
+        for test in event.get('falsification_tests') or []:
+            _append_unique(group['falsification_tests'], str(test), sample_limit)
+        _append_sample(
+            group['examples'],
+            {
+                'expression': event.get('expression'),
+                'context': event.get('context'),
+                'status': event.get('status'),
+            },
+            sample_limit,
+        )
+
+    summaries = []
+    for group in groups.values():
+        statuses = set(group.pop('statuses'))
+        source_kinds = set(group.pop('source_kinds'))
+        contexts = set(group.pop('contexts'))
+        status = _canonical_status(statuses)
+        summaries.append({
+            **group,
+            'contexts': sorted(contexts),
+            'source_kinds': sorted(source_kinds),
+            'status': status,
+            'best_score': round(float(group['best_score']), 3),
+            'source_statuses': sorted(statuses),
+        })
+    return sorted(
+        summaries,
+        key=lambda item: (
+            item['status'] in {'robust_law', 'arithmetic_ready', 'confirmed_operator'},
+            int(item['support_count']),
+            float(item['best_score']),
+            item['law_family'],
+        ),
+        reverse=True,
+    )
+
+
+def _canonical_status(statuses: set[str]) -> str:
+    if 'robust_law' in statuses:
+        return 'robust_law'
+    if 'arithmetic_ready' in statuses:
+        return 'arithmetic_ready'
+    if 'confirmed_operator' in statuses:
+        return 'confirmed_operator'
+    if 'authored_equation_extension' in statuses:
+        return 'authored_equation_extension'
+    if statuses:
+        return sorted(statuses)[0]
+    return 'candidate'
+
+
+def _law_family_from_expression(expression: str) -> str:
+    text = expression.lower()
+    if 'extent' in text or 'count' in text:
+        return 'quantity_cardinality'
+    if 'distance' in text or 'separation' in text:
+        return 'distance_relation'
+    if 'phase' in text or 'sin' in text or 'cos' in text:
+        return 'periodic_relation'
+    if 'state' in text or 'next' in text:
+        return 'state_update'
+    if 'transform' in text or 'coordinate' in text:
+        return 'invariance_transform'
+    return 'general_equation'
+
+
+def _expression_signature(expression: str) -> str:
+    lowered = expression.lower()
+    pieces = []
+    token = []
+    for char in lowered:
+        if char.isalnum() or char == '_':
+            token.append(char)
+        else:
+            if token:
+                pieces.append(''.join(token))
+                token = []
+            if char in {'+', '-', '*', '/', '=', '<', '>'}:
+                pieces.append(char)
+    if token:
+        pieces.append(''.join(token))
+    return ' '.join(pieces[:24]) or 'empty'
+
+
+def _append_unique(values: list[str], value: str, limit: int):
+    if value in values or len(values) >= limit:
+        return
+    values.append(value)
 
 
 def estimate_json_bytes(value: Any) -> int:

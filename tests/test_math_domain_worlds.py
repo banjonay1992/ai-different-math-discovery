@@ -16,6 +16,7 @@ from agent.discovery_loop import (
     MATH_DOMAIN_CURRICULUM,
     MATH_DOMAIN_TRANSFER_BRIDGES,
 )
+from agent.arithmetic_rediscovery import run_arithmetic_rediscovery_probe
 from agent.domain_world_discovery import (
     build_domain_transfer_evidence,
     discover_all_domain_worlds,
@@ -25,6 +26,7 @@ from main import (
     run_autonomous_scientist_loop,
     run_domain_curriculum_preview,
     run_domain_world_discovery_ingest,
+    run_hf_adaptive_comparison,
     run_hf_non_final_campaign,
 )
 from world.math_domain_worlds import (
@@ -266,6 +268,75 @@ class MathDomainWorldTests(unittest.TestCase):
         self.assertIn('compute_budget_plan', artifact)
         self.assertIn('resource_efficiency', artifact)
         self.assertIn('compaction_events', artifact)
+        self.assertIn('arithmetic_rediscovery_report', artifact)
+        self.assertEqual(
+            'arithmetic_ready',
+            artifact['arithmetic_rediscovery_report']['status'],
+        )
+        self.assertTrue(
+            artifact['theory_memory']['arithmetic_rediscovery_records']
+        )
+        self.assertIn(
+            'canonical_law_compression',
+            artifact['resource_efficiency'],
+        )
+
+    def test_arithmetic_probe_rediscovers_counting_without_manifest_leak(self):
+        report = run_arithmetic_rediscovery_probe(
+            seed_start=0,
+            seed_count=2,
+            variants=(0, 1),
+        )
+
+        self.assertFalse(report['runs_final'])
+        self.assertEqual('arithmetic_ready', report['status'])
+        self.assertEqual(1.0, report['coverage'])
+        self.assertFalse(report['leaked_manifest'])
+        self.assertEqual(
+            {
+                'cardinality_invariance',
+                'addition_as_composition',
+                'permutation_invariance',
+                'successor_step',
+                'predecessor_step',
+            },
+            set(report['discovered_targets']),
+        )
+        self.assertTrue(all(
+            item['expression']
+            and item['falsification_tests']
+            and item['proof_obligations']
+            for item in report['self_authored_equations']
+        ))
+
+    def test_memory_compacts_canonical_laws_from_arithmetic_and_scientist(self):
+        memory = CumulativeTheoryMemory()
+        memory.record_domain_world_discoveries(seed=0, variant=0)
+        memory.record_arithmetic_rediscovery(seed_start=0, seed_count=2, variants=(0, 1))
+        memory.record_autonomous_scientist_loop(
+            seed_start=0,
+            seed_count=2,
+            variants=(0, 1),
+        )
+
+        report = memory.compact_canonical_laws(source='test')
+        packed = memory.to_dict()
+        restored = CumulativeTheoryMemory.from_dict(packed)
+        readiness = memory.discovery_readiness_report()
+
+        self.assertGreater(report['canonical_law_shard_count'], 0)
+        self.assertGreater(report['canonical_law_count'], 0)
+        self.assertTrue(report['long_run_law_ready'])
+        self.assertTrue(
+            readiness['gates']['arithmetic_rediscovery_probe']['passed']
+        )
+        self.assertTrue(
+            readiness['gates']['canonical_law_compression']['passed']
+        )
+        self.assertEqual(
+            len(memory.canonical_law_shards),
+            len(restored.canonical_law_shards),
+        )
 
     def test_compute_budget_does_not_expand_without_residual_pressure(self):
         plan = plan_adaptive_compute_budget(
@@ -323,6 +394,58 @@ class MathDomainWorldTests(unittest.TestCase):
         self.assertEqual(plan['effective']['steps'], captured['steps'])
         self.assertEqual(plan['effective']['seeds'], captured['seeds'])
         self.assertIn('compute_budget_plan', output.getvalue())
+
+    def test_hf_adaptive_comparison_runs_fixed_and_adaptive_from_same_snapshot(self):
+        memory = CumulativeTheoryMemory()
+        captured_steps = []
+
+        def fake_prep_runner(**kwargs):
+            captured_steps.append(kwargs['steps'])
+            return [{
+                'context': 'standard',
+                'seed': index,
+                'ready_for_final': True,
+                'equation_passed': True,
+                'passed': True,
+            } for index in range(kwargs['seeds'])]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'comparison.json')
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                report = run_hf_adaptive_comparison(
+                    theory_memory=memory,
+                    seeds=1,
+                    steps=40,
+                    object_counts=[3],
+                    world_types=['standard'],
+                    hidden_worlds=0,
+                    output_file=output_file,
+                    scientist_seed_count=2,
+                    scientist_variants=[0, 1],
+                    live_scientist=False,
+                    max_adaptive_steps=80,
+                    max_adaptive_seeds=2,
+                    max_adaptive_hidden_worlds=1,
+                    prep_runner=fake_prep_runner,
+                )
+
+            with open(output_file, 'r', encoding='utf-8') as handle:
+                artifact = json.load(handle)
+
+        fixed, adaptive = report['variants']
+        self.assertFalse(report['runs_final'])
+        self.assertEqual('hf_adaptive_comparison', report['run_kind'])
+        self.assertEqual(2, report['variant_count'])
+        self.assertEqual('fixed_budget', fixed['variant'])
+        self.assertEqual('adaptive_budget', adaptive['variant'])
+        self.assertFalse(fixed['result']['compute_budget_plan']['expanded'])
+        self.assertTrue(adaptive['result']['compute_budget_plan']['expanded'])
+        self.assertLess(captured_steps[0], captured_steps[1])
+        self.assertIn('adaptive_comparison_finish', output.getvalue())
+        self.assertEqual('hf_adaptive_comparison', artifact['run_kind'])
+        self.assertIn('comparison', artifact)
+        self.assertIn('readiness_delta', artifact['comparison'])
 
     def test_hf_campaign_compacts_memory_between_batches(self):
         memory = CumulativeTheoryMemory()

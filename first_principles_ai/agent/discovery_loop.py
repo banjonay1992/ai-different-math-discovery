@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from .resource_efficiency import (
+    build_canonical_law_shard,
     build_compressed_experience_shard,
+    canonical_law_compression_report,
     operator_outcome_anchor_indexes,
     resource_efficiency_report,
 )
@@ -1418,7 +1420,9 @@ class CumulativeTheoryMemory:
         self.operator_prior_outcomes: list[dict] = []
         self.domain_world_records: list[dict] = []
         self.autonomous_scientist_records: list[dict] = []
+        self.arithmetic_rediscovery_records: list[dict] = []
         self.compressed_experience_shards: list[dict] = []
+        self.canonical_law_shards: list[dict] = []
 
     def record_result(self, context: str, seed: int, report) -> dict:
         report_dict = self._report_dict(report)
@@ -1776,6 +1780,65 @@ class CumulativeTheoryMemory:
             self.autonomous_scientist_records.append(record)
         if len(self.autonomous_scientist_records) > 24:
             self.autonomous_scientist_records = self.autonomous_scientist_records[-24:]
+        return report
+
+    def record_arithmetic_rediscovery(
+        self,
+        seed_start: int = 0,
+        seed_count: int = 2,
+        variants: list[int] | tuple[int, ...] = (0,),
+    ) -> dict[str, Any]:
+        """Persist an observation-only counting/arithmetic rediscovery probe."""
+        try:
+            from agent.arithmetic_rediscovery import run_arithmetic_rediscovery_probe
+        except ImportError:  # pragma: no cover - package import fallback
+            from first_principles_ai.agent.arithmetic_rediscovery import (
+                run_arithmetic_rediscovery_probe,
+            )
+
+        report = run_arithmetic_rediscovery_probe(
+            seed_start=seed_start,
+            seed_count=seed_count,
+            variants=tuple(variants or (0,)),
+        )
+        record = {
+            'phase': 'arithmetic_rediscovery',
+            'seed_start': int(seed_start),
+            'seed_count': int(seed_count),
+            'variants': [int(variant) for variant in (variants or (0,))],
+            'status': report.get('status'),
+            'coverage': float(report.get('coverage', 0.0) or 0.0),
+            'target_count': int(report.get('target_count', 0) or 0),
+            'discovered_target_count': int(
+                report.get('discovered_target_count', 0) or 0
+            ),
+            'candidate_count': int(report.get('candidate_count', 0) or 0),
+            'observation_count': int(report.get('observation_count', 0) or 0),
+            'discovered_targets': list(report.get('discovered_targets') or []),
+            'missing_targets': list(report.get('missing_targets') or []),
+            'leaked_manifest': bool(report.get('leaked_manifest')),
+            'self_authored_equations': list(
+                report.get('self_authored_equations') or []
+            )[:12],
+            'live_events': list(report.get('live_events') or [])[:40],
+        }
+        key = (
+            record['seed_start'],
+            record['seed_count'],
+            tuple(record['variants']),
+        )
+        existing = {
+            (
+                int(item.get('seed_start', 0) or 0),
+                int(item.get('seed_count', 0) or 0),
+                tuple(int(variant) for variant in item.get('variants', [])),
+            )
+            for item in self.arithmetic_rediscovery_records
+        }
+        if key not in existing:
+            self.arithmetic_rediscovery_records.append(record)
+        if len(self.arithmetic_rediscovery_records) > 24:
+            self.arithmetic_rediscovery_records = self.arithmetic_rediscovery_records[-24:]
         return report
 
     def _operator_prior_plan_evidence(
@@ -2358,6 +2421,8 @@ class CumulativeTheoryMemory:
         )
         domain_transfer_experiments = self.domain_transfer_experiments(limit=5)
         autonomous_scientist = self.autonomous_scientist_evidence()
+        arithmetic_rediscovery = self.arithmetic_rediscovery_evidence()
+        canonical_law_compression = self.canonical_law_compression_report()
         repair_confirmed_count = sum(
             1 for outcome in self.planned_outcomes
             if outcome.get('outcome') == 'operator_prior_repair_confirmed'
@@ -2619,6 +2684,30 @@ class CumulativeTheoryMemory:
                 'derive transfer evidence from discovered domain-world relation bases',
             ),
             (
+                'arithmetic_rediscovery_probe',
+                'counting and unit arithmetic are rediscovered from public observations',
+                (
+                    arithmetic_rediscovery['record_count'] > 0
+                    and arithmetic_rediscovery['best_coverage'] >= 1.0
+                    and arithmetic_rediscovery['leaked_manifest_count'] == 0
+                    and set(arithmetic_rediscovery['discovered_targets']) >= {
+                        'cardinality_invariance',
+                        'addition_as_composition',
+                        'permutation_invariance',
+                        'successor_step',
+                        'predecessor_step',
+                    }
+                ),
+                1.0,
+                {
+                    'record_count': arithmetic_rediscovery['record_count'],
+                    'best_coverage': arithmetic_rediscovery['best_coverage'],
+                    'discovered_targets': arithmetic_rediscovery['discovered_targets'],
+                    'leaked_manifest_count': arithmetic_rediscovery['leaked_manifest_count'],
+                },
+                'run the arithmetic rediscovery probe on generated public observations',
+            ),
+            (
                 'scientist_invariant_consolidation',
                 'repeated runs are consolidated into robust invariant law candidates',
                 (
@@ -2681,6 +2770,29 @@ class CumulativeTheoryMemory:
                 1.0,
                 {'live_event_count': autonomous_scientist['live_event_count']},
                 'emit a live scientist event stream during non-final campaigns',
+            ),
+            (
+                'canonical_law_compression',
+                'repeated laws are compacted into reusable canonical summaries',
+                (
+                    canonical_law_compression['canonical_law_shard_count'] > 0
+                    and canonical_law_compression['canonical_law_count'] > 0
+                    and canonical_law_compression['long_run_law_ready']
+                ),
+                0.8,
+                {
+                    'canonical_law_shard_count': canonical_law_compression[
+                        'canonical_law_shard_count'
+                    ],
+                    'canonical_law_count': canonical_law_compression[
+                        'canonical_law_count'
+                    ],
+                    'robust_law_count': canonical_law_compression['robust_law_count'],
+                    'estimated_law_compression_ratio': canonical_law_compression[
+                        'estimated_law_compression_ratio'
+                    ],
+                },
+                'compact repeated domain, arithmetic, and scientist laws into canonical summaries',
             ),
             (
                 'autonomous_next_experiments',
@@ -2761,6 +2873,8 @@ class CumulativeTheoryMemory:
             'domain_world_transfer_evidence': domain_world_transfer_evidence,
             'domain_transfer_experiments': domain_transfer_experiments,
             'autonomous_scientist_evidence': autonomous_scientist,
+            'arithmetic_rediscovery_evidence': arithmetic_rediscovery,
+            'canonical_law_compression': canonical_law_compression,
         }
 
     def discovery_evidence_dossier(
@@ -3075,10 +3189,11 @@ class CumulativeTheoryMemory:
             'domain_transfer_loop',
             'domain_world_discovery_loop',
             'domain_world_transfer_evidence',
+            'arithmetic_rediscovery_probe',
         }:
             actions.append({
                 'action_kind': 'non_final_domain_curriculum_review',
-                'reason': 'inspect domain coverage and bridge probes before expanding simulator worlds',
+                'reason': 'inspect domain coverage, arithmetic probes, and bridge probes before expanding simulator worlds',
                 'command': (
                     'python3 first_principles_ai/main.py --discovery-readiness '
                     '--theory-memory-file tmp/theory-memory.json'
@@ -3137,6 +3252,17 @@ class CumulativeTheoryMemory:
                     '--seeds 1 --benchmark-steps 260 '
                     '--world-types standard,inverse_square_repulsion,localized_gravity '
                     '--equation-followup-budget 3 '
+                    '--theory-memory-file tmp/theory-memory.json'
+                ),
+                'runs_final': False,
+            })
+        if 'canonical_law_compression' in missing:
+            actions.append({
+                'action_kind': 'non_final_canonical_law_compaction',
+                'reason': 'compress repeated domain, arithmetic, and scientist laws before longer runs',
+                'command': (
+                    'python3 first_principles_ai/main.py --compact-theory-memory '
+                    '--memory-keep-records 96 --memory-keep-operator-outcomes 192 '
                     '--theory-memory-file tmp/theory-memory.json'
                 ),
                 'runs_final': False,
@@ -3554,6 +3680,43 @@ class CumulativeTheoryMemory:
             'live_event_count': live_event_count,
             'latest_coverage': dict(latest.get('coverage') or {}),
             'latest_next_actions': list(latest.get('next_actions') or []),
+        }
+
+    def arithmetic_rediscovery_evidence(self) -> dict[str, Any]:
+        """Aggregate observation-only counting/arithmetic rediscovery evidence."""
+        latest = (
+            self.arithmetic_rediscovery_records[-1]
+            if self.arithmetic_rediscovery_records
+            else {}
+        )
+        records = list(self.arithmetic_rediscovery_records)
+        discovered_targets = sorted({
+            str(target)
+            for record in records
+            for target in record.get('discovered_targets') or []
+        })
+        equation_count = sum(
+            len(record.get('self_authored_equations') or [])
+            for record in records
+        )
+        leaked_count = sum(
+            1 for record in records
+            if record.get('leaked_manifest')
+        )
+        best_coverage = max(
+            [float(record.get('coverage', 0.0) or 0.0) for record in records]
+            or [0.0]
+        )
+        return {
+            'record_count': len(records),
+            'latest_status': latest.get('status'),
+            'best_coverage': round(best_coverage, 3),
+            'discovered_target_count': len(discovered_targets),
+            'discovered_targets': discovered_targets,
+            'equation_count': equation_count,
+            'leaked_manifest_count': leaked_count,
+            'latest_missing_targets': list(latest.get('missing_targets') or []),
+            'latest_live_event_count': len(latest.get('live_events') or []),
         }
 
     def latest_autonomous_scientist_report(self) -> dict[str, Any]:
@@ -4042,13 +4205,43 @@ class CumulativeTheoryMemory:
         recommended_operator_window: int = 192,
     ) -> dict[str, Any]:
         """Report how close memory is to bounded long-run storage."""
-        return resource_efficiency_report(
+        report = resource_efficiency_report(
             records=self.records,
             operator_prior_outcomes=self.operator_prior_outcomes,
             compressed_shards=self.compressed_experience_shards,
             recommended_record_window=recommended_record_window,
             recommended_operator_window=recommended_operator_window,
         )
+        report['canonical_law_compression'] = self.canonical_law_compression_report()
+        return report
+
+    def canonical_law_compression_report(self) -> dict[str, Any]:
+        """Report reusable-law compression status separately from raw event shards."""
+        return canonical_law_compression_report(
+            canonical_law_shards=self.canonical_law_shards,
+        )
+
+    def compact_canonical_laws(
+        self,
+        *,
+        source: str = 'manual_canonical_law_compaction',
+    ) -> dict[str, Any]:
+        """Persist compact canonical summaries of repeated equations and laws."""
+        shard = build_canonical_law_shard(
+            domain_world_records=self.domain_world_records,
+            autonomous_scientist_records=self.autonomous_scientist_records,
+            arithmetic_rediscovery_records=self.arithmetic_rediscovery_records,
+            operator_prior_outcomes=self.operator_prior_outcomes,
+            source=source,
+        )
+        if shard.get('canonical_laws'):
+            seen = {
+                existing.get('shard_id')
+                for existing in self.canonical_law_shards
+            }
+            if shard.get('shard_id') not in seen:
+                self.canonical_law_shards.append(shard)
+        return self.canonical_law_compression_report()
 
     def compact_experience(
         self,
@@ -4132,12 +4325,17 @@ class CumulativeTheoryMemory:
             'operator_prior_outcomes': list(self.operator_prior_outcomes),
             'domain_world_records': list(self.domain_world_records),
             'autonomous_scientist_records': list(self.autonomous_scientist_records),
+            'arithmetic_rediscovery_records': list(
+                self.arithmetic_rediscovery_records
+            ),
             'compressed_experience_shards': list(self.compressed_experience_shards),
+            'canonical_law_shards': list(self.canonical_law_shards),
             'families': {
                 key: family.to_dict()
                 for key, family in self.families.items()
             },
             'resource_efficiency': self.resource_efficiency_report(),
+            'canonical_law_compression': self.canonical_law_compression_report(),
             'reusable_families': self.reusable_families(),
             'family_evaluations': self.family_evaluations(),
             'proof_gaps': self.proof_gaps(),
@@ -4156,6 +4354,7 @@ class CumulativeTheoryMemory:
             'domain_world_transfer_evidence': self.domain_world_transfer_evidence(),
             'domain_transfer_experiments': self.domain_transfer_experiments(),
             'autonomous_scientist_evidence': self.autonomous_scientist_evidence(),
+            'arithmetic_rediscovery_evidence': self.arithmetic_rediscovery_evidence(),
             'latest_autonomous_scientist_report': self.latest_autonomous_scientist_report(),
             'representation_agenda': self.representation_agenda(),
             'generated_operator_priors': self.generated_operator_priors(),
@@ -4196,9 +4395,13 @@ class CumulativeTheoryMemory:
         memory.autonomous_scientist_records = list(
             data.get('autonomous_scientist_records', [])
         )
+        memory.arithmetic_rediscovery_records = list(
+            data.get('arithmetic_rediscovery_records', [])
+        )
         memory.compressed_experience_shards = list(
             data.get('compressed_experience_shards', [])
         )
+        memory.canonical_law_shards = list(data.get('canonical_law_shards', []))
         memory.families = {
             str(key): TheoryFamily.from_dict(family_data)
             for key, family_data in data.get('families', {}).items()
@@ -4682,6 +4885,21 @@ class CumulativeTheoryMemory:
             f"detail_ratio={resource['detail_reduction_ratio']:.2f} "
             f"bytes_ratio={resource['estimated_compression_ratio']:.2f} "
             f"long_run_ready={resource['long_run_ready']}"
+        )
+        canonical = self.canonical_law_compression_report()
+        lines.append(
+            "  Canonical law compression: "
+            f"shards={canonical['canonical_law_shard_count']} "
+            f"laws={canonical['canonical_law_count']} "
+            f"robust={canonical['robust_law_count']} "
+            f"bytes_ratio={canonical['estimated_law_compression_ratio']:.2f}"
+        )
+        arithmetic = self.arithmetic_rediscovery_evidence()
+        lines.append(
+            "  Arithmetic rediscovery: "
+            f"coverage={arithmetic['best_coverage']:.0%} "
+            f"targets={arithmetic['discovered_target_count']} "
+            f"leaks={arithmetic['leaked_manifest_count']}"
         )
         if readiness['missing_gates']:
             lines.append(
