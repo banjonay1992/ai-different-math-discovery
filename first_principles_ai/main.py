@@ -1623,6 +1623,44 @@ def run_discovery_readiness_audit(
     return report
 
 
+def run_rediscovery_goal_progress_audit(
+    theory_memory: CumulativeTheoryMemory | None = None,
+) -> dict:
+    """Print the stricter non-final progress estimate for the 85% goal."""
+    theory_memory = theory_memory or CumulativeTheoryMemory()
+    report = theory_memory.rediscovery_goal_progress_report()
+
+    print("=" * 70)
+    print("REDISCOVERY GOAL PROGRESS")
+    print("=" * 70)
+    print("Watched final run: not run by this audit")
+    print(
+        f"Progress: {report['progress_percent']:.1f}% "
+        f"target={report['target_percent']:.1f}% "
+        f"status={report['status']}"
+    )
+    print()
+    print(f"{'Gate':34s} {'Score':>6s} {'State':>6s} Evidence")
+    print("-" * 100)
+    for key, gate in report['gates'].items():
+        state = 'PASS' if gate['passed'] else 'WORK'
+        evidence = ', '.join(
+            f"{name}={value}"
+            for name, value in gate.get('evidence', {}).items()
+        )
+        if len(evidence) > 46:
+            evidence = evidence[:43] + '...'
+        print(
+            f"{key:34s} {gate['score']:6.0%} {state:>6s} {evidence}"
+        )
+    if report['recommended_next_steps']:
+        print()
+        print("Recommended non-final next steps:")
+        for step in report['recommended_next_steps']:
+            print(f"  - {step}")
+    return report
+
+
 def run_memory_efficiency_review(
     theory_memory: CumulativeTheoryMemory | None = None,
     compact: bool = False,
@@ -2438,6 +2476,7 @@ def parse_live_progress_line(line: str) -> dict | None:
         'HF_PROGRESS ': 'hf_progress',
         'SCIENTIST_EVENT ': 'scientist_event',
         'HF_ARTIFACT ': 'hf_artifact',
+        'HF_ARTIFACT_SUMMARY ': 'hf_artifact_summary',
     }
     for prefix, stream in prefixes.items():
         if not text.startswith(prefix):
@@ -2471,11 +2510,13 @@ def run_live_progress_viewer(
         'hf_progress': 0,
         'scientist_event': 0,
         'hf_artifact': 0,
+        'hf_artifact_summary': 0,
         'parse_error': 0,
     }
     last_hf = {}
     last_scientist = {}
     artifacts = {}
+    artifact_summary = {}
     printed = 0
 
     print("=" * 70, flush=True)
@@ -2483,7 +2524,7 @@ def run_live_progress_viewer(
     print("=" * 70, flush=True)
 
     def consume_line(line: str) -> bool:
-        nonlocal printed, last_hf, last_scientist, artifacts
+        nonlocal printed, last_hf, last_scientist, artifacts, artifact_summary
         event = parse_live_progress_line(line)
         if event is None:
             return True
@@ -2502,6 +2543,10 @@ def run_live_progress_viewer(
             counts['hf_artifact'] += 1
             artifacts = event
             print(_format_hf_artifact_event(event), flush=True)
+        elif event['stream'] == 'hf_artifact_summary':
+            counts['hf_artifact_summary'] += 1
+            artifact_summary = event
+            print(_format_hf_artifact_summary_event(event), flush=True)
         printed += 1
         return max_events <= 0 or printed < max_events
 
@@ -2529,6 +2574,7 @@ def run_live_progress_viewer(
         'last_hf_event': last_hf,
         'last_scientist_event': last_scientist,
         'artifacts': artifacts,
+        'artifact_summary': artifact_summary,
     }
     print("-" * 70, flush=True)
     print(
@@ -2536,6 +2582,7 @@ def run_live_progress_viewer(
         f"hf={counts['hf_progress']} "
         f"scientist={counts['scientist_event']} "
         f"artifacts={counts['hf_artifact']} "
+        f"artifact_summaries={counts['hf_artifact_summary']} "
         f"parse_errors={counts['parse_error']}",
         flush=True,
     )
@@ -2582,6 +2629,27 @@ def _format_hf_artifact_event(event: dict) -> str:
     for key in ('run_id', 'summary', 'report', 'memory', 'log'):
         if key in event:
             pieces.append(f"{key}={event[key]}")
+    return ' | '.join(pieces)
+
+
+def _format_hf_artifact_summary_event(event: dict) -> str:
+    pieces = ["HF_ARTIFACT_SUMMARY"]
+    for key in (
+        'run_kind',
+        'result_count',
+        'passed_count',
+        'runs_final',
+    ):
+        if key in event:
+            pieces.append(f"{key}={event[key]}")
+    readiness = dict(event.get('readiness') or {})
+    if readiness:
+        pieces.append(f"readiness_score={readiness.get('readiness_score')}")
+        pieces.append(f"readiness_status={readiness.get('status')}")
+    memory_delta = dict(event.get('memory_delta') or {})
+    if memory_delta:
+        pieces.append(f"new_equation_cases={memory_delta.get('new_equation_cases')}")
+        pieces.append(f"new_planned_outcomes={memory_delta.get('new_planned_outcomes')}")
     return ' | '.join(pieces)
 
 
@@ -4059,6 +4127,8 @@ if __name__ == '__main__':
                         help='Run readiness checks before the final watched math discovery run')
     parser.add_argument('--discovery-readiness', action='store_true',
                         help='Print a non-final readiness audit from cumulative theory memory')
+    parser.add_argument('--rediscovery-goal-progress', action='store_true',
+                        help='Print stricter non-final progress toward the 85% rediscovery goal')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -4212,6 +4282,10 @@ if __name__ == '__main__':
 
     if args.discovery_readiness:
         run_discovery_readiness_audit(theory_memory=theory_memory)
+        raise SystemExit(0)
+
+    if args.rediscovery_goal_progress:
+        run_rediscovery_goal_progress_audit(theory_memory=theory_memory)
         raise SystemExit(0)
 
     if args.memory_efficiency_review or args.compact_theory_memory:

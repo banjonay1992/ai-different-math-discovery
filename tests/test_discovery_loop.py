@@ -21,6 +21,7 @@ from main import (
     parse_live_progress_line,
     run_live_progress_viewer,
     run_memory_efficiency_review,
+    run_rediscovery_goal_progress_audit,
     upload_hf_artifact_file,
 )
 
@@ -2024,6 +2025,128 @@ class DiscoveryLoopTests(unittest.TestCase):
             memory.summary(),
         )
 
+    def test_rediscovery_goal_progress_penalizes_unresolved_selected_laws(self):
+        memory = self._build_selected_tapered_law_memory()
+        replay = memory.selected_law_replay_agenda(limit=1)[0]
+        conflicted = memory.evaluate_planned_result(
+            replay,
+            context='localized_gravity',
+            seed=6,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 1.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.82,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.record_equation_case_result(
+            'localized_gravity',
+            6,
+            {
+                'interesting_equation': {
+                    'target': 'baseline_adjusted_delta_velocity',
+                    'expression': (
+                        'k * taper(separation, 9) * '
+                        'unit_generated_center_vector / separation^1_5'
+                    ),
+                    'role': 'generated_operator_distance_scaled_direction_equation',
+                    'score': 0.82,
+                    'parameters': {
+                        'cutoff_radius': 9.0,
+                        'distance_exponent': 1.5,
+                    },
+                },
+                'passed': True,
+                'label_leaks': [],
+            },
+            phase='equation_followup',
+        )
+        memory.planned_outcomes.append(conflicted)
+
+        progress = memory.rediscovery_goal_progress_report()
+
+        self.assertLess(progress['progress_score'], 0.85)
+        self.assertFalse(progress['target_reached'])
+        self.assertIn('heldout_law_stability', progress['blockers'])
+        self.assertIn('blind_holdout_validation', progress['blockers'])
+        self.assertEqual(
+            1,
+            progress['evidence_summary']['selected_law_replay_conflicted_count'],
+        )
+        self.assertIn('rediscovery_goal_progress', memory.to_dict())
+
+    def test_rediscovery_goal_progress_improves_after_replay_and_blind_holdout(self):
+        memory = self._build_selected_tapered_law_memory()
+        before = memory.rediscovery_goal_progress_report()
+        replay = memory.selected_law_replay_agenda(limit=1)[0]
+        replay_confirmed = memory.evaluate_planned_result(
+            replay,
+            context='localized_gravity',
+            seed=6,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 0.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.84,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(replay_confirmed)
+        validation = memory.blind_holdout_validation_experiments(limit=1)[0]
+        blind_confirmed = memory.evaluate_planned_result(
+            validation,
+            context='hidden:blind',
+            seed=validation.get('seed', 7),
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 0.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.82,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(blind_confirmed)
+
+        after = memory.rediscovery_goal_progress_report()
+
+        self.assertGreater(after['progress_score'], before['progress_score'])
+        self.assertGreater(
+            after['gates']['heldout_law_stability']['score'],
+            before['gates']['heldout_law_stability']['score'],
+        )
+        self.assertGreater(
+            after['gates']['blind_holdout_validation']['score'],
+            before['gates']['blind_holdout_validation']['score'],
+        )
+        self.assertEqual(
+            1,
+            after['evidence_summary']['blind_holdout_confirmed_count'],
+        )
+
+    def test_rediscovery_goal_progress_audit_prints_stricter_score(self):
+        memory = self._build_selected_tapered_law_memory()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            report = run_rediscovery_goal_progress_audit(theory_memory=memory)
+
+        self.assertIn('REDISCOVERY GOAL PROGRESS', output.getvalue())
+        self.assertIn('Watched final run: not run', output.getvalue())
+        self.assertIn('progress_score', report)
+        self.assertIn('selected_law_parameterization', report['gates'])
+
     def test_localized_gravity_simple_headline_gets_structure_probe(self):
         memory = CumulativeTheoryMemory()
         memory.record_equation_case_result(
@@ -3919,6 +4042,17 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertEqual('hf_progress', parsed['stream'])
         self.assertEqual('finish', parsed['event'])
 
+        summary_line = (
+            'HF_ARTIFACT_SUMMARY {"run_kind":"equation_campaign",'
+            '"runs_final":false,"result_count":2,"passed_count":2,'
+            '"readiness":{"readiness_score":0.85,"status":"nearly_ready"},'
+            '"memory_delta":{"new_equation_cases":2,"new_planned_outcomes":1}}'
+        )
+        parsed_summary = parse_live_progress_line(summary_line)
+        self.assertEqual('hf_artifact_summary', parsed_summary['stream'])
+        self.assertEqual('equation_campaign', parsed_summary['run_kind'])
+        self.assertFalse(parsed_summary['runs_final'])
+
         with tempfile.NamedTemporaryFile('w+', encoding='utf-8') as handle:
             handle.write(
                 'SCIENTIST_EVENT {"event":"invariant_consolidated",'
@@ -3929,6 +4063,7 @@ class DiscoveryLoopTests(unittest.TestCase):
                 '"recommendation":"keep_targeted_adaptive"}\n'
             )
             handle.write('HF_ARTIFACT {"run_id":"demo","report":"https://example.test/r"}\n')
+            handle.write(summary_line + '\n')
             handle.flush()
 
             output = io.StringIO()
@@ -3938,8 +4073,11 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertEqual(1, summary['counts']['scientist_event'])
         self.assertEqual(1, summary['counts']['hf_progress'])
         self.assertEqual(1, summary['counts']['hf_artifact'])
+        self.assertEqual(1, summary['counts']['hf_artifact_summary'])
         self.assertIn('LIVE DISCOVERY PROGRESS VIEW', output.getvalue())
+        self.assertIn('HF_ARTIFACT_SUMMARY', output.getvalue())
         self.assertEqual('demo', summary['artifacts']['run_id'])
+        self.assertEqual(2, summary['artifact_summary']['result_count'])
 
 
 if __name__ == '__main__':

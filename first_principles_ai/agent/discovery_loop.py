@@ -3004,6 +3004,286 @@ class CumulativeTheoryMemory:
             'canonical_law_compression': canonical_law_compression,
         }
 
+    def rediscovery_goal_progress_report(self) -> dict[str, Any]:
+        """Stricter progress estimate for reliable math/physics rediscovery."""
+        readiness = self.discovery_readiness_report()
+        arithmetic = self.arithmetic_rediscovery_evidence()
+        algebra = self.algebraic_foundation_baseline()
+        authored_equations = self.self_authored_equations(limit=8)
+        theorem_memory = self.theorem_memory(
+            limit=max(8, len(self.equation_case_records)),
+        )
+        selected_theorems = [
+            theorem for theorem in theorem_memory
+            if theorem.get('theorem_kind') == 'selected_equation_invariant'
+        ]
+        selected_count = len(selected_theorems)
+        selected_support = sum(
+            int(dict(theorem.get('evidence') or {}).get('support_count', 0) or 0)
+            for theorem in selected_theorems
+        )
+        selected_leaks = sum(
+            int(dict(theorem.get('evidence') or {}).get('leak_count', 0) or 0)
+            for theorem in selected_theorems
+        )
+        replay_confirmed = sum(
+            int(dict(theorem.get('evidence') or {}).get(
+                'selected_law_replay_confirmed_count',
+                0,
+            ) or 0)
+            for theorem in selected_theorems
+        )
+        replay_conflicted = sum(
+            int(dict(theorem.get('evidence') or {}).get(
+                'selected_law_replay_conflicted_count',
+                0,
+            ) or 0)
+            for theorem in selected_theorems
+        )
+        conflict_settled = sum(
+            1 for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'selected_law_conflict_resolution'
+            and outcome.get('outcome') in {
+                'conflict_selected_restored',
+                'conflict_rival_supported',
+                'conflict_domain_split_supported',
+            }
+        )
+        blind_confirmed = sum(
+            1 for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'blind_holdout_validation'
+            and outcome.get('outcome') == 'blind_holdout_confirmed'
+        )
+        blind_conflicted = sum(
+            1 for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'blind_holdout_validation'
+            and outcome.get('outcome') in {
+                'blind_holdout_conflicted',
+                'blind_holdout_absent',
+            }
+        )
+        blind_validation_plan_count = len(
+            self.blind_holdout_validation_experiments(limit=8)
+        )
+        autonomous_designs = self.autonomous_experiment_design_agenda(limit=8)
+        next_experiments = self.next_experiments(limit=8)
+        resource = self.resource_efficiency_report()
+        canonical = self.canonical_law_compression_report()
+
+        def clamp(value: float) -> float:
+            return max(0.0, min(1.0, float(value or 0.0)))
+
+        best_authored_confidence = max(
+            [float(item.get('confidence', 0.0) or 0.0) for item in authored_equations]
+            or [0.0]
+        )
+        raw_math_score = (
+            clamp(float(arithmetic.get('best_coverage', 0.0) or 0.0))
+            + clamp(int(arithmetic.get('record_count', 0) or 0))
+            + clamp(int(algebra.get('expression_family_count', 0) or 0) / 12.0)
+            + clamp(int(algebra.get('proof_obligation_count', 0) or 0) / 8.0)
+        ) / 4.0
+        if int(arithmetic.get('leaked_manifest_count', 0) or 0) > 0:
+            raw_math_score = min(raw_math_score, 0.55)
+
+        selected_parameter_score = 0.0
+        if selected_count:
+            selected_parameter_score = (
+                0.7 * clamp(selected_count / 2.0)
+                + 0.2 * clamp(selected_support / 8.0)
+                + 0.1 * (1.0 if selected_leaks == 0 else 0.0)
+            )
+
+        unresolved_conflicts = max(0, replay_conflicted - conflict_settled)
+        heldout_stability_score = 0.0
+        if selected_count:
+            heldout_stability_score = max(
+                0.25,
+                0.45 * clamp(replay_confirmed / max(1, selected_count))
+                + 0.35 * clamp(conflict_settled / max(1, replay_conflicted))
+                + (0.20 if unresolved_conflicts == 0 else 0.0),
+            )
+            if unresolved_conflicts:
+                heldout_stability_score = min(heldout_stability_score, 0.55)
+
+        blind_holdout_score = 0.0
+        if selected_count:
+            blind_holdout_score = (
+                0.80 * clamp(blind_confirmed / max(1, selected_count))
+                + (0.15 if blind_validation_plan_count else 0.0)
+                + (0.05 if blind_confirmed and blind_conflicted == 0 else 0.0)
+            )
+            if blind_conflicted:
+                blind_holdout_score = min(blind_holdout_score, 0.55)
+
+        loop_score = (
+            clamp(len(self.planned_outcomes) / 10.0)
+            + clamp(len(autonomous_designs) / 4.0)
+            + clamp(len(next_experiments) / 4.0)
+        ) / 3.0
+        compression_score = (
+            (1.0 if resource.get('long_run_ready') else 0.0)
+            + (1.0 if canonical.get('long_run_law_ready') else 0.0)
+            + clamp(int(resource.get('compressed_shard_count', 0) or 0) / 2.0)
+            + clamp(int(canonical.get('canonical_law_shard_count', 0) or 0) / 2.0)
+        ) / 4.0
+
+        gate_specs = [
+            (
+                'baseline_discovery_readiness',
+                'existing discovery gates are populated without running the watched final',
+                clamp(readiness.get('readiness_score', 0.0)),
+                0.12,
+                {
+                    'readiness_status': readiness.get('status'),
+                    'passed_gate_count': readiness.get('passed_gate_count', 0),
+                    'gate_count': readiness.get('gate_count', 0),
+                },
+                'repair missing readiness gates before broadening the run',
+            ),
+            (
+                'raw_math_and_algebra_basis',
+                'counting, arithmetic, and broad algebraic equation forms are available',
+                raw_math_score,
+                0.13,
+                {
+                    'arithmetic_coverage': arithmetic.get('best_coverage', 0.0),
+                    'arithmetic_records': arithmetic.get('record_count', 0),
+                    'algebra_expression_families': algebra.get('expression_family_count', 0),
+                    'algebra_proof_obligations': algebra.get('proof_obligation_count', 0),
+                    'leaked_manifest_count': arithmetic.get('leaked_manifest_count', 0),
+                },
+                'run arithmetic rediscovery and algebra baseline prep until coverage is clean',
+            ),
+            (
+                'self_authored_equation_templates',
+                'the system writes reusable equation templates from repeated evidence',
+                0.65 * clamp(len(authored_equations) / 5.0)
+                + 0.35 * clamp(best_authored_confidence),
+                0.12,
+                {
+                    'authored_equation_count': len(authored_equations),
+                    'best_confidence': round(best_authored_confidence, 3),
+                },
+                'collect repeated residual families until reusable templates emerge',
+            ),
+            (
+                'selected_law_parameterization',
+                'repeated equation families have selected parameters rather than only variants',
+                selected_parameter_score,
+                0.14,
+                {
+                    'selected_theorem_count': selected_count,
+                    'selected_support_count': selected_support,
+                    'selected_law_leak_count': selected_leaks,
+                },
+                'resolve invariant exponent races into selected law parameters',
+            ),
+            (
+                'heldout_law_stability',
+                'selected laws survive replay or have their conflicts resolved into a domain rule',
+                heldout_stability_score,
+                0.18,
+                {
+                    'selected_law_replay_confirmed_count': replay_confirmed,
+                    'selected_law_replay_conflicted_count': replay_conflicted,
+                    'conflict_resolution_settled_count': conflict_settled,
+                    'unresolved_conflict_count': unresolved_conflicts,
+                },
+                'run selected-law conflict resolution until replays stop alternating',
+            ),
+            (
+                'blind_holdout_validation',
+                'selected laws are validated on hidden or blind holdout worlds',
+                blind_holdout_score,
+                0.14,
+                {
+                    'blind_holdout_confirmed_count': blind_confirmed,
+                    'blind_holdout_conflicted_count': blind_conflicted,
+                    'blind_holdout_plan_count': blind_validation_plan_count,
+                },
+                'execute blind holdout validations for selected laws',
+            ),
+            (
+                'autonomous_loop_closure',
+                'the notebook records outcomes and designs the next experiments itself',
+                loop_score,
+                0.10,
+                {
+                    'planned_outcome_count': len(self.planned_outcomes),
+                    'autonomous_design_count': len(autonomous_designs),
+                    'next_experiment_count': len(next_experiments),
+                },
+                'record more planned outcomes and let them drive the next experiment queue',
+            ),
+            (
+                'bounded_memory_and_compression',
+                'long runs have bounded memory and compact reusable law summaries',
+                compression_score,
+                0.07,
+                {
+                    'long_run_ready': resource.get('long_run_ready'),
+                    'compressed_shard_count': resource.get('compressed_shard_count', 0),
+                    'canonical_law_shard_count': canonical.get('canonical_law_shard_count', 0),
+                    'long_run_law_ready': canonical.get('long_run_law_ready'),
+                },
+                'compact experience and canonical laws before longer autonomous runs',
+            ),
+        ]
+        gates = {}
+        weighted_score = 0.0
+        weight_total = 0.0
+        blockers = []
+        for key, description, score, weight, evidence, next_step in gate_specs:
+            bounded_score = round(clamp(score), 3)
+            passed = bounded_score >= 0.85
+            weighted_score += bounded_score * weight
+            weight_total += weight
+            gates[key] = {
+                'description': description,
+                'score': bounded_score,
+                'passed': passed,
+                'weight': weight,
+                'evidence': evidence,
+                'next_step': 'keep monitoring this gate' if passed else next_step,
+            }
+            if not passed:
+                blockers.append(key)
+        progress_score = round(weighted_score / weight_total, 3) if weight_total else 0.0
+        if progress_score >= 0.92 and not blockers:
+            status = 'watched_final_candidate'
+        elif progress_score >= 0.85:
+            status = 'target_85_reached'
+        elif progress_score >= 0.75:
+            status = 'approaching_85'
+        elif progress_score >= 0.60:
+            status = 'solid_learning_system'
+        else:
+            status = 'building'
+        return {
+            'progress_score': progress_score,
+            'progress_percent': round(progress_score * 100.0, 1),
+            'target_percent': 85.0,
+            'status': status,
+            'target_reached': progress_score >= 0.85,
+            'blockers': blockers,
+            'gates': gates,
+            'recommended_next_steps': [
+                gates[key]['next_step']
+                for key in blockers[:4]
+            ],
+            'evidence_summary': {
+                'selected_theorem_count': selected_count,
+                'selected_law_replay_confirmed_count': replay_confirmed,
+                'selected_law_replay_conflicted_count': replay_conflicted,
+                'conflict_resolution_settled_count': conflict_settled,
+                'blind_holdout_confirmed_count': blind_confirmed,
+                'blind_holdout_conflicted_count': blind_conflicted,
+                'blind_holdout_plan_count': blind_validation_plan_count,
+                'planned_outcome_count': len(self.planned_outcomes),
+            },
+        }
+
     def discovery_evidence_dossier(
         self,
         limit: int = 3,
@@ -7808,6 +8088,7 @@ class CumulativeTheoryMemory:
             'proof_certificates': self.proof_certificates(),
             'self_authored_equations': self.self_authored_equations(),
             'discovery_readiness': self.discovery_readiness_report(),
+            'rediscovery_goal_progress': self.rediscovery_goal_progress_report(),
             'discovery_evidence_dossier': self.discovery_evidence_dossier(),
             'first_principles_basis': self.first_principles_basis(),
             'adaptive_dimension_agenda': self.adaptive_dimension_agenda(),
