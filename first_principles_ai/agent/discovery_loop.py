@@ -4440,18 +4440,25 @@ class CumulativeTheoryMemory:
                     - min(0.20, 0.08 * outcome_stats['attempt_count']),
                 ),
             )
+            retry_in_source_context = outcome_stats['settled_count'] > 0
+            target_context = (
+                'selected_law_holdout_context'
+                if retry_in_source_context
+                else 'blind_holdout_benchmark_context'
+            )
             retry_reason = ''
-            if outcome_stats['settled_count'] > 0:
+            if retry_in_source_context:
                 retry_reason = (
                     ' Earlier blind holdouts did not confirm the selected law; '
-                    'retry on a fresh hidden seed before treating absence as a domain split.'
+                    'retry on a fresh selected-source seed before treating '
+                    'hidden-world absence as a domain split.'
                 )
             recommendations.append({
                 'theory_kind': theory_kind,
                 'experiment_kind': 'blind_holdout_validation',
                 'priority': round(priority, 3),
                 'family_status': 'blind_holdout_needed',
-                'target_context': 'blind_holdout_benchmark_context',
+                'target_context': target_context,
                 'source_context': invariant.get('context'),
                 'avoid_contexts': [],
                 'reason': (
@@ -4469,6 +4476,7 @@ class CumulativeTheoryMemory:
                     'confirmed_count': outcome_stats['confirmed_count'],
                     'conflicted_count': outcome_stats['conflicted_count'],
                     'absent_count': outcome_stats['absent_count'],
+                    'retry_in_source_context': retry_in_source_context,
                 },
                 'invariant_key': invariant.get('key'),
                 'selected_law_replay_key': replay_key,
@@ -4492,7 +4500,11 @@ class CumulativeTheoryMemory:
                 'probe_action': self._selected_law_probe_action(invariant),
                 'suggested_campaign': {
                     'command_family': 'equation_campaign',
-                    'world_selection': 'hidden_procedural',
+                    'world_selection': (
+                        'selected_source_context_fresh_seed'
+                        if retry_in_source_context
+                        else 'hidden_procedural'
+                    ),
                     'runs_final': False,
                 },
             })
