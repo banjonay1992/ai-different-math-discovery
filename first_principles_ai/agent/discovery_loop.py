@@ -1587,6 +1587,13 @@ class CumulativeTheoryMemory:
                 rival_found=rival_found,
                 rival_proof_passed=rival_proof_passed,
             )
+        elif experiment_kind == 'domain_predicate_discovery':
+            outcome = self._domain_predicate_outcome_label(
+                target_found=found_family,
+                target_proof_passed=proof_passed,
+                rival_found=rival_found,
+                rival_proof_passed=rival_proof_passed,
+            )
         else:
             outcome = self._planned_outcome_label(
                 experiment_kind=experiment_kind,
@@ -1627,6 +1634,8 @@ class CumulativeTheoryMemory:
             'domain_split_hypothesis': dict(
                 plan.get('domain_split_hypothesis') or {}
             ),
+            'predicate_key': plan.get('predicate_key'),
+            'candidate_predicate': dict(plan.get('candidate_predicate') or {}),
             'blind_holdout_plan': dict(plan.get('blind_holdout_plan') or {}),
             'found_family': found_family,
             'proof_passed': proof_passed,
@@ -3846,6 +3855,146 @@ class CumulativeTheoryMemory:
         )
         return theorem_items[:limit]
 
+    def theorem_consolidations(self, limit: int = 8) -> list[dict[str, Any]]:
+        """Summarize which laws look robust, approximate, or domain-limited."""
+        theorems = {
+            str(item.get('key')): item
+            for item in self.theorem_memory(limit=max(limit, len(self.equation_case_records)))
+        }
+        consolidations = []
+        for invariant in self.operator_prior_invariant_consolidations(
+            limit=max(5, len(self.equation_case_records)),
+        ):
+            theorem_key = f"theorem:equation_invariant:{invariant.get('key')}"
+            theorem = dict(theorems.get(theorem_key) or {})
+            theorem_status = str(theorem.get('status') or 'candidate_family')
+            candidates = [
+                dict(candidate)
+                for candidate in list(invariant.get('parameter_candidates') or [])
+                if isinstance(candidate.get('value'), (int, float))
+            ]
+            candidates.sort(
+                key=lambda item: (
+                    bool(item.get('selected')),
+                    int(item.get('support', 0) or 0),
+                    float(item.get('value', 0.0) or 0.0),
+                ),
+                reverse=True,
+            )
+            selected_exponent = invariant.get('selected_distance_exponent')
+            if selected_exponent is None and candidates:
+                selected_exponent = candidates[0].get('value')
+            selected_label = None
+            if selected_exponent is not None:
+                selected_label = (
+                    f"{self._family_key(self._equation_invariant_theory_kind(invariant))}"
+                    f"/separation^-{round(float(selected_exponent), 3)}"
+                )
+            approximate_variants = [
+                {
+                    'distance_exponent': round(float(candidate['value']), 3),
+                    'support_count': int(candidate.get('support', 0) or 0),
+                    'selected': (
+                        selected_exponent is not None
+                        and round(float(candidate['value']), 3)
+                        == round(float(selected_exponent), 3)
+                    ),
+                }
+                for candidate in candidates[:6]
+            ]
+            replay_stats = self._selected_law_replay_outcome_stats(
+                self._selected_law_replay_key(invariant),
+            )
+            conflict_stats = self._selected_law_conflict_outcome_stats(
+                self._selected_law_replay_key(invariant),
+            )
+            blind_stats = self._blind_holdout_validation_outcome_stats(
+                self._selected_law_replay_key(invariant),
+            )
+            if theorem_status == 'heldout_confirmed':
+                status = 'robust_law'
+            elif theorem_status == 'holdout_conflicted':
+                status = 'domain_limited_or_piecewise'
+            elif len(candidates) > 1:
+                status = 'approximate_family_needs_parameter_resolution'
+            else:
+                status = 'candidate_law_needs_holdout'
+            if selected_exponent is None:
+                parameter_phrase = 'unresolved exponent'
+            else:
+                parameter_phrase = f"exponent {round(float(selected_exponent), 3)}"
+            consolidations.append({
+                'key': f"theorem_consolidation:{invariant.get('key')}",
+                'invariant_key': invariant.get('key'),
+                'status': status,
+                'theorem_status': theorem_status,
+                'context': invariant.get('context'),
+                'target': invariant.get('target'),
+                'law_family': invariant.get('law_family'),
+                'vector_basis': invariant.get('vector_basis'),
+                'window_kind': invariant.get('window_kind'),
+                'selected_distance_exponent': (
+                    round(float(selected_exponent), 3)
+                    if isinstance(selected_exponent, (int, float))
+                    else None
+                ),
+                'selected_label': selected_label,
+                'statement': (
+                    f"{invariant.get('context')} best consolidates as "
+                    f"{invariant.get('law_family')} over "
+                    f"{invariant.get('vector_basis')} with {parameter_phrase}"
+                ),
+                'variant_summary': (
+                    'selected parameter is stable'
+                    if len(approximate_variants) <= 1
+                    else 'nearby exponents are treated as approximations until a predicate separates them'
+                ),
+                'approximate_variants': approximate_variants,
+                'evidence': {
+                    'support_count': int(invariant.get('support_count', 0) or 0),
+                    'support_seeds': list(invariant.get('support_seeds') or []),
+                    'mean_score': float(invariant.get('mean_score', 0.0) or 0.0),
+                    'leak_count': int(invariant.get('leak_count', 0) or 0),
+                    'selected_law_replay_attempt_count': replay_stats['attempt_count'],
+                    'selected_law_replay_confirmed_count': replay_stats['confirmed_count'],
+                    'selected_law_replay_conflicted_count': replay_stats['conflicted_count'],
+                    'conflict_resolution_attempt_count': conflict_stats['attempt_count'],
+                    'blind_holdout_attempt_count': blind_stats['attempt_count'],
+                },
+                'next_obligation': self._theorem_consolidation_next_obligation(
+                    status,
+                    theorem_status,
+                ),
+            })
+        consolidations.sort(
+            key=lambda item: (
+                {
+                    'robust_law': 4,
+                    'domain_limited_or_piecewise': 3,
+                    'approximate_family_needs_parameter_resolution': 2,
+                    'candidate_law_needs_holdout': 1,
+                }.get(str(item.get('status')), 0),
+                item['evidence']['support_count'],
+                item['evidence']['mean_score'],
+                item['key'],
+            ),
+            reverse=True,
+        )
+        return consolidations[:limit]
+
+    def _theorem_consolidation_next_obligation(
+        self,
+        status: str,
+        theorem_status: str,
+    ) -> str:
+        if status == 'robust_law':
+            return 'compress into canonical law memory and transfer to a different context'
+        if status == 'domain_limited_or_piecewise':
+            return 'learn the domain predicate that separates the selected law from rival variants'
+        if theorem_status == 'parameter_selected_needs_holdout':
+            return 'run fresh-seed and blind holdout replay before promoting the selected exponent'
+        return 'run sharper near/mid/far exponent probes and treat rivals as approximations'
+
     def selected_law_conflict_experiments(self, limit: int = 5) -> list[dict[str, Any]]:
         """Turn conflicted selected laws into sharper whole-law races."""
         recommendations = []
@@ -4077,6 +4226,31 @@ class CumulativeTheoryMemory:
             hypothesis = dict(experiment.get('domain_split_hypothesis') or {})
             if hypothesis:
                 hypotheses.append(hypothesis)
+        for outcome in self.planned_outcomes:
+            hypothesis = dict(outcome.get('domain_split_hypothesis') or {})
+            if hypothesis:
+                hypothesis.setdefault('status', 'split_suspected')
+                hypothesis.setdefault('source', 'planned_outcome')
+                hypothesis.setdefault(
+                    'outcome',
+                    outcome.get('outcome'),
+                )
+                hypotheses.append(hypothesis)
+        deduped = {}
+        for hypothesis in hypotheses:
+            key = (
+                hypothesis.get('key')
+                or hypothesis.get('invariant_key')
+                or json.dumps(hypothesis, sort_keys=True, default=str)
+            )
+            existing = deduped.get(str(key))
+            if (
+                not existing
+                or float(hypothesis.get('severity', 0.0) or 0.0)
+                >= float(existing.get('severity', 0.0) or 0.0)
+            ):
+                deduped[str(key)] = hypothesis
+        hypotheses = list(deduped.values())
         hypotheses.sort(
             key=lambda item: (
                 item.get('severity', 0.0),
@@ -4086,6 +4260,303 @@ class CumulativeTheoryMemory:
             reverse=True,
         )
         return hypotheses[:limit]
+
+    def domain_predicate_learning_agenda(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Turn split hypotheses into concrete predicate-discovery probes."""
+        agenda = []
+        hypotheses = self.law_domain_split_hypotheses(
+            limit=max(limit * 2, len(self.planned_outcomes), 5),
+        )
+        for hypothesis in hypotheses:
+            hypothesis_key = str(hypothesis.get('key') or hypothesis.get('invariant_key') or '')
+            if not hypothesis_key:
+                continue
+            outcome_stats = self._domain_predicate_outcome_stats(hypothesis_key)
+            if outcome_stats['settled_count'] > 0:
+                continue
+            predicates = self._rank_domain_predicates(hypothesis)
+            if not predicates:
+                continue
+            selected_variant = dict(hypothesis.get('selected_variant') or {})
+            observed_variants = [
+                dict(variant)
+                for variant in list(hypothesis.get('observed_variants') or [])
+            ]
+            selected_label = selected_variant.get('label')
+            rival_variants = [
+                variant for variant in observed_variants
+                if variant.get('label') != selected_label
+            ][:5]
+            if not selected_variant and observed_variants:
+                selected_variant = observed_variants[0]
+                selected_label = selected_variant.get('label')
+                rival_variants = observed_variants[1:6]
+            theory_kind = (
+                selected_variant.get('theory_kind')
+                or hypothesis.get('theory_kind')
+                or 'domain_predicate'
+            )
+            predicate = predicates[0]
+            probe_points = list(predicate.get('probe_points') or [])
+            probe_action = {}
+            if probe_points:
+                point = probe_points[0]
+                probe_action = {
+                    'type': 'spawn',
+                    'x': point.get('x'),
+                    'y': point.get('y'),
+                    'vx': 0.0,
+                    'vy': 0.0,
+                    'source': 'planned_domain_predicate_discovery',
+                    'probe_label': point.get('label'),
+                    'predicate_kind': predicate.get('predicate_kind'),
+                }
+            source_context = (
+                hypothesis.get('source_context')
+                or (hypothesis.get('conflict_contexts') or ['standard'])[0]
+            )
+            severity = float(hypothesis.get('severity', 0.55) or 0.55)
+            confidence = float(predicate.get('confidence', 0.5) or 0.5)
+            priority = max(
+                0.35,
+                min(
+                    0.99,
+                    severity
+                    + 0.18 * confidence
+                    - min(0.24, 0.08 * outcome_stats['attempt_count']),
+                ),
+            )
+            agenda.append({
+                'key': f"domain_predicate:{hypothesis_key}:{predicate['predicate_kind']}",
+                'theory_kind': str(theory_kind),
+                'experiment_kind': 'domain_predicate_discovery',
+                'priority': round(priority, 3),
+                'family_status': 'domain_split_needs_predicate',
+                'target_context': 'domain_predicate_context',
+                'source_context': source_context,
+                'avoid_contexts': [],
+                'reason': (
+                    'learn the predicate that separates selected and rival law variants: '
+                    f"{hypothesis.get('question', 'domain split suspected')}"
+                ),
+                'expected_result': (
+                    f"{predicate['predicate_kind']} should predict which law variant wins "
+                    'before another whole-law race is needed'
+                ),
+                'falsifies_if': (
+                    'selected and rival variants keep alternating after the predicate, '
+                    'boundary, context, and vector-basis split are tested'
+                ),
+                'proof_evidence': {
+                    'support_count': int(hypothesis.get('conflict_count', 0) or 0) + 1,
+                    'context_count': len(hypothesis.get('conflict_contexts') or []),
+                    'proof_rate': 0.0,
+                    'attempt_count': outcome_stats['attempt_count'],
+                    'predicate_confidence': round(confidence, 3),
+                    'severity': round(severity, 3),
+                },
+                'predicate_key': hypothesis_key,
+                'candidate_predicate': predicate,
+                'candidate_predicates_ranked': predicates,
+                'domain_split_hypothesis': dict(hypothesis),
+                'selected_multi_parameter_variant': selected_variant,
+                'rival_multi_parameter_variants': rival_variants,
+                'primary_theory_label': selected_label,
+                'rival_theory_labels': [
+                    str(variant.get('label'))
+                    for variant in rival_variants
+                    if variant.get('label')
+                ],
+                'rival_theory_kinds': [],
+                'disagreement_signature': {
+                    'mode': 'domain_predicate_learning',
+                    'resolution_source': 'law_domain_split_hypothesis',
+                    'predicate_kind': predicate['predicate_kind'],
+                    'question': predicate['question'],
+                    'probe_points': probe_points,
+                    'expected_discriminators': predicate.get('expected_discriminators', []),
+                    'hypothesis_key': hypothesis_key,
+                },
+                'probe_action': _rounded_dict(probe_action),
+                'quick_probe': True,
+                'quick_steps': 190,
+                'suggested_campaign': {
+                    'command_family': 'equation_campaign',
+                    'world_selection': 'domain_predicate_context',
+                    'enable_equation_probes': True,
+                    'runs_final': False,
+                    'quick_probe': True,
+                },
+            })
+        agenda.sort(
+            key=lambda item: (
+                item['priority'],
+                item['proof_evidence']['predicate_confidence'],
+                item['key'],
+            ),
+            reverse=True,
+        )
+        return agenda[:limit]
+
+    def _domain_predicate_outcome_stats(self, predicate_key: str) -> dict[str, int]:
+        outcomes = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'domain_predicate_discovery'
+            and outcome.get('predicate_key') == predicate_key
+        ]
+        return {
+            'attempt_count': len(outcomes),
+            'settled_count': sum(
+                1 for outcome in outcomes
+                if outcome.get('outcome') in {
+                    'domain_predicate_split_supported',
+                    'domain_predicate_selected_region',
+                    'domain_predicate_rival_region',
+                }
+            ),
+        }
+
+    def _rank_domain_predicates(
+        self,
+        hypothesis: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        selected = dict(hypothesis.get('selected_variant') or {})
+        variants = [
+            dict(variant)
+            for variant in list(hypothesis.get('observed_variants') or [])
+        ]
+        if selected and not variants:
+            variants = [selected]
+        predicate_names = list(hypothesis.get('candidate_predicates') or [])
+        ranked = []
+        exponents = {
+            round(float(variant.get('distance_exponent')), 3)
+            for variant in variants
+            if isinstance(variant.get('distance_exponent'), (int, float))
+        }
+        cutoffs = {
+            round(float(variant.get('cutoff_radius')), 3)
+            for variant in variants
+            if isinstance(variant.get('cutoff_radius'), (int, float))
+        }
+        windows = {
+            str(variant.get('window_kind'))
+            for variant in variants
+            if variant.get('window_kind')
+        }
+        bases = {
+            str(variant.get('vector_basis'))
+            for variant in variants
+            if variant.get('vector_basis')
+        }
+        contexts = set(hypothesis.get('conflict_contexts') or [])
+        source_context = hypothesis.get('source_context')
+        if source_context:
+            contexts.add(str(source_context))
+
+        def add(kind: str, confidence: float, question: str, discriminators: list[str]):
+            if kind not in predicate_names:
+                predicate_names.append(kind)
+            ranked.append({
+                'predicate_kind': kind,
+                'confidence': round(max(0.05, min(1.0, confidence)), 3),
+                'question': question,
+                'expected_discriminators': discriminators,
+                'probe_points': self._domain_predicate_probe_points(kind, selected, variants),
+            })
+
+        if cutoffs or len(windows) > 1:
+            add(
+                'inside_vs_outside_cutoff_region',
+                0.84 + 0.03 * min(2, len(cutoffs)),
+                'Does crossing the inferred cutoff boundary switch the winning law?',
+                ['inside-region winner', 'boundary-margin winner', 'outside-tail winner'],
+            )
+        if len(exponents) > 1:
+            add(
+                'near_mid_far_distance_band',
+                0.80 + 0.03 * min(3, len(exponents)),
+                'Does near/mid/far distance band decide which exponent applies?',
+                ['near residual magnitude ratio', 'mid log slope', 'far residual magnitude ratio'],
+            )
+        if len(contexts) > 1:
+            add(
+                'context_family',
+                0.74,
+                'Does the source or hidden context family decide which law variant wins?',
+                ['source context replay', 'hidden context replay'],
+            )
+        if len(bases) > 1:
+            add(
+                'vector_basis_alignment',
+                0.70,
+                'Does center-aligned versus perpendicular basis decide the variant?',
+                ['center-aligned residual', 'quarter-turn residual'],
+            )
+        for name in predicate_names:
+            if any(item['predicate_kind'] == name for item in ranked):
+                continue
+            add(
+                str(name),
+                0.54,
+                f'Does {name} separate the selected law from its rivals?',
+                ['selected-variant winner', 'rival-variant winner'],
+            )
+        ranked.sort(
+            key=lambda item: (
+                item['confidence'],
+                len(item.get('probe_points') or []),
+                item['predicate_kind'],
+            ),
+            reverse=True,
+        )
+        return ranked
+
+    def _domain_predicate_probe_points(
+        self,
+        predicate_kind: str,
+        selected: dict[str, Any],
+        variants: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        source = selected or (variants[0] if variants else {})
+        center_x = _coerce_float(source.get('center_x'), 10.0)
+        center_y = _coerce_float(source.get('center_y'), 10.0)
+        cutoff = _coerce_float(source.get('cutoff_radius'), 6.0)
+        if predicate_kind == 'inside_vs_outside_cutoff_region':
+            return [
+                self._invariant_radial_probe_point(
+                    'inside_predicate_region',
+                    center_x,
+                    center_y,
+                    max(0.75, cutoff * 0.35),
+                ),
+                self._invariant_radial_probe_point(
+                    'predicate_boundary_margin',
+                    center_x,
+                    center_y,
+                    max(1.25, cutoff * 0.9),
+                ),
+                self._invariant_radial_probe_point(
+                    'outside_predicate_tail',
+                    center_x,
+                    center_y,
+                    max(2.0, cutoff * 1.25),
+                ),
+            ]
+        if predicate_kind == 'near_mid_far_distance_band':
+            return [
+                self._invariant_radial_probe_point('near_predicate_band', center_x, center_y, 1.0),
+                self._invariant_radial_probe_point('mid_predicate_band', center_x, center_y, 3.5),
+                self._invariant_radial_probe_point('far_predicate_band', center_x, center_y, 7.5),
+            ]
+        return [
+            self._invariant_radial_probe_point(
+                'predicate_probe_anchor',
+                center_x,
+                center_y,
+                max(1.0, min(cutoff, 5.0)),
+            )
+        ]
 
     def blind_holdout_benchmark_plan(self, limit: int = 8) -> list[dict[str, Any]]:
         """Design label-hidden benchmarks for selected laws and domain worlds."""
@@ -6194,28 +6665,15 @@ class CumulativeTheoryMemory:
         parameters = dict(invariant.get('dominant_parameters') or {})
         center_x = _coerce_float(parameters.get('center_x'), 10.0)
         center_y = _coerce_float(parameters.get('center_y'), 10.0)
-        near_distance, mid_distance, far_distance = (
-            self._equation_invariant_probe_distances(invariant)
-        )
+        distance_ladder = self._equation_invariant_probe_distance_ladder(invariant)
         probe_points = [
             self._invariant_radial_probe_point(
-                'near_exponent_ratio',
+                label,
                 center_x,
                 center_y,
-                near_distance,
-            ),
-            self._invariant_radial_probe_point(
-                'mid_log_slope',
-                center_x,
-                center_y,
-                mid_distance,
-            ),
-            self._invariant_radial_probe_point(
-                'far_exponent_ratio',
-                center_x,
-                center_y,
-                far_distance,
-            ),
+                distance,
+            )
+            for label, distance in distance_ladder
         ]
         if refinement_level > 0:
             refined = self._refine_probe_points(
@@ -6230,11 +6688,34 @@ class CumulativeTheoryMemory:
             for candidate in list(invariant.get('parameter_candidates') or [])
             if isinstance(candidate.get('value'), (int, float))
         ]
+        near_distance = float(distance_ladder[0][1])
+        far_distance = float(distance_ladder[-1][1])
         ratio_denominator = max(far_distance, 1e-6)
         expected_ratios = {
             str(exponent): round((near_distance / ratio_denominator) ** exponent, 6)
             for exponent in exponents
         }
+        slope_pairs = []
+        for left, right in zip(distance_ladder, distance_ladder[1:]):
+            left_label, left_distance = left
+            right_label, right_distance = right
+            pair_ratios = {
+                str(exponent): round(
+                    (max(float(left_distance), 1e-6) / max(float(right_distance), 1e-6))
+                    ** exponent,
+                    6,
+                )
+                for exponent in exponents
+            }
+            slope_pairs.append({
+                'from': left_label,
+                'to': right_label,
+                'distance_ratio': round(
+                    max(float(left_distance), 1e-6) / max(float(right_distance), 1e-6),
+                    6,
+                ),
+                'expected_ratio_by_exponent': pair_ratios,
+            })
         return {
             'mode': 'distance_exponent_race',
             'resolution_source': 'robust_equation_invariant',
@@ -6245,6 +6726,8 @@ class CumulativeTheoryMemory:
             ),
             'candidate_exponents': exponents,
             'expected_far_over_near_ratio_by_exponent': expected_ratios,
+            'log_slope_probe_pairs': slope_pairs,
+            'probe_strategy': 'five_point_log_slope_ladder',
             'probe_points': probe_points,
             'rival_predictions': [
                 self._equation_invariant_prediction_signature(
@@ -6258,9 +6741,26 @@ class CumulativeTheoryMemory:
             'refinement_strategy': (
                 self._refinement_strategy('distance_exponent_race')
                 if refinement_level > 0
-                else 'near/mid/far samples magnify exponent-ratio differences'
+                else 'five-point near-to-far samples magnify exponent log-slope differences'
             ),
         }
+
+    def _equation_invariant_probe_distance_ladder(
+        self,
+        invariant: dict[str, Any],
+    ) -> list[tuple[str, float]]:
+        near, mid, far = self._equation_invariant_probe_distances(invariant)
+        very_near = max(0.35, near * 0.55)
+        low_mid = max(near * 1.45, (near + mid) * 0.5)
+        high_mid = max(mid * 1.35, (mid + far) * 0.5)
+        very_far = max(far * 1.2, high_mid * 1.18)
+        return [
+            ('very_near_exponent_ratio', round(very_near, 6)),
+            ('near_exponent_ratio', round(near, 6)),
+            ('mid_log_slope', round(low_mid, 6)),
+            ('far_log_slope', round(high_mid, 6)),
+            ('very_far_exponent_ratio', round(very_far, 6)),
+        ]
 
     def _equation_invariant_probe_distances(
         self,
@@ -6834,6 +7334,15 @@ class CumulativeTheoryMemory:
         invariant_key = str(recommendation.get('invariant_key') or '')
         if invariant_key:
             return (experiment_kind, 'equation_invariant', invariant_key)
+        predicate_key = str(recommendation.get('predicate_key') or '')
+        if predicate_key:
+            predicate = dict(recommendation.get('candidate_predicate') or {})
+            return (
+                experiment_kind,
+                'domain_predicate',
+                predicate_key,
+                str(predicate.get('predicate_kind') or ''),
+            )
         return (
             experiment_kind,
             str(recommendation.get('theory_kind', 'unknown')),
@@ -6844,6 +7353,7 @@ class CumulativeTheoryMemory:
         selected_law_conflicts = self.selected_law_conflict_experiments(limit=limit * 2)
         model_domain_splits = self.model_disagreement_domain_split_experiments(limit=limit * 2)
         localized_gravity_probes = self.localized_gravity_structure_experiments(limit=limit * 2)
+        domain_predicates = self.domain_predicate_learning_agenda(limit=limit * 2)
         disagreement_probes = self.disagreement_experiments(limit=limit * 2)
         targeted_counterexample_families = {
             str(experiment.get('theory_kind'))
@@ -6851,6 +7361,7 @@ class CumulativeTheoryMemory:
                 selected_law_conflicts
                 + model_domain_splits
                 + localized_gravity_probes
+                + domain_predicates
                 + [
                     experiment for experiment in disagreement_probes
                     if experiment.get('stagnation_status') in {'fresh', 'needs_refinement'}
@@ -6870,6 +7381,7 @@ class CumulativeTheoryMemory:
         recommendations.extend(selected_law_conflicts)
         recommendations.extend(model_domain_splits)
         recommendations.extend(localized_gravity_probes)
+        recommendations.extend(domain_predicates)
         recommendations.extend(disagreement_probes)
         recommendations.extend(
             self.equation_invariant_resolution_experiments(limit=limit * 2)
@@ -6948,6 +7460,7 @@ class CumulativeTheoryMemory:
             if recommendation.get('experiment_kind') in {
                 'model_disagreement_domain_split',
                 'localized_gravity_structure_probe',
+                'domain_predicate_discovery',
             }:
                 plan['disagreement_signature'] = recommendation.get(
                     'disagreement_signature',
@@ -6960,6 +7473,19 @@ class CumulativeTheoryMemory:
                 plan['domain_split_hypothesis'] = recommendation.get(
                     'domain_split_hypothesis',
                     {},
+                )
+                plan['predicate_key'] = recommendation.get('predicate_key')
+                plan['candidate_predicate'] = recommendation.get(
+                    'candidate_predicate',
+                    {},
+                )
+                plan['selected_multi_parameter_variant'] = recommendation.get(
+                    'selected_multi_parameter_variant',
+                    {},
+                )
+                plan['rival_multi_parameter_variants'] = recommendation.get(
+                    'rival_multi_parameter_variants',
+                    [],
                 )
                 plan['probe_action'] = recommendation.get('probe_action', {})
             if recommendation.get('experiment_kind') == 'equation_invariant_exponent_resolution':
@@ -7208,6 +7734,52 @@ class CumulativeTheoryMemory:
             ),
         )
 
+    def memory_checkpoint_summary(self) -> dict[str, Any]:
+        """Return small comparable counts for cross-run memory continuity."""
+        readiness = self.discovery_readiness_report()
+        return {
+            'record_count': len(self.records),
+            'planned_outcome_count': len(self.planned_outcomes),
+            'disagreement_record_count': len(self.disagreement_records),
+            'operator_prior_outcome_count': len(self.operator_prior_outcomes),
+            'equation_case_record_count': len(self.equation_case_records),
+            'domain_world_record_count': len(self.domain_world_records),
+            'autonomous_scientist_record_count': len(self.autonomous_scientist_records),
+            'compressed_experience_shard_count': len(self.compressed_experience_shards),
+            'canonical_law_shard_count': len(self.canonical_law_shards),
+            'family_count': len(self.families),
+            'theorem_count': len(self.theorem_memory()),
+            'theorem_consolidation_count': len(self.theorem_consolidations()),
+            'domain_predicate_agenda_count': len(self.domain_predicate_learning_agenda()),
+            'readiness_score': float(readiness.get('readiness_score', 0.0) or 0.0),
+            'readiness_status': readiness.get('status'),
+        }
+
+    def memory_delta_since(self, starting_summary: dict[str, Any]) -> dict[str, Any]:
+        """Compare current memory against a prior checkpoint summary."""
+        ending = self.memory_checkpoint_summary()
+        numeric_keys = [
+            key for key, value in ending.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        ]
+        deltas = {
+            key: round(
+                float(ending.get(key, 0.0) or 0.0)
+                - float(starting_summary.get(key, 0.0) or 0.0),
+                6,
+            )
+            for key in numeric_keys
+        }
+        return {
+            'starting': dict(starting_summary or {}),
+            'ending': ending,
+            'delta': deltas,
+            'new_records': int(deltas.get('record_count', 0) or 0),
+            'new_equation_cases': int(deltas.get('equation_case_record_count', 0) or 0),
+            'new_planned_outcomes': int(deltas.get('planned_outcome_count', 0) or 0),
+            'readiness_score_delta': deltas.get('readiness_score', 0.0),
+        }
+
     def to_dict(self) -> dict:
         return {
             'version': 1,
@@ -7229,6 +7801,7 @@ class CumulativeTheoryMemory:
             },
             'resource_efficiency': self.resource_efficiency_report(),
             'canonical_law_compression': self.canonical_law_compression_report(),
+            'memory_checkpoint': self.memory_checkpoint_summary(),
             'reusable_families': self.reusable_families(),
             'family_evaluations': self.family_evaluations(),
             'proof_gaps': self.proof_gaps(),
@@ -7251,6 +7824,7 @@ class CumulativeTheoryMemory:
                 self.autonomous_experiment_design_agenda()
             ),
             'theorem_memory': self.theorem_memory(),
+            'theorem_consolidations': self.theorem_consolidations(),
             'blind_holdout_benchmark': self.blind_holdout_benchmark_report(),
             'autonomous_scientist_evidence': self.autonomous_scientist_evidence(),
             'arithmetic_rediscovery_evidence': self.arithmetic_rediscovery_evidence(),
@@ -7275,6 +7849,7 @@ class CumulativeTheoryMemory:
                 self.localized_gravity_structure_experiments()
             ),
             'law_domain_split_hypotheses': self.law_domain_split_hypotheses(),
+            'domain_predicate_learning_agenda': self.domain_predicate_learning_agenda(),
             'blind_holdout_validation_experiments': (
                 self.blind_holdout_validation_experiments()
             ),
@@ -7633,6 +8208,17 @@ class CumulativeTheoryMemory:
             if 'localized_gravity' in candidates:
                 return 'localized_gravity'
             return 'localized_gravity'
+        if target == 'domain_predicate_context':
+            source_context = recommendation.get('source_context')
+            if source_context:
+                return str(source_context)
+            hypothesis = dict(recommendation.get('domain_split_hypothesis') or {})
+            if hypothesis.get('source_context'):
+                return str(hypothesis['source_context'])
+            conflict_contexts = list(hypothesis.get('conflict_contexts') or [])
+            if conflict_contexts:
+                return str(conflict_contexts[0])
+            return candidates[0] if candidates else 'standard'
         if target == 'operator_prior_unseen_context':
             for world_type in candidates:
                 if world_type not in avoid:
@@ -7829,6 +8415,23 @@ class CumulativeTheoryMemory:
         if target_found:
             return 'blind_holdout_weak'
         return 'blind_holdout_absent'
+
+    def _domain_predicate_outcome_label(
+        self,
+        target_found: bool,
+        target_proof_passed: bool,
+        rival_found: bool,
+        rival_proof_passed: bool,
+    ) -> str:
+        if target_found and target_proof_passed and rival_found and rival_proof_passed:
+            return 'domain_predicate_split_supported'
+        if target_found and target_proof_passed:
+            return 'domain_predicate_selected_region'
+        if rival_found and rival_proof_passed:
+            return 'domain_predicate_rival_region'
+        if target_found or rival_found:
+            return 'domain_predicate_weak'
+        return 'domain_predicate_absent'
 
     def _matches_plan_target(self, plan: dict, theory: dict) -> bool:
         variant = dict(plan.get('selected_multi_parameter_variant') or {})
@@ -8127,6 +8730,15 @@ class CumulativeTheoryMemory:
                     f"support={evidence.get('support_count', 0)}"
                 )
                 lines.append(f"      statement: {theorem.get('statement')}")
+        consolidations = self.theorem_consolidations(limit=limit)
+        if consolidations:
+            lines.append("  Theorem consolidations:")
+            for item in consolidations:
+                lines.append(
+                    f"    {item['law_family']}: status={item['status']} "
+                    f"support={item['evidence'].get('support_count', 0)}"
+                )
+                lines.append(f"      statement: {item['statement']}")
         selected_replays = self.selected_law_replay_agenda(limit=limit)
         if selected_replays:
             lines.append("  Selected-law replay agenda:")
@@ -8189,6 +8801,17 @@ class CumulativeTheoryMemory:
                     f"kind={item.get('split_kind', 'unknown')} contexts={contexts}"
                 )
                 lines.append(f"      question: {item.get('question', 'unknown')}")
+        predicate_agenda = self.domain_predicate_learning_agenda(limit=limit)
+        if predicate_agenda:
+            lines.append("  Domain predicate learning agenda:")
+            for item in predicate_agenda:
+                predicate = dict(item.get('candidate_predicate') or {})
+                lines.append(
+                    f"    {predicate.get('predicate_kind', 'predicate')}: "
+                    f"priority={item['priority']:.2f} "
+                    f"confidence={predicate.get('confidence', 0.0)}"
+                )
+                lines.append(f"      question: {predicate.get('question')}")
         blind_validations = self.blind_holdout_validation_experiments(limit=limit)
         if blind_validations:
             lines.append("  Blind holdout validation agenda:")

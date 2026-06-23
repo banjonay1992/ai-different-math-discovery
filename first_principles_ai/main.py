@@ -990,6 +990,7 @@ def run_equation_campaign(
     world_types = world_types or ['standard', 'sideways_wind', 'vortex']
     results = []
     theory_memory = theory_memory or CumulativeTheoryMemory()
+    starting_memory_summary = theory_memory.memory_checkpoint_summary()
 
     print("=" * 70)
     print("EQUATION DISCOVERY CAMPAIGN")
@@ -1116,11 +1117,23 @@ def run_equation_campaign(
             f"{best['interesting_equation'].get('expression', '?')} "
             f"(score={best['interesting_score']:.2f})"
         )
+    memory_delta = theory_memory.memory_delta_since(starting_memory_summary)
+    print(
+        "Theory memory delta: "
+        f"records={memory_delta['new_records']}, "
+        f"equation_cases={memory_delta['new_equation_cases']}, "
+        f"planned_outcomes={memory_delta['new_planned_outcomes']}, "
+        f"readiness_delta={memory_delta['readiness_score_delta']:.3f}"
+    )
     if emit_hf_artifact_summary:
         print(
             "HF_ARTIFACT_SUMMARY "
             + json.dumps(
-                _equation_campaign_artifact_summary(results, theory_memory),
+                _equation_campaign_artifact_summary(
+                    results,
+                    theory_memory,
+                    starting_memory_summary=starting_memory_summary,
+                ),
                 sort_keys=True,
             ),
             flush=True,
@@ -1131,10 +1144,15 @@ def run_equation_campaign(
 def _equation_campaign_artifact_summary(
     results: list[dict],
     theory_memory: CumulativeTheoryMemory,
+    starting_memory_summary: dict | None = None,
 ) -> dict:
+    ending_memory_summary = theory_memory.memory_checkpoint_summary()
     return {
         'run_kind': 'equation_campaign',
         'runs_final': False,
+        'starting_memory': dict(starting_memory_summary or {}),
+        'ending_memory': ending_memory_summary,
+        'memory_delta': theory_memory.memory_delta_since(starting_memory_summary or {}),
         'result_count': len(results),
         'passed_count': sum(1 for result in results if result.get('passed')),
         'rows': [
@@ -1161,6 +1179,10 @@ def _equation_campaign_artifact_summary(
             for result in results
         ],
         'readiness': theory_memory.discovery_readiness_report(),
+        'theorem_consolidations': theory_memory.theorem_consolidations(limit=5),
+        'domain_predicate_learning_agenda': (
+            theory_memory.domain_predicate_learning_agenda(limit=5)
+        ),
         'selected_law_conflict_experiments': (
             theory_memory.selected_law_conflict_experiments(limit=5)
         ),
@@ -1315,6 +1337,8 @@ def _planned_probe_actions(plan: dict, max_actions: int = 4) -> list[dict]:
         source = 'planned_model_disagreement_domain_split'
     elif plan.get('experiment_kind') == 'localized_gravity_structure_probe':
         source = 'planned_localized_gravity_structure_probe'
+    elif plan.get('experiment_kind') == 'domain_predicate_discovery':
+        source = 'planned_domain_predicate_discovery'
     else:
         source = 'planned_model_disagreement_probe'
     for point in list(signature.get('probe_points') or [])[:max_actions]:
@@ -1342,6 +1366,7 @@ def _planned_probe_actions(plan: dict, max_actions: int = 4) -> list[dict]:
             'blind_holdout_validation',
             'model_disagreement_domain_split',
             'localized_gravity_structure_probe',
+            'domain_predicate_discovery',
         }:
             action['source'] = source
         else:
@@ -3240,6 +3265,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     domain_rediscovery_experiments = theory_memory.domain_rediscovery_experiments(limit=3)
     autonomous_designs = theory_memory.autonomous_experiment_design_agenda(limit=3)
     theorem_memory = theory_memory.theorem_memory(limit=3)
+    theorem_consolidations = theory_memory.theorem_consolidations(limit=3)
     blind_holdout_benchmark = theory_memory.blind_holdout_benchmark_report(limit=3)
     representation_agenda = theory_memory.representation_agenda(limit=3)
     generated_operator_priors = theory_memory.generated_operator_priors(limit=3)
@@ -3256,6 +3282,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         limit=3
     )
     law_domain_splits = theory_memory.law_domain_split_hypotheses(limit=3)
+    domain_predicate_agenda = theory_memory.domain_predicate_learning_agenda(limit=3)
     blind_holdout_validations = theory_memory.blind_holdout_validation_experiments(limit=3)
     post_run_replay_agenda = theory_memory.post_run_replay_agenda(limit=3)
     operator_prior_feedback = theory_memory.operator_prior_feedback(limit=3)
@@ -3300,6 +3327,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         domain_rediscovery_experiments,
         autonomous_designs,
         theorem_memory,
+        theorem_consolidations,
         blind_holdout_benchmark.get('plan'),
         representation_agenda,
         generated_operator_priors,
@@ -3310,6 +3338,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         model_domain_splits,
         localized_gravity_probes,
         law_domain_splits,
+        domain_predicate_agenda,
         blind_holdout_validations,
         post_run_replay_agenda,
         operator_prior_feedback,
@@ -3581,12 +3610,32 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     if law_domain_splits:
         print("Theory law domain split hypotheses:")
         for item in law_domain_splits:
-            contexts = ','.join(item.get('conflict_contexts', [])[:3]) or 'none'
-            print(
-                f"  {item['invariant_key']}: status={item['status']} "
-                f"kind={item['split_kind']} contexts={contexts}"
+            contexts = (
+                ','.join(item.get('conflict_contexts', [])[:3])
+                or ','.join(item.get('source_contexts', [])[:3])
+                or 'none'
             )
-            print(f"    question: {item['question']}")
+            split_key = (
+                item.get('invariant_key')
+                or item.get('key')
+                or item.get('theory_kind')
+                or 'domain_split'
+            )
+            print(
+                f"  {split_key}: status={item.get('status', 'unknown')} "
+                f"kind={item.get('split_kind', 'unknown')} contexts={contexts}"
+            )
+            print(f"    question: {item.get('question', 'unknown')}")
+    if domain_predicate_agenda:
+        print("Theory domain predicate learning agenda:")
+        for item in domain_predicate_agenda:
+            predicate = item.get('candidate_predicate', {})
+            print(
+                f"  {predicate.get('predicate_kind', 'predicate')}: "
+                f"priority={item['priority']:.2f} "
+                f"confidence={predicate.get('confidence', 0.0)}"
+            )
+            print(f"    question: {predicate.get('question')}")
     if blind_holdout_validations:
         print("Theory blind holdout validation agenda:")
         for item in blind_holdout_validations:
@@ -3613,6 +3662,16 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
                 f"support={evidence.get('support_count', 0)}"
             )
             print(f"    statement: {item.get('statement')}")
+    if theorem_consolidations:
+        print("Theory theorem consolidations:")
+        for item in theorem_consolidations:
+            evidence = item.get('evidence', {})
+            print(
+                f"  {item['law_family']}: status={item['status']} "
+                f"support={evidence.get('support_count', 0)}"
+            )
+            print(f"    statement: {item.get('statement')}")
+            print(f"    next: {item.get('next_obligation')}")
     if domain_rediscovery_experiments:
         print("Theory domain rediscovery agenda:")
         for item in domain_rediscovery_experiments:
