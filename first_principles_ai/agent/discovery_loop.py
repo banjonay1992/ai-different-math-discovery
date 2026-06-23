@@ -6541,6 +6541,7 @@ class CumulativeTheoryMemory:
         )
         recommendations = []
         seen: set[str] = set()
+        seen_issue_groups: set[tuple[str, str, str]] = set()
         for invariant in invariants:
             if invariant.get('status') not in {
                 'robust_law',
@@ -6563,6 +6564,14 @@ class CumulativeTheoryMemory:
                 issue = self._post_run_replay_issue(invariant, record)
                 if not issue:
                     continue
+                issue_group = (
+                    str(invariant.get('key', 'unknown')),
+                    str(record.get('context', invariant.get('context', 'unknown'))),
+                    issue,
+                )
+                if issue_group in seen_issue_groups:
+                    continue
+                seen_issue_groups.add(issue_group)
                 replay_key = self._post_run_replay_key(invariant, record, issue)
                 if replay_key in seen:
                     continue
@@ -6820,6 +6829,8 @@ class CumulativeTheoryMemory:
                     'replay_needs_parameter_resolution',
                     'replay_conflicted_with_invariant',
                     'replay_leak_blocked',
+                    'replay_still_baseline_headline',
+                    'replay_no_headline',
                 }
             ),
         }

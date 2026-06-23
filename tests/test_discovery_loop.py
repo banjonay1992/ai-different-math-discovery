@@ -2328,6 +2328,10 @@ class DiscoveryLoopTests(unittest.TestCase):
 
         agenda = memory.post_run_replay_agenda(limit=3)
         replay = agenda[0]
+        replay_issue_groups = {
+            (item['source_context'], item['replay_issue'])
+            for item in agenda
+        }
         plan = memory.planned_experiments(
             world_types=['sideways_wind'],
             object_counts=[5],
@@ -2358,18 +2362,26 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertTrue(replay['residual_first'])
         self.assertEqual('sideways_wind', replay['source_context'])
         self.assertEqual(0, replay['replay_seed'])
+        self.assertEqual(1, len(agenda))
+        self.assertEqual(1, len(replay_issue_groups))
         self.assertTrue(plan['replay_from_start'])
         self.assertEqual(0, plan['seed'])
         self.assertEqual('replay_found_residual_headline', outcome['outcome'])
         self.assertIn('post_run_replay_agenda', memory.to_dict())
         self.assertIn('Post-run replay agenda:', memory.summary())
-
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             _print_cumulative_theory_review(memory)
         printed = output.getvalue()
         self.assertIn('Theory post-run replay agenda:', printed)
         self.assertIn('baseline_headline_needs_residual_replay', printed)
+
+        memory.planned_outcomes.append({
+            'experiment_kind': 'post_run_replay_revision',
+            'replay_key': replay['replay_key'],
+            'outcome': 'replay_still_baseline_headline',
+        })
+        self.assertEqual([], memory.post_run_replay_agenda(limit=3))
 
     def test_post_run_replay_confirms_later_invariant_on_old_case(self):
         memory = CumulativeTheoryMemory()
