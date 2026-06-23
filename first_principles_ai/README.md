@@ -273,6 +273,20 @@ it picks dominant parameters, records rough variants as approximations, and
 attaches proof obligations plus falsification tests before treating the template
 as more than a working hypothesis.
 
+The notebook now also carries a broad math-domain curriculum. It names the
+pressure sources the system should experience to rediscover core mathematics:
+quantity/arithmetic, algebra, geometry, calculus/change, probability,
+logic/proof, discrete structures, symmetry, optimization, dynamics,
+information/computation, and higher-dimensional worlds. Each domain lists the
+observations to create, primitive concepts to rediscover, equation families to
+try, proof pressure, and expected discoveries.
+The curriculum includes explicit transfer bridges too, such as quantity to
+algebra, algebra to geometry, geometry to calculus, calculus to dynamics,
+probability to information, and higher dimensions back into dynamics. Bridge
+probes carry a transfer question and a falsifier so the system can test whether
+a rule is truly reusable across domains instead of just successful in one
+world.
+
 Cumulative theory memory now evaluates those families instead of only ranking
 them. Each repeated family is marked as provisional, local, reusable,
 established, domain-limited, or needing a counterexample, with evidence counts
@@ -316,12 +330,12 @@ formation, proof-like evaluation, model disagreement planning, representation
 agenda, executable operator priors, operator feedback, anomaly repair, discovery
 claims, claim-driven planning, first-principles adaptive dimensions, a broad
 algebraic/equation foundation baseline, self-authored equation synthesis, and
-concrete next experiments. This audit is printed during prep/review commands so
-the final watched run can stay manual.
+the broad domain curriculum plus cross-domain transfer loop. This audit is
+printed during prep/review commands so the final watched run can stay manual.
 The audit now carries an evidence dossier too: compact summaries of the
 strongest invented-operator chains, proof-like claims, concrete planned tests,
-open disagreement probes, self-authored equations, and proof certificates behind
-the readiness score.
+open disagreement probes, self-authored equations, domain-transfer probes, and
+proof certificates behind the readiness score.
 It can also be run by itself with `--discovery-readiness`; that command only
 loads the theory notebook, prints the gate audit, evidence dossier, and
 recommended non-final next actions, and never starts the watched final campaign.

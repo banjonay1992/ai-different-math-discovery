@@ -475,6 +475,290 @@ ALGEBRAIC_SEARCH_CONTROLS: dict[str, Any] = {
 }
 
 
+MATH_DOMAIN_CURRICULUM: list[dict[str, Any]] = [
+    {
+        'key': 'arithmetic_quantity',
+        'name': 'arithmetic and quantity',
+        'curriculum_order': 1,
+        'world_seed': 'finite objects that can appear, disappear, combine, and split',
+        'observation_tasks': [
+            'count stable objects under permutation',
+            'compare more, fewer, same, zero, and one-more transitions',
+            'compose combine/split actions and check whether totals agree',
+        ],
+        'primitive_targets': ['number', 'successor', 'addition', 'subtraction', 'equality'],
+        'equation_families': ['constant_identity', 'affine_linear', 'set_relation_cardinality'],
+        'proof_pressure': ['closure', 'identity_substitution', 'associativity'],
+        'expected_discoveries': ['count invariance', 'successor arithmetic', 'conservation of total under regrouping'],
+    },
+    {
+        'key': 'algebra_equations',
+        'name': 'algebra and symbolic equations',
+        'curriculum_order': 2,
+        'world_seed': 'unknown quantities hidden behind reversible operations',
+        'observation_tasks': [
+            'solve missing values from balanced transformations',
+            'compose and invert operations',
+            'compare equivalent expressions on held-out substitutions',
+        ],
+        'primitive_targets': ['variable', 'inverse operation', 'composition', 'equivalence class'],
+        'equation_families': ['affine_linear', 'polynomial_basis', 'rational_ratio'],
+        'proof_pressure': ['identity_substitution', 'distributivity', 'domain_nonzero_positive'],
+        'expected_discoveries': ['symbolic substitution', 'equation balance', 'factor/rewrite equivalence'],
+    },
+    {
+        'key': 'geometry_space',
+        'name': 'geometry and measurement',
+        'curriculum_order': 3,
+        'world_seed': 'points, distances, angles, boundaries, and coordinate changes',
+        'observation_tasks': [
+            'measure invariant distance under translation and rotation',
+            'infer centers, axes, and boundaries from observations',
+            'compare coordinate descriptions of the same shape',
+        ],
+        'primitive_targets': ['point', 'distance', 'angle', 'coordinate frame', 'shape invariant'],
+        'equation_families': ['vector_projection_norm', 'matrix_linear_transform', 'symmetry_invariant'],
+        'proof_pressure': ['symmetry_invariance', 'dimensional_consistency', 'boundary_and_partition'],
+        'expected_discoveries': ['metric distance', 'coordinate transform', 'local/global shape distinction'],
+    },
+    {
+        'key': 'calculus_change',
+        'name': 'calculus and change',
+        'curriculum_order': 4,
+        'world_seed': 'smooth and abrupt change sampled over time',
+        'observation_tasks': [
+            'estimate velocity, acceleration, and curvature from finite differences',
+            'compare accumulated change against endpoint differences',
+            'separate smooth trends from boundary events',
+        ],
+        'primitive_targets': ['rate', 'finite difference', 'accumulation', 'limit-like refinement'],
+        'equation_families': ['finite_difference_calculus', 'accumulation_integral', 'optimization_extremum'],
+        'proof_pressure': ['induction_or_recurrence', 'dimensional_consistency', 'monotonicity_or_extremum'],
+        'expected_discoveries': ['derivative-like rate', 'integral-like accumulation', 'local linear approximation'],
+    },
+    {
+        'key': 'probability_uncertainty',
+        'name': 'probability and uncertainty',
+        'curriculum_order': 5,
+        'world_seed': 'stochastic events, noisy measurements, and repeated trials',
+        'observation_tasks': [
+            'estimate frequencies from repeated samples',
+            'update beliefs after evidence',
+            'distinguish noise from deterministic residual structure',
+        ],
+        'primitive_targets': ['sample space', 'frequency', 'conditional probability', 'expectation'],
+        'equation_families': ['probability_statistics', 'optimization_extremum', 'piecewise_predicate'],
+        'proof_pressure': ['boundary_and_partition', 'heldout_counterexample', 'dimensional_consistency'],
+        'expected_discoveries': ['frequency convergence', 'conditional split', 'expected error minimization'],
+    },
+    {
+        'key': 'logic_proof',
+        'name': 'logic and proof',
+        'curriculum_order': 6,
+        'world_seed': 'statements, predicates, implications, contradictions, and counterexamples',
+        'observation_tasks': [
+            'test whether predicates partition examples',
+            'build implication chains from observed rules',
+            'search for the smallest counterexample to a claim',
+        ],
+        'primitive_targets': ['predicate', 'implication', 'contradiction', 'counterexample', 'proof obligation'],
+        'equation_families': ['piecewise_predicate', 'set_relation_cardinality', 'symmetry_invariant'],
+        'proof_pressure': ['boundary_and_partition', 'heldout_counterexample', 'identity_substitution'],
+        'expected_discoveries': ['falsification', 'domain restriction', 'proof by repeated invariant check'],
+    },
+    {
+        'key': 'discrete_structures',
+        'name': 'discrete structures and graphs',
+        'curriculum_order': 7,
+        'world_seed': 'nodes, edges, paths, neighborhoods, orderings, and finite state transitions',
+        'observation_tasks': [
+            'discover adjacency and reachability',
+            'compare path composition and shortest routes',
+            'track state-machine transitions over repeated steps',
+        ],
+        'primitive_targets': ['set', 'relation', 'graph', 'path', 'state transition'],
+        'equation_families': ['graph_relation_path', 'set_relation_cardinality', 'recurrence_iteration'],
+        'proof_pressure': ['closure', 'associativity', 'induction_or_recurrence'],
+        'expected_discoveries': ['path composition', 'connectivity', 'finite transition algebra'],
+    },
+    {
+        'key': 'symmetry_invariance',
+        'name': 'symmetry and invariance',
+        'curriculum_order': 8,
+        'world_seed': 'transformations that preserve or break structure',
+        'observation_tasks': [
+            'apply translations, rotations, reflections, and relabelings',
+            'detect quantities unchanged by transformations',
+            'separate true invariants from coordinate artifacts',
+        ],
+        'primitive_targets': ['transform', 'orbit', 'invariant', 'equivalence under symmetry'],
+        'equation_families': ['symmetry_invariant', 'matrix_linear_transform', 'vector_projection_norm'],
+        'proof_pressure': ['symmetry_invariance', 'identity_substitution', 'commutativity_or_order_sensitivity'],
+        'expected_discoveries': ['group-like composition', 'invariant quantity', 'coordinate-free law'],
+    },
+    {
+        'key': 'optimization_extrema',
+        'name': 'optimization and extrema',
+        'curriculum_order': 9,
+        'world_seed': 'actions with costs, rewards, constraints, and tradeoffs',
+        'observation_tasks': [
+            'compare candidate rules by residual/error cost',
+            'search local and global optima',
+            'discover constraints and active boundaries',
+        ],
+        'primitive_targets': ['objective', 'constraint', 'minimum', 'maximum', 'gradient-like direction'],
+        'equation_families': ['optimization_extremum', 'finite_difference_calculus', 'probability_statistics'],
+        'proof_pressure': ['monotonicity_or_extremum', 'boundary_and_partition', 'heldout_counterexample'],
+        'expected_discoveries': ['least-error fit', 'constraint boundary', 'tradeoff curve'],
+    },
+    {
+        'key': 'dynamics_systems',
+        'name': 'dynamics and systems',
+        'curriculum_order': 10,
+        'world_seed': 'interacting objects with hidden forces, phases, feedback, and conservation',
+        'observation_tasks': [
+            'infer residual fields after a simple transition baseline',
+            'discover attractors, rotations, periodic forcing, and conservation',
+            'compose multiple laws and test held-out trajectories',
+        ],
+        'primitive_targets': ['state', 'transition', 'field', 'feedback', 'conserved quantity'],
+        'equation_families': ['recurrence_iteration', 'finite_difference_calculus', 'sinusoidal_phase'],
+        'proof_pressure': ['induction_or_recurrence', 'dimensional_consistency', 'heldout_counterexample'],
+        'expected_discoveries': ['state update law', 'residual field', 'phase or conservation law'],
+    },
+    {
+        'key': 'information_computation',
+        'name': 'information and computation',
+        'curriculum_order': 11,
+        'world_seed': 'messages, encodings, compression, decision trees, and algorithms',
+        'observation_tasks': [
+            'compare descriptions by compression and prediction cost',
+            'infer hidden state from partial observations',
+            'learn procedures that generalize across input sizes',
+        ],
+        'primitive_targets': ['encoding', 'entropy-like uncertainty', 'algorithm', 'state memory'],
+        'equation_families': ['probability_statistics', 'recurrence_iteration', 'graph_relation_path'],
+        'proof_pressure': ['induction_or_recurrence', 'heldout_counterexample', 'dimensional_consistency'],
+        'expected_discoveries': ['compression preference', 'hidden-state inference', 'algorithmic recurrence'],
+    },
+    {
+        'key': 'higher_dimensions',
+        'name': 'higher-dimensional worlds',
+        'curriculum_order': 12,
+        'world_seed': 'latent axes, projections, manifolds, and arbitrary-dimensional coordinates',
+        'observation_tasks': [
+            'invent new coordinates when residuals cannot be expressed in visible axes',
+            'project high-dimensional structure into observable views',
+            'test whether learned laws survive dimension changes',
+        ],
+        'primitive_targets': ['dimension lift', 'projection', 'basis', 'latent coordinate', 'manifold-like neighborhood'],
+        'equation_families': ['vector_projection_norm', 'matrix_linear_transform', 'symmetry_invariant'],
+        'proof_pressure': ['symmetry_invariance', 'heldout_counterexample', 'dimensional_consistency'],
+        'expected_discoveries': ['latent axis', 'projection invariance', 'dimension-independent law'],
+    },
+]
+
+
+MATH_DOMAIN_TRANSFER_BRIDGES: list[dict[str, Any]] = [
+    {
+        'key': 'quantity_to_algebra',
+        'source_domain': 'arithmetic_quantity',
+        'target_domain': 'algebra_equations',
+        'bridge_principle': 'counts become variables and operations become reusable transformations',
+        'transfer_question': 'Does a counting rule still hold when the count is hidden behind an unknown?',
+        'falsifier': 'a substitution that preserves counts breaks the symbolic equation',
+    },
+    {
+        'key': 'algebra_to_geometry',
+        'source_domain': 'algebra_equations',
+        'target_domain': 'geometry_space',
+        'bridge_principle': 'equations define coordinate constraints and geometric loci',
+        'transfer_question': 'Can equivalent expressions describe the same shape under a coordinate change?',
+        'falsifier': 'two algebraically equivalent forms produce different measured shapes',
+    },
+    {
+        'key': 'geometry_to_calculus',
+        'source_domain': 'geometry_space',
+        'target_domain': 'calculus_change',
+        'bridge_principle': 'local geometric differences become rates and curvature',
+        'transfer_question': 'Does a small spatial displacement predict the observed change rate?',
+        'falsifier': 'refined samples reject the local linear or curvature estimate',
+    },
+    {
+        'key': 'calculus_to_dynamics',
+        'source_domain': 'calculus_change',
+        'target_domain': 'dynamics_systems',
+        'bridge_principle': 'rates compose into state transition laws',
+        'transfer_question': 'Can finite differences explain future state transitions across trajectories?',
+        'falsifier': 'held-out trajectories keep residual structure after the rate law is applied',
+    },
+    {
+        'key': 'probability_to_information',
+        'source_domain': 'probability_uncertainty',
+        'target_domain': 'information_computation',
+        'bridge_principle': 'uncertainty becomes description length and inference cost',
+        'transfer_question': 'Does the lower-uncertainty model also compress future observations better?',
+        'falsifier': 'a probabilistically better model has worse held-out description cost',
+    },
+    {
+        'key': 'logic_to_all_domains',
+        'source_domain': 'logic_proof',
+        'target_domain': 'algebra_equations',
+        'bridge_principle': 'proof obligations and counterexamples govern every promoted rule',
+        'transfer_question': 'Does the rule name a domain, a falsifier, and a counterexample search?',
+        'falsifier': 'the claim cannot produce a setting that would break it',
+    },
+    {
+        'key': 'discrete_to_algebra',
+        'source_domain': 'discrete_structures',
+        'target_domain': 'algebra_equations',
+        'bridge_principle': 'path and state composition behave like algebraic operations',
+        'transfer_question': 'Does composing paths match composing symbolic transformations?',
+        'falsifier': 'path composition is order-sensitive but the algebraic rule treats it as commutative',
+    },
+    {
+        'key': 'symmetry_to_geometry',
+        'source_domain': 'symmetry_invariance',
+        'target_domain': 'geometry_space',
+        'bridge_principle': 'geometric facts are promoted only if they survive allowed transformations',
+        'transfer_question': 'Does the geometric law survive rotation, reflection, translation, or relabeling?',
+        'falsifier': 'the law succeeds only in the original coordinate frame',
+    },
+    {
+        'key': 'optimization_to_calculus',
+        'source_domain': 'optimization_extrema',
+        'target_domain': 'calculus_change',
+        'bridge_principle': 'extrema are found by comparing local change directions under constraints',
+        'transfer_question': 'Does the local change signal identify a better or worse candidate?',
+        'falsifier': 'following the predicted improvement direction raises error on a holdout',
+    },
+    {
+        'key': 'dynamics_to_probability',
+        'source_domain': 'dynamics_systems',
+        'target_domain': 'probability_uncertainty',
+        'bridge_principle': 'unexplained deterministic residuals become noise models only after structure fails',
+        'transfer_question': 'Is the residual random after known dynamics, or still structured?',
+        'falsifier': 'phase, position, or hidden-state features predict the residual better than noise',
+    },
+    {
+        'key': 'information_to_logic',
+        'source_domain': 'information_computation',
+        'target_domain': 'logic_proof',
+        'bridge_principle': 'short programs need proof obligations before they become laws',
+        'transfer_question': 'Does the shortest discovered procedure generalize by induction?',
+        'falsifier': 'a larger held-out input breaks the compressed procedure',
+    },
+    {
+        'key': 'higher_dimensions_to_all_domains',
+        'source_domain': 'higher_dimensions',
+        'target_domain': 'dynamics_systems',
+        'bridge_principle': 'new latent axes are allowed only when they improve transfer or falsification',
+        'transfer_question': 'Does a lifted coordinate explain residuals across domains without overfitting?',
+        'falsifier': 'the latent axis helps one run but fails same-structure holdouts',
+    },
+]
+
+
 @dataclass
 class ConceptProposal:
     """A candidate internal concept generated from a theory."""
@@ -1940,6 +2224,8 @@ class CumulativeTheoryMemory:
         adaptive_dimensions = self.adaptive_dimension_agenda(limit=5)
         algebraic_foundation = self.algebraic_foundation_baseline()
         algebraic_agenda = self.algebraic_expression_agenda(limit=5)
+        domain_curriculum = self.math_domain_curriculum()
+        domain_transfer_experiments = self.domain_transfer_experiments(limit=5)
         repair_confirmed_count = sum(
             1 for outcome in self.planned_outcomes
             if outcome.get('outcome') == 'operator_prior_repair_confirmed'
@@ -2079,6 +2365,52 @@ class CumulativeTheoryMemory:
                 'seed broad algebraic expression families, structures, proof obligations, and search controls',
             ),
             (
+                'broad_domain_curriculum',
+                'a multi-domain rediscovery curriculum covers core mathematical pressure sources',
+                (
+                    domain_curriculum['domain_count'] >= 12
+                    and domain_curriculum['transfer_bridge_count'] >= 12
+                    and set(domain_curriculum['required_domains']) >= {
+                        'arithmetic_quantity',
+                        'algebra_equations',
+                        'geometry_space',
+                        'calculus_change',
+                        'probability_uncertainty',
+                        'logic_proof',
+                        'discrete_structures',
+                        'symmetry_invariance',
+                        'optimization_extrema',
+                        'dynamics_systems',
+                        'information_computation',
+                        'higher_dimensions',
+                    }
+                ),
+                1.0,
+                {
+                    'domain_count': domain_curriculum['domain_count'],
+                    'transfer_bridge_count': domain_curriculum['transfer_bridge_count'],
+                    'active_domain_count': domain_curriculum['coverage']['active_domain_count'],
+                },
+                'seed the missing math domains and bridges in the domain curriculum',
+            ),
+            (
+                'domain_transfer_loop',
+                'the curriculum emits cross-domain transfer probes with falsifiers',
+                bool(domain_transfer_experiments) and all(
+                    item.get('falsifies_if') and item.get('transfer_question')
+                    for item in domain_transfer_experiments
+                ),
+                1.0,
+                {
+                    'transfer_experiment_count': len(domain_transfer_experiments),
+                    'top_priority': (
+                        domain_transfer_experiments[0]['priority']
+                        if domain_transfer_experiments else 0.0
+                    ),
+                },
+                'generate cross-domain transfer experiments with expected results and falsifiers',
+            ),
+            (
                 'autonomous_next_experiments',
                 'the memory notebook can emit concrete next experiments',
                 bool(next_experiments) and bool(planned_experiments),
@@ -2137,12 +2469,18 @@ class CumulativeTheoryMemory:
                 proof_certificates=proof_certificates,
                 disagreement_experiments=disagreement_experiments,
                 self_authored_equations=self_authored_equations,
+                domain_transfer_experiments=(
+                    domain_transfer_experiments if self.records else []
+                ),
             ),
             'first_principles_basis': first_principles,
             'adaptive_dimension_agenda': adaptive_dimensions,
             'algebraic_foundation_baseline': algebraic_foundation,
             'algebraic_expression_agenda': algebraic_agenda,
             'self_authored_equations': self_authored_equations,
+            'math_domain_curriculum': domain_curriculum,
+            'domain_curriculum_agenda': self.domain_curriculum_agenda(limit=12),
+            'domain_transfer_experiments': domain_transfer_experiments,
         }
 
     def discovery_evidence_dossier(
@@ -2156,6 +2494,7 @@ class CumulativeTheoryMemory:
         proof_certificates: list[dict[str, Any]] | None = None,
         disagreement_experiments: list[dict[str, Any]] | None = None,
         self_authored_equations: list[dict[str, Any]] | None = None,
+        domain_transfer_experiments: list[dict[str, Any]] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Compact evidence trail for the non-final readiness score."""
         chains = (
@@ -2204,6 +2543,14 @@ class CumulativeTheoryMemory:
             self_authored_equations
             if self_authored_equations is not None
             else self.self_authored_equations(limit=limit)
+        )
+        domain_transfers = (
+            domain_transfer_experiments
+            if domain_transfer_experiments is not None
+            else (
+                self.domain_transfer_experiments(limit=limit)
+                if self.records else []
+            )
         )
 
         chain_summaries = []
@@ -2309,6 +2656,19 @@ class CumulativeTheoryMemory:
                 'falsification_tests': list(equation.get('falsification_tests') or [])[:2],
             })
 
+        domain_transfer_summaries = []
+        for experiment in domain_transfers[:limit]:
+            domain_transfer_summaries.append({
+                'key': experiment.get('key'),
+                'source_domain': experiment.get('source_domain'),
+                'target_domain': experiment.get('target_domain'),
+                'priority': round(float(experiment.get('priority', 0.0) or 0.0), 3),
+                'source_status': experiment.get('source_status'),
+                'target_status': experiment.get('target_status'),
+                'transfer_question': experiment.get('transfer_question'),
+                'falsifies_if': experiment.get('falsifies_if'),
+            })
+
         return {
             'chains': chain_summaries,
             'claims': claim_summaries,
@@ -2317,6 +2677,7 @@ class CumulativeTheoryMemory:
             'proof_certificates': proof_summaries,
             'disagreement_probes': disagreement_summaries,
             'self_authored_equations': authored_summaries,
+            'domain_transfer_probes': domain_transfer_summaries,
         }
 
     def _discovery_readiness_actions(
@@ -2339,6 +2700,16 @@ class CumulativeTheoryMemory:
             return []
         actions = []
         missing = set(missing_gates)
+        if missing & {'broad_domain_curriculum', 'domain_transfer_loop'}:
+            actions.append({
+                'action_kind': 'non_final_domain_curriculum_review',
+                'reason': 'inspect domain coverage and bridge probes before expanding simulator worlds',
+                'command': (
+                    'python3 first_principles_ai/main.py --discovery-readiness '
+                    '--theory-memory-file tmp/theory-memory.json'
+                ),
+                'runs_final': False,
+            })
         if missing & {
             'residual_to_theory',
             'proof_like_evaluation',
@@ -2501,6 +2872,245 @@ class CumulativeTheoryMemory:
             reverse=True,
         )
         return ranked[:limit]
+
+    def math_domain_curriculum(self) -> dict[str, Any]:
+        """Return the broad math-domain curriculum used to accelerate rediscovery."""
+        domains = json.loads(json.dumps(MATH_DOMAIN_CURRICULUM))
+        bridges = json.loads(json.dumps(MATH_DOMAIN_TRANSFER_BRIDGES))
+        agenda = self.domain_curriculum_agenda(limit=len(domains))
+        covered = [
+            item['domain_key']
+            for item in agenda
+            if item['status'] in {'active', 'transfer_ready'}
+        ]
+        return {
+            'version': 1,
+            'domain_count': len(domains),
+            'transfer_bridge_count': len(bridges),
+            'required_domains': [domain['key'] for domain in domains],
+            'domains': domains,
+            'transfer_bridges': bridges,
+            'coverage': {
+                'active_domain_count': len(covered),
+                'active_domains': covered,
+                'pending_domains': [
+                    item['domain_key']
+                    for item in agenda
+                    if item['status'] == 'seeded_pending_world'
+                ],
+            },
+            'curriculum_policy': (
+                'each domain is a pressure source, not an answer bank; a '
+                'candidate concept must be rediscovered from observations, '
+                'transferred across at least one bridge, and survive a named falsifier'
+            ),
+        }
+
+    def domain_curriculum_agenda(self, limit: int = 12) -> list[dict[str, Any]]:
+        """Rank domains by current evidence and missing rediscovery pressure."""
+        agenda = []
+        for domain in MATH_DOMAIN_CURRICULUM:
+            evidence = self._domain_curriculum_evidence(domain)
+            support = int(evidence.get('support_count', 0) or 0)
+            bridge_count = self._domain_bridge_count(str(domain['key']))
+            if support >= 2:
+                status = 'transfer_ready'
+            elif support == 1:
+                status = 'active'
+            else:
+                status = 'seeded_pending_world'
+            priority = (
+                1.0
+                - 0.05 * min(8, support)
+                + 0.01 * int(domain.get('curriculum_order', 0) or 0)
+            )
+            if status == 'seeded_pending_world':
+                priority += 0.18
+            agenda.append({
+                'domain_key': domain['key'],
+                'name': domain['name'],
+                'curriculum_order': domain['curriculum_order'],
+                'status': status,
+                'priority': round(max(0.1, min(1.0, priority)), 3),
+                'support_count': support,
+                'bridge_count': bridge_count,
+                'evidence': evidence,
+                'next_pressure': self._domain_next_pressure(domain, status),
+                'target_primitives': list(domain.get('primitive_targets') or []),
+                'equation_families': list(domain.get('equation_families') or []),
+                'proof_pressure': list(domain.get('proof_pressure') or []),
+            })
+        agenda.sort(
+            key=lambda item: (
+                item['priority'],
+                -item['support_count'],
+                -item['curriculum_order'],
+            ),
+            reverse=True,
+        )
+        return agenda[:limit]
+
+    def domain_transfer_experiments(self, limit: int = 8) -> list[dict[str, Any]]:
+        """Suggest cross-domain probes that force discovered math to transfer."""
+        agenda = {
+            item['domain_key']: item
+            for item in self.domain_curriculum_agenda(limit=len(MATH_DOMAIN_CURRICULUM))
+        }
+        experiments = []
+        for bridge in MATH_DOMAIN_TRANSFER_BRIDGES:
+            source = agenda.get(str(bridge['source_domain']), {})
+            target = agenda.get(str(bridge['target_domain']), {})
+            source_support = int(source.get('support_count', 0) or 0)
+            target_support = int(target.get('support_count', 0) or 0)
+            priority = 0.52
+            if source_support > 0:
+                priority += 0.16
+            if target_support == 0:
+                priority += 0.18
+            if source.get('status') == 'transfer_ready':
+                priority += 0.08
+            if target.get('status') == 'seeded_pending_world':
+                priority += 0.06
+            experiments.append({
+                'key': f"domain_transfer:{bridge['key']}",
+                'experiment_kind': 'domain_transfer_probe',
+                'source_domain': bridge['source_domain'],
+                'target_domain': bridge['target_domain'],
+                'source_status': source.get('status', 'seeded_pending_world'),
+                'target_status': target.get('status', 'seeded_pending_world'),
+                'priority': round(max(0.1, min(1.0, priority)), 3),
+                'bridge_principle': bridge['bridge_principle'],
+                'transfer_question': bridge['transfer_question'],
+                'expected_result': (
+                    'a self-authored rule or operator from the source domain '
+                    'should explain held-out observations in the target domain'
+                ),
+                'falsifies_if': bridge['falsifier'],
+                'suggested_world_seed': self._domain_bridge_world_seed(bridge),
+                'source_evidence': dict(source.get('evidence') or {}),
+                'target_evidence': dict(target.get('evidence') or {}),
+            })
+        experiments.sort(
+            key=lambda item: (
+                item['priority'],
+                item['source_status'] == 'transfer_ready',
+                item['key'],
+            ),
+            reverse=True,
+        )
+        return experiments[:limit]
+
+    def _domain_curriculum_evidence(self, domain: dict[str, Any]) -> dict[str, Any]:
+        keywords = self._domain_keywords(domain)
+        matched_families = []
+        support = 0
+        for family in self.families.values():
+            text = self._family_search_text(family)
+            if any(keyword in text for keyword in keywords):
+                matched_families.append(family.theory_kind)
+                support += family.support_count
+        authored = []
+        for equation in self.self_authored_equations(limit=12):
+            text = ' '.join(
+                str(equation.get(field, ''))
+                for field in ('equation_kind', 'expression', 'target')
+            ).lower()
+            if any(keyword in text for keyword in keywords):
+                authored.append(str(equation.get('key')))
+        adaptive = []
+        for dimension in self.adaptive_dimension_agenda(limit=12):
+            text = ' '.join(
+                str(dimension.get(field, ''))
+                for field in ('name', 'dimension_kind', 'expression', 'theory_kind')
+            ).lower()
+            if any(keyword in text for keyword in keywords):
+                adaptive.append(str(dimension.get('key')))
+        return {
+            'support_count': support,
+            'matched_families': sorted(set(matched_families))[:5],
+            'self_authored_equations': authored[:5],
+            'adaptive_dimensions': adaptive[:5],
+            'evidence_keywords': sorted(keywords)[:8],
+        }
+
+    def _domain_keywords(self, domain: dict[str, Any]) -> set[str]:
+        explicit = {
+            'arithmetic_quantity': {'count', 'cardinality', 'successor', 'total', 'quantity'},
+            'algebra_equations': {'equation', 'substitution', 'inverse', 'composition', 'variable'},
+            'geometry_space': {'center', 'distance', 'perpendicular', 'vector', 'boundary', 'coordinate'},
+            'calculus_change': {'delta', 'velocity', 'acceleration', 'finite', 'rate', 'curvature'},
+            'probability_uncertainty': {'probability', 'uncertainty', 'frequency', 'weak', 'calibration'},
+            'logic_proof': {'proof', 'counterexample', 'predicate', 'falsif', 'domain'},
+            'discrete_structures': {'graph', 'path', 'set', 'relation', 'state'},
+            'symmetry_invariance': {'symmetry', 'invariant', 'rotation', 'perpendicular', 'transform'},
+            'optimization_extrema': {'optimization', 'extremum', 'minimum', 'maximum', 'error'},
+            'dynamics_systems': {'residual', 'field', 'transition', 'periodic', 'phase', 'force'},
+            'information_computation': {'information', 'encoding', 'compression', 'algorithm', 'hidden'},
+            'higher_dimensions': {'dimension', 'projection', 'latent', 'basis', 'lift'},
+        }
+        keywords = set(explicit.get(str(domain.get('key')), set()))
+        for field_name in (
+            'key',
+            'name',
+            'primitive_targets',
+            'equation_families',
+            'expected_discoveries',
+        ):
+            value = domain.get(field_name)
+            if isinstance(value, list):
+                words = value
+            else:
+                words = [value]
+            for word in words:
+                for token in str(word).lower().replace('-', '_').split('_'):
+                    if len(token) >= 5:
+                        keywords.add(token)
+        return keywords
+
+    def _family_search_text(self, family: TheoryFamily) -> str:
+        parts = [
+            family.theory_kind,
+            *sorted(family.operator_kinds),
+            *sorted(family.concept_kinds),
+        ]
+        for example in family.examples:
+            parts.extend(
+                str(example.get(field, ''))
+                for field in ('claim', 'target', 'expression', 'theory_kind')
+            )
+        return ' '.join(parts).lower()
+
+    def _domain_bridge_count(self, domain_key: str) -> int:
+        return sum(
+            1 for bridge in MATH_DOMAIN_TRANSFER_BRIDGES
+            if bridge['source_domain'] == domain_key or bridge['target_domain'] == domain_key
+        )
+
+    def _domain_next_pressure(self, domain: dict[str, Any], status: str) -> str:
+        if status == 'transfer_ready':
+            return 'force this domain to transfer across a bridge and search for counterexamples'
+        if status == 'active':
+            return 'repeat on another seed or bridge domain before treating it as reusable'
+        tasks = list(domain.get('observation_tasks') or [])
+        return tasks[0] if tasks else 'create an observation world for this domain'
+
+    def _domain_bridge_world_seed(self, bridge: dict[str, Any]) -> dict[str, Any]:
+        source = self._domain_by_key(str(bridge.get('source_domain')))
+        target = self._domain_by_key(str(bridge.get('target_domain')))
+        return {
+            'source_world_seed': source.get('world_seed'),
+            'target_world_seed': target.get('world_seed'),
+            'combined_pressure': (
+                f"{source.get('name', bridge.get('source_domain'))} -> "
+                f"{target.get('name', bridge.get('target_domain'))}"
+            ),
+        }
+
+    def _domain_by_key(self, domain_key: str) -> dict[str, Any]:
+        for domain in MATH_DOMAIN_CURRICULUM:
+            if domain['key'] == domain_key:
+                return domain
+        return {'key': domain_key, 'name': domain_key, 'world_seed': 'unknown'}
 
     def representation_agenda(self, limit: int = 5) -> list[dict]:
         """
@@ -2846,6 +3456,9 @@ class CumulativeTheoryMemory:
             'adaptive_dimension_agenda': self.adaptive_dimension_agenda(),
             'algebraic_foundation_baseline': self.algebraic_foundation_baseline(),
             'algebraic_expression_agenda': self.algebraic_expression_agenda(),
+            'math_domain_curriculum': self.math_domain_curriculum(),
+            'domain_curriculum_agenda': self.domain_curriculum_agenda(),
+            'domain_transfer_experiments': self.domain_transfer_experiments(),
             'representation_agenda': self.representation_agenda(),
             'generated_operator_priors': self.generated_operator_priors(),
             'operator_prior_feedback': self.operator_prior_feedback(),
@@ -3403,6 +4016,31 @@ class CumulativeTheoryMemory:
                     f"confidence={equation['confidence']:.2f}"
                 )
                 lines.append(f"      expression: {equation['expression']}")
+        domain_curriculum = self.math_domain_curriculum()
+        lines.append(
+            "  Math domain curriculum: "
+            f"domains={domain_curriculum['domain_count']}, "
+            f"bridges={domain_curriculum['transfer_bridge_count']}, "
+            f"active={domain_curriculum['coverage']['active_domain_count']}"
+        )
+        domain_agenda = self.domain_curriculum_agenda(limit=limit)
+        if domain_agenda:
+            lines.append("  Domain curriculum agenda:")
+            for item in domain_agenda:
+                lines.append(
+                    f"    {item['domain_key']}: status={item['status']}, "
+                    f"priority={item['priority']:.2f}, support={item['support_count']}"
+                )
+                lines.append(f"      next: {item['next_pressure']}")
+        domain_transfers = self.domain_transfer_experiments(limit=limit)
+        if domain_transfers:
+            lines.append("  Domain transfer probes:")
+            for item in domain_transfers:
+                lines.append(
+                    f"    {item['source_domain']}->{item['target_domain']}: "
+                    f"priority={item['priority']:.2f}"
+                )
+                lines.append(f"      question: {item['transfer_question']}")
         disagreements = self.disagreement_experiments(limit=limit)
         if disagreements:
             lines.append("  Disagreement probes:")

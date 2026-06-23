@@ -1401,6 +1401,70 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertIn('baseline_adjusted_delta_velocity', printed)
         self.assertIn('perpendicular(unit(center - position))', printed)
 
+    def test_domain_curriculum_covers_core_math_and_transfer_bridges(self):
+        memory = CumulativeTheoryMemory()
+
+        curriculum = memory.math_domain_curriculum()
+        agenda = memory.domain_curriculum_agenda(limit=20)
+        transfers = memory.domain_transfer_experiments(limit=20)
+        readiness = memory.discovery_readiness_report()
+        packed = memory.to_dict()
+
+        required = {
+            'arithmetic_quantity',
+            'algebra_equations',
+            'geometry_space',
+            'calculus_change',
+            'probability_uncertainty',
+            'logic_proof',
+            'discrete_structures',
+            'symmetry_invariance',
+            'optimization_extrema',
+            'dynamics_systems',
+            'information_computation',
+            'higher_dimensions',
+        }
+        self.assertEqual(required, set(curriculum['required_domains']))
+        self.assertGreaterEqual(curriculum['domain_count'], 12)
+        self.assertGreaterEqual(curriculum['transfer_bridge_count'], 12)
+        self.assertIn('curriculum_policy', curriculum)
+        self.assertEqual(
+            required,
+            {item['domain_key'] for item in agenda},
+        )
+        self.assertTrue(all(item['target_primitives'] for item in agenda))
+        self.assertTrue(all(item['proof_pressure'] for item in agenda))
+        self.assertTrue(transfers)
+        self.assertTrue(all(
+            item['experiment_kind'] == 'domain_transfer_probe'
+            and item['transfer_question']
+            and item['falsifies_if']
+            and item['suggested_world_seed']['combined_pressure']
+            for item in transfers
+        ))
+        self.assertTrue(
+            readiness['gates']['broad_domain_curriculum']['passed']
+        )
+        self.assertTrue(
+            readiness['gates']['domain_transfer_loop']['passed']
+        )
+        self.assertIn('math_domain_curriculum', packed)
+        self.assertIn('domain_curriculum_agenda', packed)
+        self.assertIn('domain_transfer_experiments', packed)
+        self.assertIn('domain_transfer_probes', packed['discovery_evidence_dossier'])
+        self.assertEqual([], packed['discovery_evidence_dossier']['domain_transfer_probes'])
+        self.assertIn('Math domain curriculum:', memory.summary())
+        self.assertIn('Domain transfer probes:', memory.summary())
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            _print_cumulative_theory_review(memory)
+        printed = output.getvalue()
+
+        self.assertIn('Theory math domain curriculum:', printed)
+        self.assertIn('Theory domain transfer probes:', printed)
+        self.assertIn('arithmetic_quantity', printed)
+
     def test_cumulative_theory_memory_marks_local_family_as_transfer_gap(self):
         loop = AutonomousDiscoveryLoop()
         first = loop.build_report([

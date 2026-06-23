@@ -1993,6 +1993,7 @@ def _dossier_has_entries(dossier: dict) -> bool:
             'proof_certificates',
             'disagreement_probes',
             'self_authored_equations',
+            'domain_transfer_probes',
         )
     )
 
@@ -2039,6 +2040,12 @@ def _print_discovery_evidence_dossier(
             f"status={equation['status']} confidence={equation['confidence']:.2f}"
         )
         print(f"    expression: {equation['expression']}")
+    for transfer in dossier.get('domain_transfer_probes', [])[:2]:
+        print(
+            f"  domain transfer {transfer['source_domain']}->{transfer['target_domain']}: "
+            f"priority={transfer['priority']:.2f}"
+        )
+        print(f"    question: {transfer['transfer_question']}")
 
 
 def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
@@ -2053,6 +2060,9 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     algebraic_foundation = theory_memory.algebraic_foundation_baseline()
     algebraic_agenda = theory_memory.algebraic_expression_agenda(limit=3)
     self_authored_equations = theory_memory.self_authored_equations(limit=3)
+    math_domain_curriculum = theory_memory.math_domain_curriculum()
+    domain_curriculum_agenda = theory_memory.domain_curriculum_agenda(limit=3)
+    domain_transfer_experiments = theory_memory.domain_transfer_experiments(limit=3)
     representation_agenda = theory_memory.representation_agenda(limit=3)
     generated_operator_priors = theory_memory.generated_operator_priors(limit=3)
     operator_prior_feedback = theory_memory.operator_prior_feedback(limit=3)
@@ -2088,6 +2098,9 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         algebraic_foundation,
         algebraic_agenda,
         self_authored_equations,
+        math_domain_curriculum,
+        domain_curriculum_agenda,
+        domain_transfer_experiments,
         representation_agenda,
         generated_operator_priors,
         operator_prior_feedback,
@@ -2227,6 +2240,30 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
             print(f"    expression: {equation['expression']}")
             if equation.get('approximation_notes'):
                 print(f"    note: {equation['approximation_notes'][0]}")
+    if math_domain_curriculum:
+        coverage = math_domain_curriculum['coverage']
+        print("Theory math domain curriculum:")
+        print(
+            f"  domains={math_domain_curriculum['domain_count']} "
+            f"bridges={math_domain_curriculum['transfer_bridge_count']} "
+            f"active={coverage['active_domain_count']}"
+        )
+    if domain_curriculum_agenda:
+        print("Theory domain curriculum agenda:")
+        for item in domain_curriculum_agenda:
+            print(
+                f"  {item['domain_key']}: status={item['status']} "
+                f"priority={item['priority']:.2f} support={item['support_count']}"
+            )
+            print(f"    next: {item['next_pressure']}")
+    if domain_transfer_experiments:
+        print("Theory domain transfer probes:")
+        for item in domain_transfer_experiments:
+            print(
+                f"  {item['source_domain']} -> {item['target_domain']}: "
+                f"priority={item['priority']:.2f}"
+            )
+            print(f"    question: {item['transfer_question']}")
     if representation_agenda:
         print("Theory representation agenda:")
         for proposal in representation_agenda:
