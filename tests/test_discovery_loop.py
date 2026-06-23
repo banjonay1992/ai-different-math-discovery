@@ -1264,6 +1264,39 @@ class DiscoveryLoopTests(unittest.TestCase):
         })
         self.assertEqual([], memory.equation_invariant_resolution_experiments(limit=1))
 
+    def test_tapered_invariant_exponent_resolution_matches_exponent_label(self):
+        memory = CumulativeTheoryMemory()
+        plan = {
+            'theory_kind': 'tapered_distance_direction_residual',
+            'experiment_kind': 'equation_invariant_exponent_resolution',
+            'primary_theory_label': (
+                'tapered_distance_direction_residual/separation^-0.5'
+            ),
+            'rival_theory_labels': [
+                'tapered_distance_direction_residual/separation^-1.5',
+            ],
+            'expected_result': 'one tapered distance exponent should win',
+            'falsifies_if': 'near/far ratio rejects the exponent',
+        }
+
+        outcome = memory.evaluate_planned_result(
+            plan,
+            context='repulsion',
+            seed=5,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {'distance_exponent': 0.5},
+                    'score': 0.89,
+                }],
+                'proof_checks': [],
+            },
+        )
+
+        self.assertEqual('invariant_exponent_selected', outcome['outcome'])
+        self.assertEqual(1, outcome['matching_theory_count'])
+        self.assertEqual(0, outcome['rival_theory_count'])
+
     def test_post_run_replay_agenda_flags_baseline_headline_replay(self):
         memory = CumulativeTheoryMemory()
         for seed in range(4):

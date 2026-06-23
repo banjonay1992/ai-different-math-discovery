@@ -5928,7 +5928,10 @@ class CumulativeTheoryMemory:
         theory_kind = str(theory.get('theory_kind', 'unknown'))
         family_kind = self._family_key(theory_kind)
         parameters = dict(theory.get('parameters') or {})
-        if 'distance_scaled' in theory_kind and 'distance_exponent' in parameters:
+        if (
+            ('distance_scaled' in theory_kind or 'tapered_distance' in theory_kind)
+            and 'distance_exponent' in parameters
+        ):
             return f"{family_kind}/separation^-{parameters['distance_exponent']}"
         if 'tapered_distance' in theory_kind:
             return f'{family_kind}/graded'
