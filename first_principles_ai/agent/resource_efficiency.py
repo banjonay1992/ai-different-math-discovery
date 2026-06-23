@@ -76,6 +76,14 @@ def resource_efficiency_report(
     recommended_operator_window: int = 192,
 ) -> dict[str, Any]:
     """Estimate long-run growth and whether bounded summaries are active."""
+    anchor_outcomes = [
+        outcome for outcome in operator_prior_outcomes
+        if outcome.get('retention_role') == 'operator_anchor'
+    ]
+    recent_operator_outcomes = [
+        outcome for outcome in operator_prior_outcomes
+        if outcome.get('retention_role') != 'operator_anchor'
+    ]
     raw_current = {
         'records': records,
         'operator_prior_outcomes': operator_prior_outcomes,
@@ -118,7 +126,7 @@ def resource_efficiency_report(
     actions = []
     if (
         len(records) > recommended_record_window
-        or len(operator_prior_outcomes) > recommended_operator_window
+        or len(recent_operator_outcomes) > recommended_operator_window
     ):
         actions.append({
             'action_kind': 'compact_theory_memory',
@@ -135,6 +143,8 @@ def resource_efficiency_report(
         'version': 1,
         'raw_record_count': len(records),
         'raw_operator_prior_outcome_count': len(operator_prior_outcomes),
+        'raw_operator_prior_anchor_count': len(anchor_outcomes),
+        'raw_operator_prior_recent_count': len(recent_operator_outcomes),
         'compressed_shard_count': len(compressed_shards),
         'compacted_record_count': compacted_records,
         'compacted_operator_prior_outcome_count': compacted_operator_outcomes,
@@ -150,8 +160,9 @@ def resource_efficiency_report(
             'recommended_operator_window': recommended_operator_window,
             'records_within_window': len(records) <= recommended_record_window,
             'operator_outcomes_within_window': (
-                len(operator_prior_outcomes) <= recommended_operator_window
+                len(recent_operator_outcomes) <= recommended_operator_window
             ),
+            'operator_anchor_count': len(anchor_outcomes),
         },
         'controls': {
             'quantized_scores': True,
@@ -162,7 +173,7 @@ def resource_efficiency_report(
         },
         'long_run_ready': bool(compressed_shards)
         and len(records) <= recommended_record_window
-        and len(operator_prior_outcomes) <= recommended_operator_window,
+        and len(recent_operator_outcomes) <= recommended_operator_window,
         'recommended_actions': actions,
     }
 

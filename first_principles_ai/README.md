@@ -132,6 +132,9 @@ python3 main.py --hf-non-final-campaign --benchmark-steps 80 --world-types stand
 # Bigger HF non-final run with multi-seed domain discovery and live scientist trace
 python3 main.py --hf-non-final-campaign --benchmark-steps 160 --seeds 2 --world-types standard,sideways_wind,vortex,localized_gravity,time_varying,inverse_square_repulsion --object-counts 3,4 --equation-hidden-worlds 2 --domain-world-seed-count 4 --domain-world-variants 0,1 --scientist-seed-count 4 --scientist-variants 0,1 --theory-memory-file tmp/theory-memory.json --hf-output-file tmp/hf-non-final-report.json
 
+# Long HF runs auto-compact theory memory between batches and adapt compute only under residual pressure
+python3 main.py --hf-non-final-campaign --benchmark-steps 160 --hf-max-adaptive-steps 320 --hf-max-adaptive-seeds 3 --memory-keep-records 96 --memory-keep-operator-outcomes 192 --theory-memory-file tmp/theory-memory.json --hf-output-file tmp/hf-non-final-report.json
+
 # Heavy/final campaigns should be launched on Hugging Face compute where practical
 # so local preview and tests stay lightweight.
 

@@ -4077,13 +4077,21 @@ class CumulativeTheoryMemory:
             if keep_recent_records
             else []
         )
+        retained_anchor_outcomes = [
+            outcome for outcome in self.operator_prior_outcomes
+            if outcome.get('retention_role') == 'operator_anchor'
+        ]
+        compactable_outcomes = [
+            outcome for outcome in self.operator_prior_outcomes
+            if outcome.get('retention_role') != 'operator_anchor'
+        ]
         older_outcomes = (
-            self.operator_prior_outcomes[:-keep_recent_operator_outcomes]
+            compactable_outcomes[:-keep_recent_operator_outcomes]
             if keep_recent_operator_outcomes
-            else list(self.operator_prior_outcomes)
+            else list(compactable_outcomes)
         )
         recent_outcomes = (
-            self.operator_prior_outcomes[-keep_recent_operator_outcomes:]
+            compactable_outcomes[-keep_recent_operator_outcomes:]
             if keep_recent_operator_outcomes
             else []
         )
@@ -4099,13 +4107,13 @@ class CumulativeTheoryMemory:
             max_per_operator=max_operator_anchors,
         )
         anchor_outcomes = [
-            outcome
+            {**outcome, 'retention_role': 'operator_anchor'}
             for index, outcome in enumerate(older_outcomes)
             if index in anchor_indexes
         ]
         self.records = list(recent_records)
         self.operator_prior_outcomes = self._dedupe_dict_rows(
-            [*anchor_outcomes, *recent_outcomes]
+            [*retained_anchor_outcomes, *anchor_outcomes, *recent_outcomes]
         )
         return self.resource_efficiency_report(
             recommended_record_window=keep_recent_records,

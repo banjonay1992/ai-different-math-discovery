@@ -44,6 +44,7 @@ from agent.self_modify import SelfModifier
 from agent.law_memory import LawMemory
 from agent.math_discovery import EmergentMathDiscovery
 from agent.equation_workbench import EquationWorkbench
+from agent.compute_budget import plan_adaptive_compute_budget
 from agent.discovery_loop import CumulativeTheoryMemory
 from agent.math_foundation import MathFoundationWorkbench
 from agent.explorer import (
@@ -1635,6 +1636,14 @@ def run_hf_non_final_campaign(
     scientist_variants: list[int] | None = None,
     live_scientist: bool = True,
     include_prep: bool = True,
+    auto_compact: bool = True,
+    compact_keep_records: int = 96,
+    compact_keep_operator_outcomes: int = 192,
+    adaptive_compute: bool = True,
+    max_adaptive_steps: int | None = None,
+    max_adaptive_seeds: int | None = None,
+    max_adaptive_hidden_worlds: int | None = None,
+    prep_runner=None,
 ) -> dict:
     """
     HF-friendly non-final run.
@@ -1647,6 +1656,8 @@ def run_hf_non_final_campaign(
     world_types = world_types or ['standard']
     domain_variants = domain_variants or [domain_variant]
     scientist_variants = scientist_variants or domain_variants
+    prep_runner = prep_runner or run_math_foundation_prep
+    compaction_events = []
 
     _emit_hf_progress('start', {
         'runs_final': False,
@@ -1659,6 +1670,8 @@ def run_hf_non_final_campaign(
         'domain_variants': domain_variants,
         'scientist_seed_count': scientist_seed_count,
         'scientist_variants': scientist_variants,
+        'auto_compact': auto_compact,
+        'adaptive_compute': adaptive_compute,
     })
     domain_records = []
     for variant in domain_variants:
@@ -1675,6 +1688,13 @@ def run_hf_non_final_campaign(
             if float(record.get('benchmark_coverage', 0.0) or 0.0) >= 1.0
         ],
     })
+    compaction_events.append(_hf_compact_theory_memory(
+        theory_memory,
+        phase='after_domain_worlds',
+        enabled=auto_compact,
+        keep_recent_records=compact_keep_records,
+        keep_recent_operator_outcomes=compact_keep_operator_outcomes,
+    ))
     scientist_report = theory_memory.record_autonomous_scientist_loop(
         seed_start=domain_seed,
         seed_count=scientist_seed_count,
@@ -1701,19 +1721,60 @@ def run_hf_non_final_campaign(
                 flush=True,
             )
 
+    compaction_events.append(_hf_compact_theory_memory(
+        theory_memory,
+        phase='after_autonomous_scientist',
+        enabled=auto_compact,
+        keep_recent_records=compact_keep_records,
+        keep_recent_operator_outcomes=compact_keep_operator_outcomes,
+    ))
+    readiness_before_prep = theory_memory.discovery_readiness_report()
+    resource_before_prep = theory_memory.resource_efficiency_report(
+        recommended_record_window=compact_keep_records,
+        recommended_operator_window=compact_keep_operator_outcomes,
+    )
+    compute_budget_plan = plan_adaptive_compute_budget(
+        readiness=readiness_before_prep,
+        scientist_report=scientist_report,
+        resource_report=resource_before_prep,
+        requested_steps=steps,
+        requested_seeds=seeds,
+        requested_hidden_worlds=hidden_worlds,
+        max_steps=max_adaptive_steps or max(steps, steps * 2),
+        max_seeds=max_adaptive_seeds or max(seeds, seeds + 1),
+        max_hidden_worlds=(
+            max_adaptive_hidden_worlds
+            if max_adaptive_hidden_worlds is not None
+            else max(hidden_worlds, hidden_worlds + 1)
+        ),
+        enabled=adaptive_compute,
+    )
+    _emit_hf_progress('compute_budget_plan', compute_budget_plan)
+
     prep_results = []
     if include_prep:
+        effective = dict(compute_budget_plan.get('effective') or {})
+        effective_steps = int(effective.get('steps', steps) or steps)
+        effective_seeds = int(effective.get('seeds', seeds) or seeds)
+        effective_hidden_worlds = int(
+            effective.get('hidden_worlds', hidden_worlds) or 0
+        )
         _emit_hf_progress('foundation_prep_start', {
             'world_types': world_types,
-            'seeds': seeds,
-            'steps': steps,
+            'requested_seeds': seeds,
+            'requested_steps': steps,
+            'requested_hidden_worlds': hidden_worlds,
+            'seeds': effective_seeds,
+            'steps': effective_steps,
+            'hidden_worlds': effective_hidden_worlds,
+            'compute_expanded': compute_budget_plan['expanded'],
         })
-        prep_results = run_math_foundation_prep(
-            seeds=seeds,
-            steps=steps,
+        prep_results = prep_runner(
+            seeds=effective_seeds,
+            steps=effective_steps,
             object_counts=object_counts,
             world_types=world_types,
-            hidden_worlds=hidden_worlds,
+            hidden_worlds=effective_hidden_worlds,
             num_agents=num_agents,
             theory_memory=theory_memory,
         )
@@ -1724,14 +1785,29 @@ def run_hf_non_final_campaign(
                 if result.get('ready_for_final')
             ),
         })
+        compaction_events.append(_hf_compact_theory_memory(
+            theory_memory,
+            phase='after_foundation_prep',
+            enabled=auto_compact,
+            keep_recent_records=compact_keep_records,
+            keep_recent_operator_outcomes=compact_keep_operator_outcomes,
+        ))
 
     readiness = theory_memory.discovery_readiness_report()
+    resource_efficiency = theory_memory.resource_efficiency_report(
+        recommended_record_window=compact_keep_records,
+        recommended_operator_window=compact_keep_operator_outcomes,
+    )
     result = {
         'run_kind': 'hf_non_final_campaign',
         'runs_final': False,
         'domain_world_record_count': len(domain_records),
         'prep_result_count': len(prep_results),
         'readiness': readiness,
+        'readiness_before_prep': readiness_before_prep,
+        'compute_budget_plan': compute_budget_plan,
+        'compaction_events': compaction_events,
+        'resource_efficiency': resource_efficiency,
         'prep_results': prep_results,
         'autonomous_scientist_report': scientist_report,
         'theory_memory': theory_memory.to_dict(),
@@ -1749,6 +1825,9 @@ def run_hf_non_final_campaign(
         'status': readiness['status'],
         'passed_gate_count': readiness['passed_gate_count'],
         'gate_count': readiness['gate_count'],
+        'compute_expanded': compute_budget_plan['expanded'],
+        'compressed_shards': resource_efficiency['compressed_shard_count'],
+        'long_run_ready': resource_efficiency['long_run_ready'],
     })
     return result
 
@@ -1759,6 +1838,41 @@ def _emit_hf_progress(event: str, payload: dict):
         + json.dumps({'event': event, **payload}, sort_keys=True),
         flush=True,
     )
+
+
+def _hf_compact_theory_memory(
+    theory_memory: CumulativeTheoryMemory,
+    *,
+    phase: str,
+    enabled: bool,
+    keep_recent_records: int,
+    keep_recent_operator_outcomes: int,
+) -> dict:
+    before = theory_memory.resource_efficiency_report(
+        recommended_record_window=keep_recent_records,
+        recommended_operator_window=keep_recent_operator_outcomes,
+    )
+    if enabled:
+        after = theory_memory.compact_experience(
+            keep_recent_records=keep_recent_records,
+            keep_recent_operator_outcomes=keep_recent_operator_outcomes,
+            source=f'hf_batch:{phase}',
+        )
+    else:
+        after = before
+    event = {
+        'phase': phase,
+        'enabled': enabled,
+        'raw_records_before': before['raw_record_count'],
+        'raw_operator_outcomes_before': before['raw_operator_prior_outcome_count'],
+        'raw_records_after': after['raw_record_count'],
+        'raw_operator_outcomes_after': after['raw_operator_prior_outcome_count'],
+        'compressed_shards': after['compressed_shard_count'],
+        'detail_reduction_ratio': after['detail_reduction_ratio'],
+        'long_run_ready': after['long_run_ready'],
+    }
+    _emit_hf_progress('memory_compaction_checkpoint', event)
+    return event
 
 
 def run_math_final_discovery(
@@ -3069,6 +3183,16 @@ if __name__ == '__main__':
                         help='HF non-final campaign records domain worlds without running prep cases')
     parser.add_argument('--hf-no-live-scientist', action='store_true',
                         help='Suppress SCIENTIST_EVENT lines in HF non-final campaign logs')
+    parser.add_argument('--hf-no-auto-compact', action='store_true',
+                        help='Disable automatic theory-memory compaction between HF batches')
+    parser.add_argument('--hf-no-adaptive-compute', action='store_true',
+                        help='Disable residual-driven compute-budget expansion in HF campaigns')
+    parser.add_argument('--hf-max-adaptive-steps', type=int, default=None,
+                        help='Maximum steps after adaptive HF compute expansion')
+    parser.add_argument('--hf-max-adaptive-seeds', type=int, default=None,
+                        help='Maximum seeds after adaptive HF compute expansion')
+    parser.add_argument('--hf-max-adaptive-hidden-worlds', type=int, default=None,
+                        help='Maximum hidden worlds after adaptive HF compute expansion')
     parser.add_argument('--no-save-memory', action='store_true',
                         help='Load memory without writing updates back to disk')
     parser.add_argument('--no-save-theory-memory', action='store_true',
@@ -3199,6 +3323,13 @@ if __name__ == '__main__':
             scientist_variants=_parse_csv_ints(args.scientist_variants),
             live_scientist=not args.hf_no_live_scientist,
             include_prep=not args.hf_skip_prep,
+            auto_compact=not args.hf_no_auto_compact,
+            compact_keep_records=args.memory_keep_records,
+            compact_keep_operator_outcomes=args.memory_keep_operator_outcomes,
+            adaptive_compute=not args.hf_no_adaptive_compute,
+            max_adaptive_steps=args.hf_max_adaptive_steps,
+            max_adaptive_seeds=args.hf_max_adaptive_seeds,
+            max_adaptive_hidden_worlds=args.hf_max_adaptive_hidden_worlds,
         )
         if (
             args.theory_memory_file

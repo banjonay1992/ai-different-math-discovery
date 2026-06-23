@@ -10,6 +10,7 @@ import unittest
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'first_principles_ai'))
 sys.path.insert(0, PROJECT_DIR)
 
+from agent.compute_budget import plan_adaptive_compute_budget
 from agent.discovery_loop import (
     CumulativeTheoryMemory,
     MATH_DOMAIN_CURRICULUM,
@@ -262,6 +263,110 @@ class MathDomainWorldTests(unittest.TestCase):
             len(artifact['theory_memory']['domain_world_records']),
         )
         self.assertTrue(artifact['theory_memory']['autonomous_scientist_records'])
+        self.assertIn('compute_budget_plan', artifact)
+        self.assertIn('resource_efficiency', artifact)
+        self.assertIn('compaction_events', artifact)
+
+    def test_compute_budget_does_not_expand_without_residual_pressure(self):
+        plan = plan_adaptive_compute_budget(
+            readiness={'missing_gates': [], 'next_steps': []},
+            scientist_report={
+                'coverage': {},
+                'next_actions': [],
+                'harder_stress_worlds': [],
+            },
+            resource_report={
+                'long_run_ready': True,
+                'raw_operator_prior_outcome_count': 0,
+                'bounded_windows': {'recommended_operator_window': 192},
+            },
+            requested_steps=80,
+            requested_seeds=1,
+            requested_hidden_worlds=0,
+            max_steps=160,
+            max_seeds=2,
+            max_hidden_worlds=1,
+        )
+
+        self.assertFalse(plan['expanded'])
+        self.assertEqual(plan['requested'], plan['effective'])
+        self.assertEqual(0.0, plan['residual_pressure']['score'])
+
+    def test_hf_campaign_expands_compute_only_from_residual_pressure(self):
+        memory = CumulativeTheoryMemory()
+        captured = {}
+
+        def fake_prep_runner(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = run_hf_non_final_campaign(
+                theory_memory=memory,
+                seeds=1,
+                steps=40,
+                object_counts=[3],
+                world_types=['standard'],
+                hidden_worlds=0,
+                include_prep=True,
+                live_scientist=False,
+                max_adaptive_steps=80,
+                max_adaptive_seeds=2,
+                max_adaptive_hidden_worlds=1,
+                prep_runner=fake_prep_runner,
+            )
+
+        plan = result['compute_budget_plan']
+        self.assertTrue(plan['expanded'])
+        self.assertGreater(plan['effective']['steps'], plan['requested']['steps'])
+        self.assertEqual(plan['effective']['steps'], captured['steps'])
+        self.assertEqual(plan['effective']['seeds'], captured['seeds'])
+        self.assertIn('compute_budget_plan', output.getvalue())
+
+    def test_hf_campaign_compacts_memory_between_batches(self):
+        memory = CumulativeTheoryMemory()
+        for index in range(12):
+            memory.records.append({
+                'context': 'standard',
+                'seed': index,
+                'phase': 'probe_ready',
+                'theory_count': 2,
+                'operator_count': 1,
+                'proof_check_count': 1,
+                'disagreement_mode': 'distance_exponent_race',
+            })
+            memory.operator_prior_outcomes.append({
+                'context': 'standard',
+                'seed': index,
+                'operator_key': f'operator:inverse:{index % 2}',
+                'operator_kind': 'inverse_separation_power',
+                'outcome': 'confirmed' if index % 3 == 0 else 'unmatched',
+                'best_score': 0.88 if index % 3 == 0 else 0.0,
+                'matching_equation_count': 1 if index % 3 == 0 else 0,
+                'parameters': {
+                    'distance_exponent': 2.0,
+                    'relation': 'direction',
+                    'source_context': 'standard',
+                },
+            })
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = run_hf_non_final_campaign(
+                theory_memory=memory,
+                include_prep=False,
+                live_scientist=False,
+                compact_keep_records=4,
+                compact_keep_operator_outcomes=4,
+            )
+
+        self.assertGreaterEqual(
+            result['resource_efficiency']['compressed_shard_count'],
+            1,
+        )
+        self.assertTrue(result['compaction_events'])
+        self.assertIn('memory_compaction_checkpoint', output.getvalue())
 
     def test_autonomous_scientist_loop_adds_all_five_discovery_upgrades(self):
         memory = CumulativeTheoryMemory()
