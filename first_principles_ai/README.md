@@ -111,6 +111,12 @@ python3 main.py --math-foundation-prep --seeds 1 --benchmark-steps 220 --world-t
 # Inspect the saved discovery notebook without running simulations or the final
 python3 main.py --discovery-readiness --theory-memory-file tmp/theory-memory.json
 
+# Inspect long-run memory growth and quantized compression state
+python3 main.py --memory-efficiency-review --theory-memory-file tmp/theory-memory.json
+
+# Compact older theory evidence into bounded quantized shards while keeping recent raw detail
+python3 main.py --compact-theory-memory --memory-keep-records 96 --memory-keep-operator-outcomes 192 --theory-memory-file tmp/theory-memory.json
+
 # Preview generated math-domain worlds without running the final
 python3 main.py --domain-curriculum-preview --theory-memory-file tmp/theory-memory.json
 

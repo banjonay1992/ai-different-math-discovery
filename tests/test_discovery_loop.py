@@ -17,6 +17,7 @@ from main import (
     _planned_probe_actions,
     _print_cumulative_theory_review,
     _run_equation_followup_cases,
+    run_memory_efficiency_review,
 )
 
 
@@ -2326,6 +2327,111 @@ class DiscoveryLoopTests(unittest.TestCase):
 
         self.assertEqual('probe_ready', metrics['discovery_loop']['phase'])
         self.assertTrue(metrics['discovery_loop']['concept_proposals'])
+
+    def test_memory_compaction_builds_quantized_shards_and_keeps_anchors(self):
+        memory = CumulativeTheoryMemory()
+        for index in range(30):
+            context = 'localized_gravity' if index % 2 else 'inverse_square_repulsion'
+            memory.records.append({
+                'context': context,
+                'seed': index,
+                'phase': 'probe_ready',
+                'theory_count': 2 + index % 3,
+                'operator_count': index % 4,
+                'proof_check_count': index % 5,
+                'disagreement_mode': 'distance_exponent_race',
+            })
+            operator_kind = (
+                'localized_tapered_power'
+                if index % 2
+                else 'inverse_separation_power'
+            )
+            memory.operator_prior_outcomes.append({
+                'context': context,
+                'seed': index,
+                'operator_key': f'operator:{operator_kind}:{index % 3}',
+                'operator_kind': operator_kind,
+                'outcome': 'confirmed' if index % 5 == 0 else 'unmatched',
+                'best_score': 0.91 if index % 5 == 0 else 0.0,
+                'matching_equation_count': 1 if index % 5 == 0 else 0,
+                'parameters': {
+                    'distance_exponent': 1.5 + 0.1 * (index % 4),
+                    'cutoff_radius': 7.1 + 0.05 * (index % 5),
+                    'relation': 'direction',
+                    'source_context': context,
+                },
+            })
+
+        before = memory.resource_efficiency_report(
+            recommended_record_window=5,
+            recommended_operator_window=8,
+        )
+        self.assertFalse(before['long_run_ready'])
+
+        after = memory.compact_experience(
+            keep_recent_records=5,
+            keep_recent_operator_outcomes=6,
+            max_operator_anchors=1,
+        )
+
+        self.assertEqual(5, len(memory.records))
+        self.assertGreater(len(memory.operator_prior_outcomes), 6)
+        self.assertEqual(1, len(memory.compressed_experience_shards))
+        shard = memory.compressed_experience_shards[0]
+        self.assertEqual(25, shard['source_counts']['records'])
+        self.assertEqual(24, shard['source_counts']['operator_prior_outcomes'])
+        self.assertTrue(shard['record_signatures'])
+        self.assertTrue(shard['operator_prior_signatures'])
+        self.assertGreater(after['detail_reduction_ratio'], 1.0)
+        self.assertTrue(after['long_run_ready'])
+
+        packed = memory.to_dict()
+        self.assertIn('resource_efficiency', packed)
+        restored = CumulativeTheoryMemory.from_dict(packed)
+        self.assertEqual(
+            shard['shard_id'],
+            restored.compressed_experience_shards[0]['shard_id'],
+        )
+        self.assertIn('Resource efficiency:', restored.summary())
+
+    def test_memory_efficiency_review_prints_and_can_compact(self):
+        memory = CumulativeTheoryMemory()
+        for index in range(10):
+            memory.records.append({
+                'context': 'time_varying',
+                'seed': index,
+                'phase': 'probe_ready',
+                'theory_count': 2,
+                'operator_count': 1,
+                'proof_check_count': 1,
+                'disagreement_mode': 'phase_frequency_race',
+            })
+            memory.operator_prior_outcomes.append({
+                'context': 'time_varying',
+                'seed': index,
+                'operator_key': 'operator:phase:sinusoid',
+                'operator_kind': 'sinusoidal_phase',
+                'outcome': 'confirmed',
+                'best_score': 0.88,
+                'matching_equation_count': 1,
+                'parameters': {
+                    'relation': 'phase',
+                    'source_context': 'time_varying',
+                },
+            })
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            report = run_memory_efficiency_review(
+                theory_memory=memory,
+                compact=True,
+                keep_recent_records=3,
+                keep_recent_operator_outcomes=3,
+            )
+
+        self.assertIn('MEMORY EFFICIENCY REVIEW', output.getvalue())
+        self.assertEqual(1, report['compressed_shard_count'])
+        self.assertEqual(3, len(memory.records))
 
 
 if __name__ == '__main__':

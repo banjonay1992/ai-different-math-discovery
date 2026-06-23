@@ -1422,6 +1422,61 @@ def run_discovery_readiness_audit(
     return report
 
 
+def run_memory_efficiency_review(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    compact: bool = False,
+    keep_recent_records: int = 96,
+    keep_recent_operator_outcomes: int = 192,
+) -> dict:
+    """Print the bounded-memory and quantized-summary state."""
+    theory_memory = theory_memory or CumulativeTheoryMemory()
+    if compact:
+        report = theory_memory.compact_experience(
+            keep_recent_records=keep_recent_records,
+            keep_recent_operator_outcomes=keep_recent_operator_outcomes,
+            source='cli_compaction',
+        )
+    else:
+        report = theory_memory.resource_efficiency_report(
+            recommended_record_window=keep_recent_records,
+            recommended_operator_window=keep_recent_operator_outcomes,
+        )
+
+    print("=" * 70)
+    print("MEMORY EFFICIENCY REVIEW")
+    print("=" * 70)
+    print(f"Compacted this run: {compact}")
+    print(
+        "Raw windows: "
+        f"records={report['raw_record_count']} "
+        f"operator_outcomes={report['raw_operator_prior_outcome_count']}"
+    )
+    print(
+        "Compacted totals: "
+        f"records={report['compacted_record_count']} "
+        f"operator_outcomes={report['compacted_operator_prior_outcome_count']} "
+        f"shards={report['compressed_shard_count']}"
+    )
+    print(
+        "Estimated retained size: "
+        f"{report['estimated_retained_bytes']} bytes "
+        f"(uncompressed estimate {report['estimated_uncompressed_bytes']} bytes)"
+    )
+    print(
+        "Reduction: "
+        f"detail={report['detail_reduction_ratio']:.2f}x "
+        f"bytes={report['estimated_compression_ratio']:.2f}x"
+    )
+    print(f"Long-run ready: {report['long_run_ready']}")
+    if report['recommended_actions']:
+        print("Recommended actions:")
+        for action in report['recommended_actions']:
+            print(f"  {action['action_kind']}: {action['reason']}")
+    else:
+        print("Recommended actions: none")
+    return report
+
+
 def run_domain_curriculum_preview(
     theory_memory: CumulativeTheoryMemory | None = None,
     limit: int = 12,
@@ -2942,6 +2997,14 @@ if __name__ == '__main__':
                         help='Run readiness checks before the final watched math discovery run')
     parser.add_argument('--discovery-readiness', action='store_true',
                         help='Print a non-final readiness audit from cumulative theory memory')
+    parser.add_argument('--memory-efficiency-review', action='store_true',
+                        help='Print bounded-memory and quantized-summary status')
+    parser.add_argument('--compact-theory-memory', action='store_true',
+                        help='Compact old theory memory evidence into quantized shards')
+    parser.add_argument('--memory-keep-records', type=int, default=96,
+                        help='Recent raw discovery records to keep after compaction')
+    parser.add_argument('--memory-keep-operator-outcomes', type=int, default=192,
+                        help='Recent raw operator outcomes to keep after compaction')
     parser.add_argument('--domain-curriculum-preview', action='store_true',
                         help='Preview generated math-domain worlds without running final discovery')
     parser.add_argument('--domain-world-discovery-ingest', action='store_true',
@@ -3057,6 +3120,23 @@ if __name__ == '__main__':
 
     if args.discovery_readiness:
         run_discovery_readiness_audit(theory_memory=theory_memory)
+        raise SystemExit(0)
+
+    if args.memory_efficiency_review or args.compact_theory_memory:
+        theory_memory = theory_memory or CumulativeTheoryMemory()
+        run_memory_efficiency_review(
+            theory_memory=theory_memory,
+            compact=args.compact_theory_memory,
+            keep_recent_records=args.memory_keep_records,
+            keep_recent_operator_outcomes=args.memory_keep_operator_outcomes,
+        )
+        if (
+            args.compact_theory_memory
+            and args.theory_memory_file
+            and theory_memory is not None
+            and not args.no_save_theory_memory
+        ):
+            theory_memory.save(args.theory_memory_file)
         raise SystemExit(0)
 
     if args.domain_curriculum_preview:

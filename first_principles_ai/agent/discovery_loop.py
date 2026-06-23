@@ -14,6 +14,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .resource_efficiency import (
+    build_compressed_experience_shard,
+    operator_outcome_anchor_indexes,
+    resource_efficiency_report,
+)
+
 
 FIRST_PRINCIPLES_BASIS: list[dict[str, Any]] = [
     {
@@ -1412,6 +1418,7 @@ class CumulativeTheoryMemory:
         self.operator_prior_outcomes: list[dict] = []
         self.domain_world_records: list[dict] = []
         self.autonomous_scientist_records: list[dict] = []
+        self.compressed_experience_shards: list[dict] = []
 
     def record_result(self, context: str, seed: int, report) -> dict:
         report_dict = self._report_dict(report)
@@ -4029,6 +4036,85 @@ class CumulativeTheoryMemory:
                 break
         return plans
 
+    def resource_efficiency_report(
+        self,
+        recommended_record_window: int = 96,
+        recommended_operator_window: int = 192,
+    ) -> dict[str, Any]:
+        """Report how close memory is to bounded long-run storage."""
+        return resource_efficiency_report(
+            records=self.records,
+            operator_prior_outcomes=self.operator_prior_outcomes,
+            compressed_shards=self.compressed_experience_shards,
+            recommended_record_window=recommended_record_window,
+            recommended_operator_window=recommended_operator_window,
+        )
+
+    def compact_experience(
+        self,
+        *,
+        keep_recent_records: int = 96,
+        keep_recent_operator_outcomes: int = 192,
+        max_operator_anchors: int = 2,
+        source: str = 'manual_compaction',
+    ) -> dict[str, Any]:
+        """
+        Move older evidence into quantized shards while retaining recent detail.
+
+        Operator prior outcomes keep a tiny set of raw anchor examples per
+        operator so later claim/repair logic still has concrete successes and
+        failures to inspect.
+        """
+        keep_recent_records = max(0, keep_recent_records)
+        keep_recent_operator_outcomes = max(0, keep_recent_operator_outcomes)
+        older_records = (
+            self.records[:-keep_recent_records]
+            if keep_recent_records
+            else list(self.records)
+        )
+        recent_records = (
+            self.records[-keep_recent_records:]
+            if keep_recent_records
+            else []
+        )
+        older_outcomes = (
+            self.operator_prior_outcomes[:-keep_recent_operator_outcomes]
+            if keep_recent_operator_outcomes
+            else list(self.operator_prior_outcomes)
+        )
+        recent_outcomes = (
+            self.operator_prior_outcomes[-keep_recent_operator_outcomes:]
+            if keep_recent_operator_outcomes
+            else []
+        )
+        if older_records or older_outcomes:
+            shard = build_compressed_experience_shard(
+                records=list(older_records),
+                operator_prior_outcomes=list(older_outcomes),
+                source=source,
+            )
+            self.compressed_experience_shards.append(shard)
+        anchor_indexes = operator_outcome_anchor_indexes(
+            list(older_outcomes),
+            max_per_operator=max_operator_anchors,
+        )
+        anchor_outcomes = [
+            outcome
+            for index, outcome in enumerate(older_outcomes)
+            if index in anchor_indexes
+        ]
+        self.records = list(recent_records)
+        self.operator_prior_outcomes = self._dedupe_dict_rows(
+            [*anchor_outcomes, *recent_outcomes]
+        )
+        return self.resource_efficiency_report(
+            recommended_record_window=keep_recent_records,
+            recommended_operator_window=(
+                keep_recent_operator_outcomes
+                + max(0, len(anchor_outcomes))
+            ),
+        )
+
     def to_dict(self) -> dict:
         return {
             'version': 1,
@@ -4038,10 +4124,12 @@ class CumulativeTheoryMemory:
             'operator_prior_outcomes': list(self.operator_prior_outcomes),
             'domain_world_records': list(self.domain_world_records),
             'autonomous_scientist_records': list(self.autonomous_scientist_records),
+            'compressed_experience_shards': list(self.compressed_experience_shards),
             'families': {
                 key: family.to_dict()
                 for key, family in self.families.items()
             },
+            'resource_efficiency': self.resource_efficiency_report(),
             'reusable_families': self.reusable_families(),
             'family_evaluations': self.family_evaluations(),
             'proof_gaps': self.proof_gaps(),
@@ -4100,6 +4188,9 @@ class CumulativeTheoryMemory:
         memory.autonomous_scientist_records = list(
             data.get('autonomous_scientist_records', [])
         )
+        memory.compressed_experience_shards = list(
+            data.get('compressed_experience_shards', [])
+        )
         memory.families = {
             str(key): TheoryFamily.from_dict(family_data)
             for key, family_data in data.get('families', {}).items()
@@ -4121,6 +4212,18 @@ class CumulativeTheoryMemory:
         memory_path.parent.mkdir(parents=True, exist_ok=True)
         with memory_path.open('w', encoding='utf-8') as handle:
             json.dump(self.to_dict(), handle, indent=2, sort_keys=True)
+
+    @staticmethod
+    def _dedupe_dict_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        seen: set[str] = set()
+        deduped = []
+        for row in rows:
+            key = json.dumps(row, sort_keys=True, separators=(',', ':'), default=str)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+        return deduped
 
     def _disagreement_record(
         self,
@@ -4563,6 +4666,14 @@ class CumulativeTheoryMemory:
             f"{readiness['readiness_score']:.0%} "
             f"status={readiness['status']} "
             f"gates={readiness['passed_gate_count']}/{readiness['gate_count']}"
+        )
+        resource = self.resource_efficiency_report()
+        lines.append(
+            "  Resource efficiency: "
+            f"shards={resource['compressed_shard_count']} "
+            f"detail_ratio={resource['detail_reduction_ratio']:.2f} "
+            f"bytes_ratio={resource['estimated_compression_ratio']:.2f} "
+            f"long_run_ready={resource['long_run_ready']}"
         )
         if readiness['missing_gates']:
             lines.append(
