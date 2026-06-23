@@ -983,6 +983,7 @@ def run_equation_campaign(
     enable_equation_probes: bool = True,
     followup_budget: int = 0,
     theory_memory: CumulativeTheoryMemory | None = None,
+    emit_hf_artifact_summary: bool = False,
 ) -> list[dict]:
     """Run worlds and collect equation-review packs for manual inspection."""
     object_counts = object_counts or [5]
@@ -1115,7 +1116,68 @@ def run_equation_campaign(
             f"{best['interesting_equation'].get('expression', '?')} "
             f"(score={best['interesting_score']:.2f})"
         )
+    if emit_hf_artifact_summary:
+        print(
+            "HF_ARTIFACT_SUMMARY "
+            + json.dumps(
+                _equation_campaign_artifact_summary(results, theory_memory),
+                sort_keys=True,
+            ),
+            flush=True,
+        )
     return results
+
+
+def _equation_campaign_artifact_summary(
+    results: list[dict],
+    theory_memory: CumulativeTheoryMemory,
+) -> dict:
+    return {
+        'run_kind': 'equation_campaign',
+        'runs_final': False,
+        'result_count': len(results),
+        'passed_count': sum(1 for result in results if result.get('passed')),
+        'rows': [
+            {
+                'context': result.get('context'),
+                'seed': result.get('seed'),
+                'steps': result.get('steps'),
+                'equation_count': result.get('equation_count', 0),
+                'label_leak_count': len(result.get('label_leaks') or []),
+                'interesting_score': round(
+                    float(result.get('interesting_score', 0.0) or 0.0),
+                    3,
+                ),
+                'interesting_expression': dict(
+                    result.get('interesting_equation') or {}
+                ).get('expression'),
+                'planned_experiment_kind': dict(
+                    result.get('planned_experiment') or {}
+                ).get('experiment_kind'),
+                'planned_outcome': dict(
+                    result.get('planned_experiment_outcome') or {}
+                ).get('outcome'),
+            }
+            for result in results
+        ],
+        'readiness': theory_memory.discovery_readiness_report(),
+        'selected_law_conflict_experiments': (
+            theory_memory.selected_law_conflict_experiments(limit=5)
+        ),
+        'model_disagreement_domain_split_experiments': (
+            theory_memory.model_disagreement_domain_split_experiments(limit=5)
+        ),
+        'localized_gravity_structure_experiments': (
+            theory_memory.localized_gravity_structure_experiments(limit=5)
+        ),
+        'blind_holdout_validation_experiments': (
+            theory_memory.blind_holdout_validation_experiments(limit=5)
+        ),
+        'law_domain_split_hypotheses': theory_memory.law_domain_split_hypotheses(
+            limit=5
+        ),
+        'planned_outcomes_tail': list(theory_memory.planned_outcomes[-12:]),
+    }
 
 
 def _run_equation_followup_cases(
@@ -1249,6 +1311,10 @@ def _planned_probe_actions(plan: dict, max_actions: int = 4) -> list[dict]:
         source = 'planned_selected_law_conflict_resolution'
     elif plan.get('experiment_kind') == 'blind_holdout_validation':
         source = 'planned_blind_holdout_validation'
+    elif plan.get('experiment_kind') == 'model_disagreement_domain_split':
+        source = 'planned_model_disagreement_domain_split'
+    elif plan.get('experiment_kind') == 'localized_gravity_structure_probe':
+        source = 'planned_localized_gravity_structure_probe'
     else:
         source = 'planned_model_disagreement_probe'
     for point in list(signature.get('probe_points') or [])[:max_actions]:
@@ -1274,6 +1340,8 @@ def _planned_probe_actions(plan: dict, max_actions: int = 4) -> list[dict]:
         if plan.get('experiment_kind') in {
             'selected_law_conflict_resolution',
             'blind_holdout_validation',
+            'model_disagreement_domain_split',
+            'localized_gravity_structure_probe',
         }:
             action['source'] = source
         else:
@@ -3181,6 +3249,12 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     )
     selected_law_replay_agenda = theory_memory.selected_law_replay_agenda(limit=3)
     selected_law_conflicts = theory_memory.selected_law_conflict_experiments(limit=3)
+    model_domain_splits = theory_memory.model_disagreement_domain_split_experiments(
+        limit=3
+    )
+    localized_gravity_probes = theory_memory.localized_gravity_structure_experiments(
+        limit=3
+    )
     law_domain_splits = theory_memory.law_domain_split_hypotheses(limit=3)
     blind_holdout_validations = theory_memory.blind_holdout_validation_experiments(limit=3)
     post_run_replay_agenda = theory_memory.post_run_replay_agenda(limit=3)
@@ -3233,6 +3307,8 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         invariant_resolution_experiments,
         selected_law_replay_agenda,
         selected_law_conflicts,
+        model_domain_splits,
+        localized_gravity_probes,
         law_domain_splits,
         blind_holdout_validations,
         post_run_replay_agenda,
@@ -3483,6 +3559,23 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
             print(
                 f"  {item['primary_theory_label']} vs {rivals}: "
                 f"context={item.get('source_context')} priority={item['priority']:.2f}"
+            )
+            print(f"    next: {item['expected_result']}")
+    if model_domain_splits:
+        print("Theory model-disagreement domain splits:")
+        for item in model_domain_splits:
+            signature = item.get('disagreement_signature', {})
+            print(
+                f"  {item['theory_kind']}: mode={signature.get('mode')} "
+                f"priority={item['priority']:.2f}"
+            )
+            print(f"    next: {item['expected_result']}")
+    if localized_gravity_probes:
+        print("Theory localized-gravity structure probes:")
+        for item in localized_gravity_probes:
+            print(
+                f"  {item['theory_kind']}: priority={item['priority']:.2f} "
+                f"quick={bool(item.get('quick_probe'))}"
             )
             print(f"    next: {item['expected_result']}")
     if law_domain_splits:
@@ -3883,6 +3976,8 @@ if __name__ == '__main__':
                         help='Generated hidden worlds to include in equation campaign')
     parser.add_argument('--equation-followup-budget', type=int, default=0,
                         help='Autonomous planned follow-up probes to run after the initial equation campaign')
+    parser.add_argument('--hf-log-artifact-summary', action='store_true',
+                        help='Print a compact HF_ARTIFACT_SUMMARY JSON line for log-based persistence')
     parser.add_argument('--explore-worlds', action='store_true',
                         help='Run an autonomous experiment campaign chosen by the planner')
     parser.add_argument('--hidden-holdout-benchmark', action='store_true',
@@ -4151,6 +4246,7 @@ if __name__ == '__main__':
             num_agents=args.agents,
             followup_budget=args.equation_followup_budget,
             theory_memory=theory_memory,
+            emit_hf_artifact_summary=args.hf_log_artifact_summary,
         )
         if (
             args.theory_memory_file

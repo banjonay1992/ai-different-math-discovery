@@ -1545,6 +1545,20 @@ class CumulativeTheoryMemory:
                 rival_found=rival_found,
                 rival_proof_passed=rival_proof_passed,
             )
+        elif experiment_kind == 'model_disagreement_domain_split':
+            outcome = self._model_disagreement_domain_split_outcome_label(
+                target_found=found_family,
+                target_proof_passed=proof_passed,
+                rival_found=rival_found,
+                rival_proof_passed=rival_proof_passed,
+            )
+        elif experiment_kind == 'localized_gravity_structure_probe':
+            outcome = self._localized_gravity_structure_outcome_label(
+                target_found=found_family,
+                target_proof_passed=proof_passed,
+                rival_found=rival_found,
+                rival_proof_passed=rival_proof_passed,
+            )
         elif experiment_kind == 'equation_invariant_exponent_resolution':
             outcome = self._equation_invariant_resolution_outcome_label(
                 target_found=found_family,
@@ -1601,6 +1615,7 @@ class CumulativeTheoryMemory:
             'selected_distance_exponent': plan.get('selected_distance_exponent'),
             'selected_law_replay_key': plan.get('selected_law_replay_key'),
             'primary_theory_label': plan.get('primary_theory_label'),
+            'target_theory_kinds': list(plan.get('target_theory_kinds') or []),
             'rival_theory_labels': list(plan.get('rival_theory_labels') or []),
             'selected_multi_parameter_variant': dict(
                 plan.get('selected_multi_parameter_variant') or {}
@@ -3920,6 +3935,8 @@ class CumulativeTheoryMemory:
                 'rival_theory_labels': [variant['label'] for variant in rival_variants],
                 'disagreement_signature': signature,
                 'probe_action': self._selected_law_probe_action(invariant),
+                'quick_probe': True,
+                'quick_steps': 170,
                 'domain_split_hypothesis': self._domain_split_hypothesis_for_invariant(
                     invariant,
                     conflict_records,
@@ -3931,6 +3948,7 @@ class CumulativeTheoryMemory:
                     'world_selection': 'selected_source_context_fresh_seed',
                     'enable_equation_probes': True,
                     'runs_final': False,
+                    'quick_probe': True,
                 },
             })
         recommendations.sort(
@@ -3976,12 +3994,15 @@ class CumulativeTheoryMemory:
                 [],
                 theory_kind,
             )
+            theorem_status = str(benchmark.get('theorem_status') or '')
+            conflicted_bonus = 0.055 if theorem_status == 'holdout_conflicted' else 0.0
             priority = max(
                 0.2,
                 min(
-                    0.86,
-                    0.74
+                    0.97,
+                    0.86
                     + min(0.06, 0.01 * int(invariant.get('support_count', 0) or 0))
+                    + conflicted_bonus
                     - min(0.20, 0.08 * outcome_stats['attempt_count']),
                 ),
             )
@@ -4050,6 +4071,12 @@ class CumulativeTheoryMemory:
             hypothesis = dict(experiment.get('domain_split_hypothesis') or {})
             if hypothesis:
                 hypotheses.append(hypothesis)
+        for experiment in self.model_disagreement_domain_split_experiments(
+            limit=max(5, len(self.disagreement_records)),
+        ):
+            hypothesis = dict(experiment.get('domain_split_hypothesis') or {})
+            if hypothesis:
+                hypotheses.append(hypothesis)
         hypotheses.sort(
             key=lambda item: (
                 item.get('severity', 0.0),
@@ -4071,6 +4098,7 @@ class CumulativeTheoryMemory:
                 'benchmark_kind': 'selected_law_blind_holdout',
                 'priority': 1.2,
                 'theorem_key': theorem.get('key'),
+                'theorem_status': theorem.get('status'),
                 'target_context': 'hidden_procedural_or_selected_source_context',
                 'world_selection': 'fresh hidden/off-center world without manifest labels',
                 'expected_result': (
@@ -6373,6 +6401,11 @@ class CumulativeTheoryMemory:
                 mode=mode,
                 primary_label=rival_labels[0] if rival_labels else primary,
             )
+            if (
+                outcome_stats['target_confirmed_count'] > 0
+                and outcome_stats['rival_confirmed_count'] > 0
+            ):
+                continue
             base_priority = {
                 'taper_shape_vs_hard_boundary': 0.96,
                 'cutoff_boundary_vs_smooth_falloff': 0.95,
@@ -6464,6 +6497,298 @@ class CumulativeTheoryMemory:
         )
         return self._diversified_experiments(recommendations, limit=limit)
 
+    def model_disagreement_domain_split_experiments(
+        self,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Promote repeated target/rival wins into a domain-split experiment."""
+        groups: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+        for record in self.disagreement_records:
+            families = tuple(record.get('family_kinds', []))
+            labels = tuple(record.get('rival_labels', []))
+            key = (
+                str(record.get('mode', 'unknown')),
+                families if len(families) > 1 else labels,
+            )
+            group = groups.setdefault(
+                key,
+                {
+                    'latest': record,
+                    'occurrences': 0,
+                    'contexts': set(),
+                },
+            )
+            group['latest'] = record
+            group['occurrences'] += 1
+            context = record.get('context')
+            if context:
+                group['contexts'].add(str(context))
+
+        recommendations = []
+        for group in groups.values():
+            record = group['latest']
+            family_kinds = list(record.get('family_kinds', []))
+            rival_labels = list(record.get('rival_labels', []))
+            primary = family_kinds[0] if family_kinds else 'model_disagreement'
+            mode = str(record.get('mode', 'unknown'))
+            primary_label = rival_labels[0] if rival_labels else primary
+            outcome_stats = self._disagreement_outcome_stats(
+                primary=primary,
+                mode=mode,
+                primary_label=primary_label,
+            )
+            if (
+                outcome_stats['target_confirmed_count'] <= 0
+                or outcome_stats['rival_confirmed_count'] <= 0
+            ):
+                continue
+            split_stats = self._model_disagreement_domain_split_outcome_stats(
+                primary=primary,
+                mode=mode,
+                primary_label=primary_label,
+            )
+            if split_stats['settled_count'] > 0:
+                continue
+            source_contexts = sorted(group['contexts'])
+            signature = _rounded_dict(dict(record.get('disagreement_signature') or {}))
+            signature['mode'] = mode
+            signature['domain_split_pressure'] = True
+            signature['target_confirmed_count'] = outcome_stats['target_confirmed_count']
+            signature['rival_confirmed_count'] = outcome_stats['rival_confirmed_count']
+            signature['question'] = (
+                signature.get('question')
+                or record.get('question')
+                or 'Which context or predicate separates the rival laws?'
+            )
+            severity = min(
+                1.0,
+                0.74
+                + 0.06 * outcome_stats['target_confirmed_count']
+                + 0.06 * outcome_stats['rival_confirmed_count'],
+            )
+            priority = max(
+                0.45,
+                min(0.985, 0.955 + 0.01 * group['occurrences'] - 0.06 * split_stats['attempt_count']),
+            )
+            domain_split = {
+                'key': f"domain_split:model_disagreement:{primary}:{mode}:{primary_label}",
+                'source': 'model_disagreement',
+                'status': 'split_suspected',
+                'split_kind': 'context_or_regime_split_suspected',
+                'theory_kind': primary,
+                'primary_theory_label': primary_label,
+                'rival_theory_kinds': family_kinds[1:],
+                'rival_theory_labels': rival_labels[1:],
+                'source_contexts': source_contexts,
+                'target_confirmed_count': outcome_stats['target_confirmed_count'],
+                'rival_confirmed_count': outcome_stats['rival_confirmed_count'],
+                'question': (
+                    'Both target and rival laws have won fresh probes; find the '
+                    'domain predicate that decides when each law applies.'
+                ),
+                'candidate_predicates': [
+                    'context_family',
+                    'near_mid_far_distance_band',
+                    'inside_vs_outside_cutoff_region',
+                    'seed_or_initial_condition_regime',
+                    'vector_basis_alignment',
+                ],
+                'severity': round(severity, 3),
+            }
+            recommendations.append({
+                'theory_kind': primary,
+                'experiment_kind': 'model_disagreement_domain_split',
+                'priority': round(priority, 3),
+                'family_status': 'domain_split_suspected',
+                'target_context': 'known_success_and_failure_contexts',
+                'source_context': record.get('context'),
+                'avoid_contexts': source_contexts,
+                'reason': (
+                    f"promote repeated {mode} disagreement into a domain split: "
+                    'target and rival have both been confirmed on follow-up probes'
+                ),
+                'expected_result': (
+                    'a predicate, context, distance band, or boundary regime should '
+                    'separate when the target law beats the rival law'
+                ),
+                'falsifies_if': (
+                    'fresh probes keep alternating winners after every proposed '
+                    'context, cutoff, distance-band, and vector-basis split is tested'
+                ),
+                'proof_evidence': {
+                    'support_count': group['occurrences'],
+                    'context_count': len(source_contexts),
+                    'proof_rate': 0.0,
+                    'attempt_count': split_stats['attempt_count'],
+                    'target_confirmed_count': outcome_stats['target_confirmed_count'],
+                    'rival_confirmed_count': outcome_stats['rival_confirmed_count'],
+                },
+                'disagreement_signature': signature,
+                'primary_theory_label': primary_label,
+                'rival_theory_kinds': family_kinds[1:],
+                'rival_theory_labels': rival_labels[1:],
+                'domain_split_hypothesis': domain_split,
+                'probe_action': _rounded_dict(dict(record.get('action') or {})),
+                'quick_probe': True,
+                'quick_steps': 160,
+                'suggested_campaign': {
+                    'command_family': 'equation_campaign',
+                    'world_selection': 'known_success_and_failure_contexts',
+                    'enable_equation_probes': True,
+                    'runs_final': False,
+                    'quick_probe': True,
+                },
+            })
+        recommendations.sort(
+            key=lambda item: (
+                item['priority'],
+                item['proof_evidence']['target_confirmed_count']
+                + item['proof_evidence']['rival_confirmed_count'],
+                item['theory_kind'],
+            ),
+            reverse=True,
+        )
+        return recommendations[:limit]
+
+    def localized_gravity_structure_experiments(
+        self,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Force localized gravity beyond a plain local-direction headline."""
+        localized_records = [
+            record for record in self.equation_case_records
+            if record.get('context') == 'localized_gravity'
+            and int(record.get('label_leak_count', 0) or 0) == 0
+        ]
+        if not localized_records:
+            return []
+        simple_records = [
+            record for record in localized_records
+            if self._equation_law_family(record) not in {
+                'localized_tapered_power',
+                'localized_window',
+                'inverse_separation_power',
+            }
+        ]
+        structured_records = [
+            record for record in localized_records
+            if self._equation_law_family(record) in {
+                'localized_tapered_power',
+                'localized_window',
+                'inverse_separation_power',
+            }
+        ]
+        if not simple_records or len(structured_records) >= 2:
+            return []
+        outcome_stats = self._localized_gravity_structure_outcome_stats()
+        if outcome_stats['settled_count'] > 0:
+            return []
+        seed_record = max(
+            simple_records,
+            key=lambda record: (
+                float(record.get('score', 0.0) or 0.0),
+                int(record.get('seed', 0) or 0),
+            ),
+        )
+        parameters = dict(seed_record.get('parameters') or {})
+        center_x = _coerce_float(parameters.get('center_x'), 10.0)
+        center_y = _coerce_float(parameters.get('center_y'), 10.0)
+        radius = _coerce_float(parameters.get('cutoff_radius'), 7.0)
+        probe_points = [
+            self._invariant_radial_probe_point(
+                'inside_local_region',
+                center_x,
+                center_y,
+                max(0.75, radius * 0.25),
+            ),
+            self._invariant_radial_probe_point(
+                'boundary_margin',
+                center_x,
+                center_y,
+                max(1.5, radius * 0.75),
+            ),
+            self._invariant_radial_probe_point(
+                'outside_local_tail',
+                center_x,
+                center_y,
+                max(2.5, radius * 1.15),
+            ),
+        ]
+        signature = {
+            'mode': 'localized_gravity_inside_boundary_outside',
+            'resolution_source': 'localized_gravity_weak_headline',
+            'question': (
+                'Is localized gravity only a local direction vector, or does it '
+                'have taper, cutoff, or distance-falloff structure?'
+            ),
+            'probe_points': probe_points,
+            'expected_discriminators': [
+                'inside residual direction and magnitude',
+                'boundary falloff or cutoff behavior',
+                'outside-region residual collapse',
+                'near/far magnitude ratio from inferred center',
+            ],
+        }
+        return [{
+            'theory_kind': 'tapered_distance_direction_residual',
+            'target_theory_kinds': [
+                'tapered_distance_direction_residual',
+                'cutoff_direction_residual',
+                'distance_scaled_direction_residual',
+            ],
+            'experiment_kind': 'localized_gravity_structure_probe',
+            'priority': round(max(0.72, 0.965 - 0.07 * outcome_stats['attempt_count']), 3),
+            'family_status': 'localized_gravity_underexplained',
+            'target_context': 'localized_gravity_structure_context',
+            'source_context': 'localized_gravity',
+            'avoid_contexts': ['localized_gravity'],
+            'reason': (
+                'localized_gravity is still headlining a plain local vector; '
+                'force inside/boundary/outside probes to expose taper, cutoff, '
+                'or distance falloff'
+            ),
+            'expected_result': (
+                'a richer localized law should beat the simple local-direction '
+                'residual on at least one boundary or outside-tail probe'
+            ),
+            'falsifies_if': (
+                'inside, boundary, and outside probes all prefer the same simple '
+                'local-direction residual with no taper, cutoff, or falloff'
+            ),
+            'proof_evidence': {
+                'support_count': len(simple_records),
+                'context_count': 1,
+                'proof_rate': 0.0,
+                'structured_support_count': len(structured_records),
+                'attempt_count': outcome_stats['attempt_count'],
+            },
+            'disagreement_signature': signature,
+            'primary_theory_label': None,
+            'rival_theory_kinds': [
+                'direction_residual',
+                'local_direction_residual',
+            ],
+            'rival_theory_labels': [],
+            'probe_action': {
+                'type': 'spawn',
+                'x': probe_points[0]['x'],
+                'y': probe_points[0]['y'],
+                'vx': 0.0,
+                'vy': 0.0,
+                'source': 'planned_localized_gravity_structure_probe',
+                'probe_label': probe_points[0]['label'],
+            },
+            'quick_probe': True,
+            'quick_steps': 180,
+            'suggested_campaign': {
+                'command_family': 'equation_campaign',
+                'world_selection': 'localized_gravity',
+                'enable_equation_probes': True,
+                'runs_final': False,
+                'quick_probe': True,
+            },
+        }][:limit]
+
     def _diversified_experiments(
         self,
         recommendations: list[dict[str, Any]],
@@ -6516,12 +6841,36 @@ class CumulativeTheoryMemory:
         )
 
     def next_experiments(self, limit: int = 5) -> list[dict]:
-        recommendations = [
-            family.experiment_recommendation()
-            for family in self.families.values()
-        ]
-        recommendations.extend(self.selected_law_conflict_experiments(limit=limit * 2))
-        recommendations.extend(self.disagreement_experiments(limit=limit * 2))
+        selected_law_conflicts = self.selected_law_conflict_experiments(limit=limit * 2)
+        model_domain_splits = self.model_disagreement_domain_split_experiments(limit=limit * 2)
+        localized_gravity_probes = self.localized_gravity_structure_experiments(limit=limit * 2)
+        disagreement_probes = self.disagreement_experiments(limit=limit * 2)
+        targeted_counterexample_families = {
+            str(experiment.get('theory_kind'))
+            for experiment in (
+                selected_law_conflicts
+                + model_domain_splits
+                + localized_gravity_probes
+                + [
+                    experiment for experiment in disagreement_probes
+                    if experiment.get('stagnation_status') in {'fresh', 'needs_refinement'}
+                ]
+            )
+            if experiment.get('theory_kind')
+        }
+        recommendations = []
+        for family in self.families.values():
+            recommendation = family.experiment_recommendation()
+            if (
+                family.generalization_status == 'needs_counterexample'
+                and family.theory_kind in targeted_counterexample_families
+            ):
+                continue
+            recommendations.append(recommendation)
+        recommendations.extend(selected_law_conflicts)
+        recommendations.extend(model_domain_splits)
+        recommendations.extend(localized_gravity_probes)
+        recommendations.extend(disagreement_probes)
         recommendations.extend(
             self.equation_invariant_resolution_experiments(limit=limit * 2)
         )
@@ -6572,6 +6921,12 @@ class CumulativeTheoryMemory:
                 'falsifies_if': recommendation['falsifies_if'],
                 'source_status': recommendation['family_status'],
             }
+            if recommendation.get('quick_probe'):
+                quick_steps = int(recommendation.get('quick_steps', steps) or steps)
+                plan['quick_probe'] = True
+                plan['full_steps'] = steps
+                plan['quick_steps'] = max(1, quick_steps)
+                plan['steps'] = min(steps, max(1, quick_steps))
             if recommendation.get('experiment_kind') == 'post_run_replay_revision':
                 plan['replay_key'] = recommendation.get('replay_key')
                 plan['replay_issue'] = recommendation.get('replay_issue')
@@ -6585,9 +6940,27 @@ class CumulativeTheoryMemory:
                     'disagreement_signature',
                     {},
                 )
+                plan['target_theory_kinds'] = recommendation.get('target_theory_kinds', [])
                 plan['primary_theory_label'] = recommendation.get('primary_theory_label')
                 plan['rival_theory_kinds'] = recommendation.get('rival_theory_kinds', [])
                 plan['rival_theory_labels'] = recommendation.get('rival_theory_labels', [])
+                plan['probe_action'] = recommendation.get('probe_action', {})
+            if recommendation.get('experiment_kind') in {
+                'model_disagreement_domain_split',
+                'localized_gravity_structure_probe',
+            }:
+                plan['disagreement_signature'] = recommendation.get(
+                    'disagreement_signature',
+                    {},
+                )
+                plan['target_theory_kinds'] = recommendation.get('target_theory_kinds', [])
+                plan['primary_theory_label'] = recommendation.get('primary_theory_label')
+                plan['rival_theory_kinds'] = recommendation.get('rival_theory_kinds', [])
+                plan['rival_theory_labels'] = recommendation.get('rival_theory_labels', [])
+                plan['domain_split_hypothesis'] = recommendation.get(
+                    'domain_split_hypothesis',
+                    {},
+                )
                 plan['probe_action'] = recommendation.get('probe_action', {})
             if recommendation.get('experiment_kind') == 'equation_invariant_exponent_resolution':
                 plan['invariant_key'] = recommendation.get('invariant_key')
@@ -6599,6 +6972,7 @@ class CumulativeTheoryMemory:
                     'disagreement_signature',
                     {},
                 )
+                plan['target_theory_kinds'] = recommendation.get('target_theory_kinds', [])
                 plan['primary_theory_label'] = recommendation.get('primary_theory_label')
                 plan['rival_theory_kinds'] = recommendation.get('rival_theory_kinds', [])
                 plan['rival_theory_labels'] = recommendation.get('rival_theory_labels', [])
@@ -6619,6 +6993,7 @@ class CumulativeTheoryMemory:
                     'equation_invariant',
                     {},
                 )
+                plan['target_theory_kinds'] = recommendation.get('target_theory_kinds', [])
                 plan['primary_theory_label'] = recommendation.get('primary_theory_label')
                 plan['rival_theory_kinds'] = recommendation.get('rival_theory_kinds', [])
                 plan['rival_theory_labels'] = recommendation.get('rival_theory_labels', [])
@@ -6643,6 +7018,7 @@ class CumulativeTheoryMemory:
                     'rival_multi_parameter_variants',
                     [],
                 )
+                plan['target_theory_kinds'] = recommendation.get('target_theory_kinds', [])
                 plan['primary_theory_label'] = recommendation.get('primary_theory_label')
                 plan['rival_theory_kinds'] = recommendation.get('rival_theory_kinds', [])
                 plan['rival_theory_labels'] = recommendation.get('rival_theory_labels', [])
@@ -6892,6 +7268,12 @@ class CumulativeTheoryMemory:
             'selected_law_conflict_experiments': (
                 self.selected_law_conflict_experiments()
             ),
+            'model_disagreement_domain_split_experiments': (
+                self.model_disagreement_domain_split_experiments()
+            ),
+            'localized_gravity_structure_experiments': (
+                self.localized_gravity_structure_experiments()
+            ),
             'law_domain_split_hypotheses': self.law_domain_split_hypotheses(),
             'blind_holdout_validation_experiments': (
                 self.blind_holdout_validation_experiments()
@@ -7050,6 +7432,50 @@ class CumulativeTheoryMemory:
             ),
         }
 
+    def _model_disagreement_domain_split_outcome_stats(
+        self,
+        primary: str,
+        mode: str,
+        primary_label: str,
+    ) -> dict[str, int]:
+        matching = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'model_disagreement_domain_split'
+            and outcome.get('theory_kind') == primary
+            and outcome.get('disagreement_mode') == mode
+            and (
+                not outcome.get('primary_theory_label')
+                or outcome.get('primary_theory_label') == primary_label
+            )
+        ]
+        return {
+            'attempt_count': len(matching),
+            'settled_count': sum(
+                1 for outcome in matching
+                if outcome.get('outcome') in {
+                    'model_disagreement_domain_split_supported',
+                    'model_disagreement_domain_target_only',
+                    'model_disagreement_domain_rival_only',
+                }
+            ),
+        }
+
+    def _localized_gravity_structure_outcome_stats(self) -> dict[str, int]:
+        matching = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'localized_gravity_structure_probe'
+        ]
+        return {
+            'attempt_count': len(matching),
+            'settled_count': sum(
+                1 for outcome in matching
+                if outcome.get('outcome') in {
+                    'localized_gravity_structure_found',
+                    'localized_gravity_still_simple',
+                }
+            ),
+        }
+
     def _refined_disagreement_signature(
         self,
         record: dict,
@@ -7203,6 +7629,10 @@ class CumulativeTheoryMemory:
             return candidates[0] if candidates else 'standard'
         if target == 'blind_holdout_benchmark_context':
             return 'hidden_procedural'
+        if target == 'localized_gravity_structure_context':
+            if 'localized_gravity' in candidates:
+                return 'localized_gravity'
+            return 'localized_gravity'
         if target == 'operator_prior_unseen_context':
             for world_type in candidates:
                 if world_type not in avoid:
@@ -7292,6 +7722,40 @@ class CumulativeTheoryMemory:
             return 'rival_weak'
         return 'evidence_absent'
 
+    def _model_disagreement_domain_split_outcome_label(
+        self,
+        target_found: bool,
+        target_proof_passed: bool,
+        rival_found: bool,
+        rival_proof_passed: bool,
+    ) -> str:
+        if target_found and target_proof_passed and rival_found and rival_proof_passed:
+            return 'model_disagreement_domain_split_supported'
+        if target_found and target_proof_passed:
+            return 'model_disagreement_domain_target_only'
+        if rival_found and rival_proof_passed:
+            return 'model_disagreement_domain_rival_only'
+        if target_found or rival_found:
+            return 'model_disagreement_domain_weak'
+        return 'model_disagreement_domain_absent'
+
+    def _localized_gravity_structure_outcome_label(
+        self,
+        target_found: bool,
+        target_proof_passed: bool,
+        rival_found: bool,
+        rival_proof_passed: bool,
+    ) -> str:
+        if target_found and target_proof_passed:
+            return 'localized_gravity_structure_found'
+        if rival_found and rival_proof_passed:
+            return 'localized_gravity_still_simple'
+        if target_found:
+            return 'localized_gravity_structure_weak'
+        if rival_found:
+            return 'localized_gravity_simple_weak'
+        return 'localized_gravity_structure_absent'
+
     def _equation_invariant_resolution_outcome_label(
         self,
         target_found: bool,
@@ -7371,6 +7835,9 @@ class CumulativeTheoryMemory:
         if variant:
             return self._theory_matches_multi_parameter_variant(theory, variant)
         family = self._family_key(str(theory.get('theory_kind', '')))
+        target_families = set(plan.get('target_theory_kinds') or [])
+        if target_families:
+            return family in target_families
         primary_label = plan.get('primary_theory_label')
         if primary_label:
             return self._theory_variant_label(theory) == primary_label
@@ -7679,16 +8146,49 @@ class CumulativeTheoryMemory:
                     f"{item['source_context']} priority={item['priority']:.2f}"
                 )
                 lines.append(f"      expected: {item['expected_result']}")
+        model_domain_splits = self.model_disagreement_domain_split_experiments(
+            limit=limit
+        )
+        if model_domain_splits:
+            lines.append("  Model-disagreement domain splits:")
+            for item in model_domain_splits:
+                hypothesis = dict(item.get('domain_split_hypothesis') or {})
+                lines.append(
+                    f"    {item['theory_kind']}: mode="
+                    f"{item.get('disagreement_signature', {}).get('mode')} "
+                    f"priority={item['priority']:.2f} "
+                    f"status={hypothesis.get('status', 'unknown')}"
+                )
+                lines.append(f"      expected: {item['expected_result']}")
+        localized_probes = self.localized_gravity_structure_experiments(limit=limit)
+        if localized_probes:
+            lines.append("  Localized-gravity structure probes:")
+            for item in localized_probes:
+                lines.append(
+                    f"    {item['theory_kind']}: priority={item['priority']:.2f} "
+                    f"quick={bool(item.get('quick_probe'))}"
+                )
+                lines.append(f"      expected: {item['expected_result']}")
         domain_splits = self.law_domain_split_hypotheses(limit=limit)
         if domain_splits:
             lines.append("  Law domain split hypotheses:")
             for item in domain_splits:
-                contexts = ','.join(item.get('conflict_contexts', [])[:3]) or 'none'
-                lines.append(
-                    f"    {item['invariant_key']}: status={item['status']} "
-                    f"kind={item['split_kind']} contexts={contexts}"
+                contexts = (
+                    ','.join(item.get('conflict_contexts', [])[:3])
+                    or ','.join(item.get('source_contexts', [])[:3])
+                    or 'none'
                 )
-                lines.append(f"      question: {item['question']}")
+                split_key = (
+                    item.get('invariant_key')
+                    or item.get('key')
+                    or item.get('theory_kind')
+                    or 'domain_split'
+                )
+                lines.append(
+                    f"    {split_key}: status={item.get('status', 'unknown')} "
+                    f"kind={item.get('split_kind', 'unknown')} contexts={contexts}"
+                )
+                lines.append(f"      question: {item.get('question', 'unknown')}")
         blind_validations = self.blind_holdout_validation_experiments(limit=limit)
         if blind_validations:
             lines.append("  Blind holdout validation agenda:")

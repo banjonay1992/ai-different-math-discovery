@@ -13,6 +13,7 @@ from agent.discovery_loop import AutonomousDiscoveryLoop, CumulativeTheoryMemory
 from agent.equation_workbench import EquationWorkbench, PrimitiveEquation
 from agent.representation import KnowledgeBase
 from main import (
+    _equation_campaign_artifact_summary,
     _equation_metrics_from_knowledge,
     _planned_probe_actions,
     _print_cumulative_theory_review,
@@ -643,6 +644,126 @@ class DiscoveryLoopTests(unittest.TestCase):
             'rival_recently_confirmed',
             memory.disagreement_experiments(limit=1)[0]['stagnation_status'],
         )
+
+    def test_model_disagreement_both_winners_becomes_domain_split(self):
+        loop = AutonomousDiscoveryLoop()
+        shallow = equation(
+            key='raw_eq:generated_operator_distance_1',
+            role='generated_operator_distance_scaled_direction_equation',
+            score=0.78,
+            expression='k * unit_generated_center_vector / separation^1',
+            parameters={
+                'center_x': 10.0,
+                'center_y': 10.0,
+                'distance_exponent': 1.0,
+            },
+        )
+        steep = equation(
+            key='raw_eq:generated_operator_distance_2',
+            role='generated_operator_distance_scaled_direction_equation',
+            score=0.76,
+            expression='k * unit_generated_center_vector / separation^2',
+            parameters={
+                'center_x': 10.0,
+                'center_y': 10.0,
+                'distance_exponent': 2.0,
+            },
+        )
+        memory = CumulativeTheoryMemory()
+        memory.record_result(
+            'inverse_square_repulsion',
+            0,
+            loop.build_report([shallow, steep], step=180),
+        )
+        plan = memory.planned_experiments(
+            world_types=['inverse_square_repulsion'],
+            object_counts=[5],
+            steps=240,
+            seed_start=0,
+            limit=1,
+        )[0]
+        target_outcome = memory.evaluate_planned_result(
+            plan,
+            context='inverse_square_repulsion',
+            seed=1,
+            report={
+                'theories': [{
+                    'theory_kind': 'generated_distance_scaled_direction_residual',
+                    'parameters': {'distance_exponent': 1.0},
+                    'score': 0.78,
+                }],
+                'proof_checks': [],
+            },
+        )
+        rival_outcome = memory.evaluate_planned_result(
+            plan,
+            context='inverse_square_repulsion',
+            seed=2,
+            report={
+                'theories': [{
+                    'theory_kind': 'generated_distance_scaled_direction_residual',
+                    'parameters': {'distance_exponent': 2.0},
+                    'score': 0.76,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.extend([target_outcome, rival_outcome])
+
+        split = memory.model_disagreement_domain_split_experiments(limit=1)[0]
+        split_plan = memory.planned_experiments(
+            world_types=['inverse_square_repulsion'],
+            object_counts=[5],
+            steps=240,
+            seed_start=0,
+            limit=1,
+        )[0]
+        supported = memory.evaluate_planned_result(
+            split_plan,
+            context='inverse_square_repulsion',
+            seed=split_plan['seed'],
+            report={
+                'theories': [
+                    {
+                        'theory_kind': 'generated_distance_scaled_direction_residual',
+                        'parameters': {'distance_exponent': 1.0},
+                        'score': 0.78,
+                    },
+                    {
+                        'theory_kind': 'generated_distance_scaled_direction_residual',
+                        'parameters': {'distance_exponent': 2.0},
+                        'score': 0.76,
+                    },
+                ],
+                'proof_checks': [],
+            },
+        )
+
+        self.assertEqual([], memory.disagreement_experiments(limit=1))
+        self.assertEqual(
+            'model_disagreement_domain_split',
+            split['experiment_kind'],
+        )
+        self.assertEqual('split_suspected', split['domain_split_hypothesis']['status'])
+        self.assertTrue(split['quick_probe'])
+        self.assertEqual(
+            'model_disagreement_domain_split',
+            split_plan['experiment_kind'],
+        )
+        self.assertLess(split_plan['steps'], split_plan['full_steps'])
+        self.assertEqual(
+            'planned_model_disagreement_domain_split',
+            _planned_probe_actions(split_plan)[0]['source'],
+        )
+        self.assertEqual(
+            'model_disagreement_domain_split_supported',
+            supported['outcome'],
+        )
+        self.assertIn(
+            'model_disagreement_domain_split_experiments',
+            memory.to_dict(),
+        )
+        self.assertIn('Model-disagreement domain splits:', memory.summary())
 
     def test_cumulative_memory_builds_representation_agenda_from_disagreement(self):
         loop = AutonomousDiscoveryLoop()
@@ -1733,6 +1854,83 @@ class DiscoveryLoopTests(unittest.TestCase):
         )
         self.assertIn(
             'Blind holdout validation agenda:',
+            memory.summary(),
+        )
+
+    def test_localized_gravity_simple_headline_gets_structure_probe(self):
+        memory = CumulativeTheoryMemory()
+        memory.record_equation_case_result(
+            'localized_gravity',
+            0,
+            {
+                'interesting_equation': {
+                    'target': 'baseline_adjusted_delta_velocity',
+                    'expression': 'k * unit_local_inferred_vector',
+                    'role': 'local_residual_direction_equation',
+                    'score': 0.71,
+                    'parameters': {
+                        'center_x': 8.0,
+                        'center_y': 12.0,
+                        'cutoff_radius': 7.0,
+                    },
+                },
+                'passed': True,
+                'label_leaks': [],
+            },
+            phase='equation_campaign',
+        )
+
+        probe = memory.localized_gravity_structure_experiments(limit=1)[0]
+        plan = memory.planned_experiments(
+            world_types=['standard', 'localized_gravity'],
+            object_counts=[5],
+            steps=260,
+            limit=1,
+        )[0]
+        actions = _planned_probe_actions(plan)
+        outcome = memory.evaluate_planned_result(
+            plan,
+            context='localized_gravity',
+            seed=plan['seed'],
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {'distance_exponent': 1.0},
+                    'score': 0.82,
+                }],
+                'proof_checks': [],
+            },
+        )
+
+        self.assertEqual(
+            'localized_gravity_structure_probe',
+            probe['experiment_kind'],
+        )
+        self.assertEqual('localized_gravity', plan['world_type'])
+        self.assertTrue(plan['quick_probe'])
+        self.assertLess(plan['steps'], plan['full_steps'])
+        self.assertEqual(
+            [
+                'inside_local_region',
+                'boundary_margin',
+                'outside_local_tail',
+            ],
+            [point['label'] for point in probe['disagreement_signature']['probe_points']],
+        )
+        self.assertEqual(
+            'planned_localized_gravity_structure_probe',
+            actions[0]['source'],
+        )
+        self.assertEqual(
+            'localized_gravity_structure_found',
+            outcome['outcome'],
+        )
+        self.assertIn(
+            'localized_gravity_structure_experiments',
+            memory.to_dict(),
+        )
+        self.assertIn(
+            'Localized-gravity structure probes:',
             memory.summary(),
         )
 
@@ -3330,6 +3528,42 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertIn('MEMORY EFFICIENCY REVIEW', output.getvalue())
         self.assertEqual(1, report['compressed_shard_count'])
         self.assertEqual(3, len(memory.records))
+
+    def test_equation_campaign_artifact_summary_survives_upload_blockers(self):
+        memory = CumulativeTheoryMemory()
+        result = {
+            'context': 'repulsion',
+            'seed': 0,
+            'steps': 180,
+            'equation_count': 3,
+            'label_leaks': [],
+            'interesting_score': 0.91,
+            'interesting_equation': {
+                'expression': 'k * unit_center_vector / separation^2',
+            },
+            'planned_experiment': {
+                'experiment_kind': 'model_disagreement_domain_split',
+            },
+            'planned_experiment_outcome': {
+                'outcome': 'model_disagreement_domain_split_supported',
+            },
+            'passed': True,
+        }
+
+        summary = _equation_campaign_artifact_summary([result], memory)
+
+        self.assertFalse(summary['runs_final'])
+        self.assertEqual(1, summary['passed_count'])
+        self.assertEqual(
+            'model_disagreement_domain_split',
+            summary['rows'][0]['planned_experiment_kind'],
+        )
+        self.assertEqual(
+            'model_disagreement_domain_split_supported',
+            summary['rows'][0]['planned_outcome'],
+        )
+        self.assertIn('readiness', summary)
+        self.assertIn('planned_outcomes_tail', summary)
 
     def test_summary_only_compaction_makes_efficient_runs_long_ready(self):
         memory = CumulativeTheoryMemory()
