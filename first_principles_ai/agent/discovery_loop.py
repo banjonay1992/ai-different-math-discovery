@@ -1482,6 +1482,7 @@ class CumulativeTheoryMemory:
         seed: int,
         report,
         operator_prior_records: list[dict[str, Any]] | None = None,
+        full_result: dict[str, Any] | None = None,
     ) -> dict:
         report_dict = self._report_dict(report)
         target_family = str(plan.get('theory_kind', 'unknown'))
@@ -1519,6 +1520,7 @@ class CumulativeTheoryMemory:
         new_context = context not in previous_contexts
         experiment_kind = str(plan.get('experiment_kind', 'unknown'))
         operator_prior_evidence: dict[str, Any] = {}
+        replay_evidence: dict[str, Any] = {}
         if experiment_kind in {
             'operator_prior_refinement_validation',
             'operator_prior_domain_repair',
@@ -1530,6 +1532,12 @@ class CumulativeTheoryMemory:
                 operator_prior_records,
             )
             outcome = operator_prior_evidence['outcome']
+        elif experiment_kind == 'post_run_replay_revision':
+            replay_evidence = self._post_run_replay_plan_evidence(
+                plan,
+                full_result or report_dict,
+            )
+            outcome = replay_evidence['outcome']
         elif experiment_kind == 'model_disagreement_probe':
             outcome = self._model_disagreement_outcome_label(
                 target_found=found_family,
@@ -1587,6 +1595,7 @@ class CumulativeTheoryMemory:
             'expected_result': plan.get('expected_result'),
             'falsifies_if': plan.get('falsifies_if'),
             **operator_prior_evidence,
+            **replay_evidence,
         }
 
     def record_planned_result(
@@ -1608,6 +1617,7 @@ class CumulativeTheoryMemory:
             seed,
             report,
             operator_prior_records=operator_prior_records,
+            full_result=operator_prior_result,
         )
         record = self.record_result(context, seed, report)
         if operator_prior_records:
@@ -4491,6 +4501,321 @@ class CumulativeTheoryMemory:
         )
         return recommendations[:limit]
 
+    def post_run_replay_agenda(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Plan a second pass over old cases using laws learned after the first pass."""
+        invariants = self.operator_prior_invariant_consolidations(
+            limit=max(5, len(self.equation_case_records)),
+        )
+        recommendations = []
+        seen: set[str] = set()
+        for invariant in invariants:
+            if invariant.get('status') not in {
+                'robust_law',
+                'robust_family_parameter_unresolved',
+            }:
+                continue
+            matching_records = [
+                record for record in self.equation_case_records
+                if record.get('context') == invariant.get('context')
+                and record.get('target') == invariant.get('target')
+            ]
+            matching_records.sort(
+                key=lambda record: (
+                    int(record.get('seed', 0) or 0),
+                    str(record.get('phase', '')),
+                    str(record.get('expression', '')),
+                )
+            )
+            for record in matching_records:
+                issue = self._post_run_replay_issue(invariant, record)
+                if not issue:
+                    continue
+                replay_key = self._post_run_replay_key(invariant, record, issue)
+                if replay_key in seen:
+                    continue
+                seen.add(replay_key)
+                outcome_stats = self._post_run_replay_outcome_stats(replay_key)
+                if outcome_stats['settled_count'] > 0:
+                    continue
+                support_count = int(invariant.get('support_count', 0) or 0)
+                score = float(invariant.get('mean_score', 0.0) or 0.0)
+                issue_bonus = {
+                    'baseline_headline_needs_residual_replay': 0.05,
+                    'old_headline_conflicts_with_robust_law': 0.04,
+                    'parameter_variant_needs_replay': 0.03,
+                    'weak_or_leaky_support_needs_replay': 0.02,
+                }.get(issue, 0.0)
+                priority = max(
+                    0.35,
+                    min(
+                        0.995,
+                        0.88
+                        + min(0.06, 0.012 * support_count)
+                        + min(0.04, 0.04 * score)
+                        + issue_bonus
+                        - min(0.20, 0.06 * outcome_stats['attempt_count']),
+                    ),
+                )
+                theory_kind = self._post_run_replay_theory_kind(invariant)
+                recommendations.append({
+                    'theory_kind': theory_kind,
+                    'experiment_kind': 'post_run_replay_revision',
+                    'priority': round(priority, 3),
+                    'family_status': str(invariant.get('status', 'unknown')),
+                    'target_context': 'post_run_replay_context',
+                    'source_context': invariant.get('context'),
+                    'avoid_contexts': [],
+                    'reason': self._post_run_replay_reason(invariant, record, issue),
+                    'expected_result': self._post_run_replay_expected_result(
+                        invariant,
+                        issue,
+                    ),
+                    'falsifies_if': self._post_run_replay_falsifier(
+                        invariant,
+                        issue,
+                    ),
+                    'proof_evidence': {
+                        'support_count': support_count,
+                        'context_count': 1,
+                        'proof_rate': 0.0,
+                        'mean_score': score,
+                        'leak_count': int(invariant.get('leak_count', 0) or 0),
+                        'attempt_count': outcome_stats['attempt_count'],
+                    },
+                    'replay_key': replay_key,
+                    'replay_issue': issue,
+                    'replay_seed': int(record.get('seed', 0) or 0),
+                    'original_record': dict(record),
+                    'learned_invariant': dict(invariant),
+                    'equation_invariant': dict(invariant),
+                    'residual_first': issue == 'baseline_headline_needs_residual_replay',
+                    'suggested_campaign': {
+                        'command_family': 'math_final_discovery',
+                        'world_selection': 'original_context_and_seed',
+                        'replay_from_start': True,
+                    },
+                })
+        recommendations.sort(
+            key=lambda item: (
+                item['priority'],
+                item['proof_evidence']['support_count'],
+                -int(item.get('replay_seed', 0) or 0),
+                item.get('replay_key', ''),
+            ),
+            reverse=True,
+        )
+        return recommendations[:limit]
+
+    def _post_run_replay_issue(
+        self,
+        invariant: dict[str, Any],
+        record: dict[str, Any],
+    ) -> str | None:
+        context = str(invariant.get('context') or record.get('context') or '')
+        law_family = str(invariant.get('law_family') or '')
+        if (
+            law_family == 'linear_transition'
+            and context not in {'standard', 'zero_gravity'}
+        ):
+            return 'baseline_headline_needs_residual_replay'
+        match = self._equation_record_matches_invariant(record, invariant)
+        if not match['family_match']:
+            return 'old_headline_conflicts_with_robust_law'
+        if not match['parameter_match']:
+            return 'parameter_variant_needs_replay'
+        score = float(record.get('score', 0.0) or 0.0)
+        mean_score = float(invariant.get('mean_score', 0.0) or 0.0)
+        if int(record.get('label_leak_count', 0) or 0) > 0 or score < max(
+            0.45,
+            mean_score - 0.25,
+        ):
+            return 'weak_or_leaky_support_needs_replay'
+        return None
+
+    def _equation_record_matches_invariant(
+        self,
+        record: dict[str, Any],
+        invariant: dict[str, Any],
+    ) -> dict[str, bool]:
+        expression = str(record.get('expression') or '')
+        family_match = (
+            self._equation_law_family(record)
+            == str(invariant.get('law_family') or '')
+            and self._equation_vector_basis(expression)
+            == str(invariant.get('vector_basis') or '')
+            and self._equation_window_kind(expression)
+            == str(invariant.get('window_kind') or '')
+        )
+        parameter_candidates = list(invariant.get('parameter_candidates') or [])
+        parameter_match = True
+        if len(parameter_candidates) == 1:
+            expected = parameter_candidates[0].get('value')
+            actual = self._equation_distance_exponent(record)
+            if expected is not None and actual is not None:
+                parameter_match = round(float(expected), 3) == round(float(actual), 3)
+        elif len(parameter_candidates) > 1:
+            parameter_match = False
+        return {
+            'family_match': family_match,
+            'parameter_match': parameter_match,
+        }
+
+    def _post_run_replay_key(
+        self,
+        invariant: dict[str, Any],
+        record: dict[str, Any],
+        issue: str,
+    ) -> str:
+        return (
+            f"post_run_replay:{invariant.get('key', 'unknown')}:"
+            f"{record.get('seed', 0)}:{issue}"
+        )
+
+    def _post_run_replay_outcome_stats(self, replay_key: str) -> dict[str, int]:
+        outcomes = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'post_run_replay_revision'
+            and outcome.get('replay_key') == replay_key
+        ]
+        return {
+            'attempt_count': len(outcomes),
+            'settled_count': sum(
+                1 for outcome in outcomes
+                if outcome.get('outcome') in {
+                    'replay_confirmed_learned_invariant',
+                    'replay_found_residual_headline',
+                    'replay_demoted_old_headline',
+                }
+            ),
+        }
+
+    def _post_run_replay_theory_kind(self, invariant: dict[str, Any]) -> str:
+        law_family = str(invariant.get('law_family') or '')
+        vector_basis = str(invariant.get('vector_basis') or '')
+        if law_family == 'inverse_separation_power':
+            return 'distance_scaled_direction_residual'
+        if law_family == 'localized_tapered_power':
+            if 'perpendicular' in vector_basis:
+                return 'tapered_distance_perpendicular_residual'
+            return 'tapered_distance_direction_residual'
+        if law_family in {'localized_window', 'localized_window_equation'}:
+            return 'cutoff_direction_residual'
+        if 'periodic' in law_family:
+            return 'periodic_residual'
+        if law_family == 'linear_transition':
+            return 'residual_after_transition'
+        return law_family or 'post_run_replay_revision'
+
+    def _post_run_replay_reason(
+        self,
+        invariant: dict[str, Any],
+        record: dict[str, Any],
+        issue: str,
+    ) -> str:
+        context = invariant.get('context', record.get('context', 'unknown'))
+        expression = record.get('expression', 'unknown')
+        if issue == 'baseline_headline_needs_residual_replay':
+            return (
+                f"replay {context} from the first seed because the first pass "
+                "kept a baseline transition as the headline; force residual-first "
+                "review using later invariant memory"
+            )
+        if issue == 'old_headline_conflicts_with_robust_law':
+            return (
+                f"replay {context} seed={record.get('seed')} because later runs "
+                f"support {invariant.get('law_family')} but this pass headlined "
+                f"{expression}"
+            )
+        if issue == 'parameter_variant_needs_replay':
+            return (
+                f"replay {context} seed={record.get('seed')} to re-score the "
+                "old exponent or radius variant against the learned invariant"
+            )
+        return (
+            f"replay {context} seed={record.get('seed')} because the old support "
+            "was weak or leak-gated after later evidence arrived"
+        )
+
+    def _post_run_replay_expected_result(
+        self,
+        invariant: dict[str, Any],
+        issue: str,
+    ) -> str:
+        if issue == 'baseline_headline_needs_residual_replay':
+            return (
+                'a second pass should either surface a non-transition residual '
+                'equation or explicitly confirm that the baseline law is complete'
+            )
+        return (
+            'the replay should replace, confirm, or demote the old headline using '
+            f"the learned {invariant.get('law_family')} invariant"
+        )
+
+    def _post_run_replay_falsifier(
+        self,
+        invariant: dict[str, Any],
+        issue: str,
+    ) -> str:
+        if issue == 'baseline_headline_needs_residual_replay':
+            return 'residual-first replay still finds no non-transition law'
+        return (
+            'the old headline keeps beating the learned invariant on the original '
+            'case without leaks'
+        )
+
+    def _post_run_replay_plan_evidence(
+        self,
+        plan: dict[str, Any],
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        equation = dict(result.get('interesting_equation') or {})
+        expression = str(equation.get('expression') or '')
+        if not expression:
+            return {
+                'outcome': 'replay_no_headline',
+                'replay_key': plan.get('replay_key'),
+                'replay_issue': plan.get('replay_issue'),
+                'replay_expression': None,
+            }
+        record = {
+            'context': plan.get('world_type'),
+            'seed': plan.get('seed', 0),
+            'target': equation.get('target'),
+            'expression': expression,
+            'role': equation.get('role'),
+            'score': round(float(equation.get('score', 0.0) or 0.0), 3),
+            'parameters': _rounded_dict(dict(equation.get('parameters') or {})),
+            'passed': bool(result.get('passed') or result.get('equation_passed')),
+            'label_leak_count': len(result.get('label_leaks') or []),
+        }
+        invariant = dict(plan.get('learned_invariant') or {})
+        law_family = self._equation_law_family(record)
+        match = self._equation_record_matches_invariant(record, invariant)
+        if record['label_leak_count'] > 0:
+            outcome = 'replay_leak_blocked'
+        elif plan.get('residual_first'):
+            outcome = (
+                'replay_found_residual_headline'
+                if law_family != 'linear_transition'
+                else 'replay_still_baseline_headline'
+            )
+        elif match['family_match'] and match['parameter_match']:
+            outcome = 'replay_confirmed_learned_invariant'
+        elif match['family_match']:
+            outcome = 'replay_needs_parameter_resolution'
+        else:
+            outcome = 'replay_conflicted_with_invariant'
+        return {
+            'outcome': outcome,
+            'replay_key': plan.get('replay_key'),
+            'replay_issue': plan.get('replay_issue'),
+            'replay_expression': expression,
+            'replay_law_family': law_family,
+            'replay_score': record['score'],
+            'replay_matches_family': match['family_match'],
+            'replay_matches_parameter': match['parameter_match'],
+        }
+
     def _invariant_resolution_outcome_stats(self, invariant_key: str) -> dict[str, int]:
         outcomes = [
             outcome for outcome in self.planned_outcomes
@@ -4878,6 +5203,7 @@ class CumulativeTheoryMemory:
         recommendations.extend(
             self.equation_invariant_resolution_experiments(limit=limit * 2)
         )
+        recommendations.extend(self.post_run_replay_agenda(limit=limit * 2))
         recommendations.extend(self.operator_prior_claim_experiments(limit=limit * 2))
         recommendations.extend(self.operator_prior_repair_experiments(limit=limit * 2))
         recommendations.extend(self.operator_prior_validation_experiments(limit=limit * 2))
@@ -4904,7 +5230,10 @@ class CumulativeTheoryMemory:
         for recommendation in self.next_experiments(limit=limit * 2):
             context = self._select_plan_context(recommendation, world_types)
             object_count = object_counts[0] if object_counts else 5
-            seed = self._next_seed_for_context(context, seed_start, used_cases)
+            if recommendation.get('experiment_kind') == 'post_run_replay_revision':
+                seed = int(recommendation.get('replay_seed', seed_start) or seed_start)
+            else:
+                seed = self._next_seed_for_context(context, seed_start, used_cases)
             plan = {
                 'theory_kind': recommendation['theory_kind'],
                 'experiment_kind': recommendation['experiment_kind'],
@@ -4919,6 +5248,14 @@ class CumulativeTheoryMemory:
                 'falsifies_if': recommendation['falsifies_if'],
                 'source_status': recommendation['family_status'],
             }
+            if recommendation.get('experiment_kind') == 'post_run_replay_revision':
+                plan['replay_key'] = recommendation.get('replay_key')
+                plan['replay_issue'] = recommendation.get('replay_issue')
+                plan['original_record'] = recommendation.get('original_record', {})
+                plan['learned_invariant'] = recommendation.get('learned_invariant', {})
+                plan['equation_invariant'] = recommendation.get('equation_invariant', {})
+                plan['residual_first'] = bool(recommendation.get('residual_first'))
+                plan['replay_from_start'] = True
             if recommendation.get('experiment_kind') == 'model_disagreement_probe':
                 plan['disagreement_signature'] = recommendation.get(
                     'disagreement_signature',
@@ -5165,6 +5502,7 @@ class CumulativeTheoryMemory:
             'equation_invariant_resolution_experiments': (
                 self.equation_invariant_resolution_experiments()
             ),
+            'post_run_replay_agenda': self.post_run_replay_agenda(),
             'operator_prior_feedback': self.operator_prior_feedback(),
             'operator_prior_domains': self.operator_prior_domains(),
             'operator_prior_anomalies': self.operator_prior_anomalies(),
@@ -5439,6 +5777,15 @@ class CumulativeTheoryMemory:
                 return str(source_context)
             invariant = dict(recommendation.get('equation_invariant') or {})
             context = invariant.get('context')
+            if context:
+                return str(context)
+            return candidates[0] if candidates else 'standard'
+        if target == 'post_run_replay_context':
+            source_context = recommendation.get('source_context')
+            if source_context:
+                return str(source_context)
+            record = dict(recommendation.get('original_record') or {})
+            context = record.get('context')
             if context:
                 return str(context)
             return candidates[0] if candidates else 'standard'
@@ -5793,6 +6140,15 @@ class CumulativeTheoryMemory:
                     f"confidence={equation['confidence']:.2f}"
                 )
                 lines.append(f"      expression: {equation['expression']}")
+        replay_agenda = self.post_run_replay_agenda(limit=limit)
+        if replay_agenda:
+            lines.append("  Post-run replay agenda:")
+            for item in replay_agenda:
+                lines.append(
+                    f"    {item['replay_issue']}: {item['source_context']} "
+                    f"seed={item['replay_seed']} priority={item['priority']:.2f}"
+                )
+                lines.append(f"      expected: {item['expected_result']}")
         domain_curriculum = self.math_domain_curriculum()
         lines.append(
             "  Math domain curriculum: "

@@ -1264,6 +1264,154 @@ class DiscoveryLoopTests(unittest.TestCase):
         })
         self.assertEqual([], memory.equation_invariant_resolution_experiments(limit=1))
 
+    def test_post_run_replay_agenda_flags_baseline_headline_replay(self):
+        memory = CumulativeTheoryMemory()
+        for seed in range(4):
+            memory.record_equation_case_result(
+                'sideways_wind',
+                seed,
+                {
+                    'interesting_equation': {
+                        'target': 'next_y',
+                        'expression': 'y + vy * dt',
+                        'role': 'simple_transition',
+                        'score': 0.97,
+                    },
+                    'passed': True,
+                    'label_leaks': [],
+                },
+                phase='math_final_discovery',
+            )
+
+        agenda = memory.post_run_replay_agenda(limit=3)
+        replay = agenda[0]
+        plan = memory.planned_experiments(
+            world_types=['sideways_wind'],
+            object_counts=[5],
+            steps=240,
+            limit=1,
+        )[0]
+        outcome = memory.evaluate_planned_result(
+            plan,
+            context='sideways_wind',
+            seed=plan['seed'],
+            report={
+                'interesting_equation': {
+                    'target': 'baseline_adjusted_delta_velocity',
+                    'expression': 'k * unit_local_inferred_vector',
+                    'role': 'residual_direction_equation',
+                    'score': 0.71,
+                },
+                'passed': True,
+                'label_leaks': [],
+            },
+        )
+
+        self.assertEqual('post_run_replay_revision', replay['experiment_kind'])
+        self.assertEqual(
+            'baseline_headline_needs_residual_replay',
+            replay['replay_issue'],
+        )
+        self.assertTrue(replay['residual_first'])
+        self.assertEqual('sideways_wind', replay['source_context'])
+        self.assertEqual(0, replay['replay_seed'])
+        self.assertTrue(plan['replay_from_start'])
+        self.assertEqual(0, plan['seed'])
+        self.assertEqual('replay_found_residual_headline', outcome['outcome'])
+        self.assertIn('post_run_replay_agenda', memory.to_dict())
+        self.assertIn('Post-run replay agenda:', memory.summary())
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            _print_cumulative_theory_review(memory)
+        printed = output.getvalue()
+        self.assertIn('Theory post-run replay agenda:', printed)
+        self.assertIn('baseline_headline_needs_residual_replay', printed)
+
+    def test_post_run_replay_confirms_later_invariant_on_old_case(self):
+        memory = CumulativeTheoryMemory()
+        for seed in (0, 1, 3):
+            memory.record_equation_case_result(
+                'inverse_square_repulsion',
+                seed,
+                {
+                    'interesting_equation': {
+                        'target': 'baseline_adjusted_delta_velocity',
+                        'expression': (
+                            'k * unit_local_inferred_vector / separation^2'
+                        ),
+                        'role': 'residual_distance_scaled_direction_equation',
+                        'score': 0.88,
+                        'parameters': {'distance_exponent': 2.0},
+                    },
+                    'passed': True,
+                    'label_leaks': [],
+                },
+                phase='math_final_discovery',
+            )
+        memory.record_equation_case_result(
+            'inverse_square_repulsion',
+            2,
+            {
+                'interesting_equation': {
+                    'target': 'baseline_adjusted_delta_velocity',
+                    'expression': (
+                        'k * taper(separation, 8_88) * '
+                        'unit_generated_center_vector / separation^0_5'
+                    ),
+                    'role': 'generated_operator_distance_scaled_direction_equation',
+                    'score': 0.85,
+                    'parameters': {'distance_exponent': 0.5},
+                },
+                'passed': True,
+                'label_leaks': [],
+            },
+            phase='math_final_discovery',
+        )
+
+        agenda = memory.post_run_replay_agenda(limit=3)
+        replay = next(
+            item for item in agenda
+            if item['replay_issue'] == 'old_headline_conflicts_with_robust_law'
+        )
+        plan = memory.planned_experiments(
+            world_types=['inverse_square_repulsion'],
+            object_counts=[5],
+            steps=240,
+            limit=1,
+        )[0]
+        outcome = memory.evaluate_planned_result(
+            plan,
+            context='inverse_square_repulsion',
+            seed=plan['seed'],
+            report={
+                'interesting_equation': {
+                    'target': 'baseline_adjusted_delta_velocity',
+                    'expression': 'k * unit_local_inferred_vector / separation^2',
+                    'role': 'residual_distance_scaled_direction_equation',
+                    'score': 0.91,
+                    'parameters': {'distance_exponent': 2.0},
+                },
+                'passed': True,
+                'label_leaks': [],
+            },
+        )
+
+        self.assertEqual(2, replay['replay_seed'])
+        self.assertEqual(
+            'inverse_separation_power',
+            replay['learned_invariant']['law_family'],
+        )
+        self.assertEqual(2, plan['seed'])
+        self.assertEqual(
+            'replay_confirmed_learned_invariant',
+            outcome['outcome'],
+        )
+        self.assertEqual(
+            'k * unit_local_inferred_vector / separation^2',
+            outcome['replay_expression'],
+        )
+
     def test_domain_counterexample_adds_representation_domain_predicate(self):
         loop = AutonomousDiscoveryLoop()
         support = loop.build_report([

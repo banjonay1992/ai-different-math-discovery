@@ -3164,6 +3164,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     invariant_resolution_experiments = (
         theory_memory.equation_invariant_resolution_experiments(limit=3)
     )
+    post_run_replay_agenda = theory_memory.post_run_replay_agenda(limit=3)
     operator_prior_feedback = theory_memory.operator_prior_feedback(limit=3)
     operator_prior_domains = theory_memory.operator_prior_domains(limit=3)
     operator_prior_anomalies = theory_memory.operator_prior_anomalies(limit=3)
@@ -3207,6 +3208,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         generated_operator_priors,
         operator_prior_invariants,
         invariant_resolution_experiments,
+        post_run_replay_agenda,
         operator_prior_feedback,
         operator_prior_domains,
         operator_prior_anomalies,
@@ -3439,6 +3441,15 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
                 f"context={item.get('source_context')} exponents={exponents}"
             )
             print(f"    next: {item['expected_result']}")
+    if post_run_replay_agenda:
+        print("Theory post-run replay agenda:")
+        for item in post_run_replay_agenda:
+            print(
+                f"  {item['replay_issue']}: {item['source_context']} "
+                f"seed={item['replay_seed']} priority={item['priority']:.2f}"
+            )
+            print(f"    why: {item['reason']}")
+            print(f"    expected: {item['expected_result']}")
     if operator_prior_feedback:
         print("Theory operator prior feedback:")
         for item in operator_prior_feedback:
@@ -3520,6 +3531,8 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
             if plan.get('experiment_kind') == 'model_disagreement_probe':
                 mode = plan.get('disagreement_signature', {}).get('mode')
                 print(f"    disagreement: {mode}")
+            if plan.get('experiment_kind') == 'post_run_replay_revision':
+                print(f"    replay: {plan.get('replay_issue', 'post_run_revision')}")
             if plan.get('experiment_kind') == 'operator_prior_domain_repair':
                 anomaly = plan.get('operator_prior_anomaly', {})
                 print(f"    repair: {anomaly.get('anomaly_kind', 'operator_prior_anomaly')}")
