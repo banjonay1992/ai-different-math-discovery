@@ -1410,6 +1410,7 @@ class CumulativeTheoryMemory:
         self.planned_outcomes: list[dict] = []
         self.disagreement_records: list[dict] = []
         self.operator_prior_outcomes: list[dict] = []
+        self.domain_world_records: list[dict] = []
 
     def record_result(self, context: str, seed: int, report) -> dict:
         report_dict = self._report_dict(report)
@@ -1655,6 +1656,61 @@ class CumulativeTheoryMemory:
                 1 for record in records
                 if record.get('outcome') == 'confirmed'
             )
+
+    def record_domain_world_discoveries(
+        self,
+        seed: int = 0,
+        variant: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Persist generated domain-world discoveries as curriculum evidence."""
+        reports = self.domain_world_discovery_reports(
+            limit=len(MATH_DOMAIN_CURRICULUM),
+            seed=seed,
+            variant=variant,
+        )
+        records = []
+        for report in reports:
+            record = {
+                'phase': 'domain_world_discovery',
+                'domain_key': report.get('domain_key'),
+                'seed': int(report.get('seed', seed) or seed),
+                'variant': int(report.get('variant', variant) or variant),
+                'candidate_count': int(report.get('candidate_count', 0) or 0),
+                'benchmark_coverage': float(report.get('benchmark_coverage', 0.0) or 0.0),
+                'comparison_hits': list(report.get('comparison_hits') or []),
+                'missing_comparison_tags': list(report.get('missing_comparison_tags') or []),
+                'falsification_test_count': int(
+                    report.get('falsification_test_count', 0) or 0
+                ),
+                'transfer_basis': list(report.get('transfer_basis') or []),
+                'self_authored_equations': list(
+                    report.get('self_authored_equations') or []
+                )[:5],
+                'leaked_manifest': bool(report.get('leaked_manifest')),
+            }
+            records.append(record)
+
+        seen = {
+            (
+                item.get('domain_key'),
+                int(item.get('seed', 0) or 0),
+                int(item.get('variant', 0) or 0),
+            )
+            for item in self.domain_world_records
+        }
+        for record in records:
+            key = (
+                record.get('domain_key'),
+                int(record.get('seed', 0) or 0),
+                int(record.get('variant', 0) or 0),
+            )
+            if key in seen:
+                continue
+            self.domain_world_records.append(record)
+            seen.add(key)
+        if len(self.domain_world_records) > 96:
+            self.domain_world_records = self.domain_world_records[-96:]
+        return records
 
     def _operator_prior_plan_evidence(
         self,
@@ -3326,11 +3382,26 @@ class CumulativeTheoryMemory:
             ).lower()
             if any(keyword in text for keyword in keywords):
                 adaptive.append(str(dimension.get('key')))
+        domain_world_records = [
+            record for record in self.domain_world_records
+            if record.get('domain_key') == domain.get('key')
+        ]
+        discovered_equations = []
+        transfer_basis = set()
+        for record in domain_world_records:
+            support += int(record.get('candidate_count', 0) or 0)
+            for equation in list(record.get('self_authored_equations') or [])[:3]:
+                if equation.get('expression'):
+                    discovered_equations.append(str(equation['expression']))
+            transfer_basis.update(str(item) for item in record.get('transfer_basis') or [])
         return {
             'support_count': support,
             'matched_families': sorted(set(matched_families))[:5],
             'self_authored_equations': authored[:5],
             'adaptive_dimensions': adaptive[:5],
+            'domain_world_record_count': len(domain_world_records),
+            'domain_world_equations': discovered_equations[:5],
+            'domain_world_transfer_basis': sorted(transfer_basis)[:8],
             'evidence_keywords': sorted(keywords)[:8],
         }
 
@@ -3742,6 +3813,7 @@ class CumulativeTheoryMemory:
             'planned_outcomes': list(self.planned_outcomes),
             'disagreement_records': list(self.disagreement_records),
             'operator_prior_outcomes': list(self.operator_prior_outcomes),
+            'domain_world_records': list(self.domain_world_records),
             'families': {
                 key: family.to_dict()
                 for key, family in self.families.items()
@@ -3798,6 +3870,7 @@ class CumulativeTheoryMemory:
         memory.planned_outcomes = list(data.get('planned_outcomes', []))
         memory.disagreement_records = list(data.get('disagreement_records', []))
         memory.operator_prior_outcomes = list(data.get('operator_prior_outcomes', []))
+        memory.domain_world_records = list(data.get('domain_world_records', []))
         memory.families = {
             str(key): TheoryFamily.from_dict(family_data)
             for key, family_data in data.get('families', {}).items()

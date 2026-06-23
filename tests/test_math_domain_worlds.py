@@ -1,7 +1,9 @@
 import contextlib
 import io
+import json
 import os
 import sys
+import tempfile
 import unittest
 
 
@@ -18,7 +20,11 @@ from agent.domain_world_discovery import (
     discover_all_domain_worlds,
     discover_domain_world_manifest,
 )
-from main import run_domain_curriculum_preview
+from main import (
+    run_domain_curriculum_preview,
+    run_domain_world_discovery_ingest,
+    run_hf_non_final_campaign,
+)
 from world.math_domain_worlds import (
     DOMAIN_WORLD_GENERATORS,
     generate_all_math_domain_world_manifests,
@@ -185,6 +191,68 @@ class MathDomainWorldTests(unittest.TestCase):
             for equation in packed['self_authored_equations']
         ))
         self.assertFalse(packed['leaked_manifest'])
+
+    def test_domain_discovery_ingest_persists_curriculum_evidence(self):
+        memory = CumulativeTheoryMemory()
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            records = run_domain_world_discovery_ingest(memory, seed=2, variant=1)
+
+        text = output.getvalue()
+        agenda = memory.domain_curriculum_agenda(limit=20)
+        packed = memory.to_dict()
+        restored = CumulativeTheoryMemory.from_dict(packed)
+
+        self.assertEqual(len(MATH_DOMAIN_CURRICULUM), len(records))
+        self.assertIn('DOMAIN WORLD DISCOVERY INGEST', text)
+        self.assertEqual(
+            len(MATH_DOMAIN_CURRICULUM),
+            len(memory.domain_world_records),
+        )
+        self.assertEqual(
+            {'transfer_ready'},
+            {item['status'] for item in agenda},
+        )
+        self.assertTrue(all(
+            item['evidence']['domain_world_record_count'] >= 1
+            and item['evidence']['domain_world_equations']
+            for item in agenda
+        ))
+        self.assertIn('domain_world_records', packed)
+        self.assertEqual(
+            len(memory.domain_world_records),
+            len(restored.domain_world_records),
+        )
+
+    def test_hf_non_final_campaign_writes_json_artifact_without_final_run(self):
+        memory = CumulativeTheoryMemory()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'hf-report.json')
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = run_hf_non_final_campaign(
+                    theory_memory=memory,
+                    output_file=output_file,
+                    include_prep=False,
+                )
+
+            text = output.getvalue()
+            with open(output_file, 'r', encoding='utf-8') as handle:
+                artifact = json.load(handle)
+
+        self.assertFalse(result['runs_final'])
+        self.assertEqual('hf_non_final_campaign', result['run_kind'])
+        self.assertEqual(len(MATH_DOMAIN_CURRICULUM), result['domain_world_record_count'])
+        self.assertEqual(0, result['prep_result_count'])
+        self.assertIn('HF_PROGRESS', text)
+        self.assertIn('domain_world_discoveries_recorded', text)
+        self.assertEqual('hf_non_final_campaign', artifact['run_kind'])
+        self.assertIn('theory_memory', artifact)
+        self.assertEqual(
+            len(MATH_DOMAIN_CURRICULUM),
+            len(artifact['theory_memory']['domain_world_records']),
+        )
 
     def test_domain_curriculum_preview_is_non_final_and_lists_worlds(self):
         output = io.StringIO()

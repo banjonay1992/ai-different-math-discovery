@@ -20,6 +20,8 @@ import sys
 import os
 import contextlib
 import io
+import json
+from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1457,6 +1459,140 @@ def run_domain_curriculum_preview(
     return blueprints
 
 
+def run_domain_world_discovery_ingest(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    seed: int = 0,
+    variant: int = 0,
+) -> list[dict]:
+    """Record generated domain-world discoveries into theory memory."""
+    theory_memory = theory_memory or CumulativeTheoryMemory()
+    records = theory_memory.record_domain_world_discoveries(
+        seed=seed,
+        variant=variant,
+    )
+
+    print("=" * 70)
+    print("DOMAIN WORLD DISCOVERY INGEST")
+    print("=" * 70)
+    print("Final discovery run: not run")
+    print()
+    print(f"{'Domain':28s} {'Cand':>5s} {'Cov':>5s} {'Fals':>5s} Transfer basis")
+    print("-" * 104)
+    for record in records:
+        basis = ','.join(record.get('transfer_basis', [])[:4]) or 'none'
+        print(
+            f"{str(record.get('domain_key')):28s} "
+            f"{int(record.get('candidate_count', 0) or 0):5d} "
+            f"{float(record.get('benchmark_coverage', 0.0) or 0.0):5.0%} "
+            f"{int(record.get('falsification_test_count', 0) or 0):5d} "
+            f"{basis}"
+        )
+    return records
+
+
+def run_hf_non_final_campaign(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    seeds: int = 1,
+    steps: int = 80,
+    object_counts: list[int] = None,
+    world_types: list[str] = None,
+    hidden_worlds: int = 0,
+    num_agents: int = 2,
+    output_file: str | None = None,
+    domain_seed: int = 0,
+    domain_variant: int = 0,
+    include_prep: bool = True,
+) -> dict:
+    """
+    HF-friendly non-final run.
+
+    It records domain-world discoveries, optionally runs a small foundation prep
+    campaign, writes a JSON artifact, and never runs the watched final command.
+    """
+    theory_memory = theory_memory or CumulativeTheoryMemory()
+    object_counts = object_counts or [3]
+    world_types = world_types or ['standard']
+
+    _emit_hf_progress('start', {
+        'runs_final': False,
+        'world_types': world_types,
+        'seeds': seeds,
+        'steps': steps,
+        'object_counts': object_counts,
+        'hidden_worlds': hidden_worlds,
+    })
+    domain_records = theory_memory.record_domain_world_discoveries(
+        seed=domain_seed,
+        variant=domain_variant,
+    )
+    _emit_hf_progress('domain_world_discoveries_recorded', {
+        'record_count': len(domain_records),
+        'covered_domains': [
+            record.get('domain_key')
+            for record in domain_records
+            if float(record.get('benchmark_coverage', 0.0) or 0.0) >= 1.0
+        ],
+    })
+
+    prep_results = []
+    if include_prep:
+        _emit_hf_progress('foundation_prep_start', {
+            'world_types': world_types,
+            'seeds': seeds,
+            'steps': steps,
+        })
+        prep_results = run_math_foundation_prep(
+            seeds=seeds,
+            steps=steps,
+            object_counts=object_counts,
+            world_types=world_types,
+            hidden_worlds=hidden_worlds,
+            num_agents=num_agents,
+            theory_memory=theory_memory,
+        )
+        _emit_hf_progress('foundation_prep_finish', {
+            'result_count': len(prep_results),
+            'ready_count': sum(
+                1 for result in prep_results
+                if result.get('ready_for_final')
+            ),
+        })
+
+    readiness = theory_memory.discovery_readiness_report()
+    result = {
+        'run_kind': 'hf_non_final_campaign',
+        'runs_final': False,
+        'domain_world_record_count': len(domain_records),
+        'prep_result_count': len(prep_results),
+        'readiness': readiness,
+        'prep_results': prep_results,
+        'theory_memory': theory_memory.to_dict(),
+    }
+    if output_file:
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open('w', encoding='utf-8') as handle:
+            json.dump(result, handle, indent=2, sort_keys=True)
+        _emit_hf_progress('artifact_written', {
+            'output_file': str(output_path),
+        })
+    _emit_hf_progress('finish', {
+        'readiness_score': readiness['readiness_score'],
+        'status': readiness['status'],
+        'passed_gate_count': readiness['passed_gate_count'],
+        'gate_count': readiness['gate_count'],
+    })
+    return result
+
+
+def _emit_hf_progress(event: str, payload: dict):
+    print(
+        "HF_PROGRESS "
+        + json.dumps({'event': event, **payload}, sort_keys=True),
+        flush=True,
+    )
+
+
 def run_math_final_discovery(
     seeds: int = 1,
     steps: int = 600,
@@ -2695,6 +2831,10 @@ if __name__ == '__main__':
                         help='Print a non-final readiness audit from cumulative theory memory')
     parser.add_argument('--domain-curriculum-preview', action='store_true',
                         help='Preview generated math-domain worlds without running final discovery')
+    parser.add_argument('--domain-world-discovery-ingest', action='store_true',
+                        help='Record generated domain-world discoveries into theory memory')
+    parser.add_argument('--hf-non-final-campaign', action='store_true',
+                        help='Run a Hugging Face friendly non-final discovery campaign')
     parser.add_argument('--math-final-discovery', action='store_true',
                         help='Run the final math discovery campaign when the user is ready to watch')
     parser.add_argument('--equation-hidden-worlds', type=int, default=0,
@@ -2715,6 +2855,10 @@ if __name__ == '__main__':
                         help='Number of autonomous experiments to run (default: 12)')
     parser.add_argument('--exploration-seed-start', type=int, default=0,
                         help='First seed in the autonomous exploration pool (default: 0)')
+    parser.add_argument('--domain-world-seed', type=int, default=0,
+                        help='Seed offset for generated math-domain world discovery')
+    parser.add_argument('--domain-world-variant', type=int, default=0,
+                        help='Variant for generated math-domain world discovery')
     parser.add_argument('--seeds', type=int, default=5,
                         help='Number of seeds to run in benchmark mode (default: 5)')
     parser.add_argument('--benchmark-steps', type=int, default=800,
@@ -2727,6 +2871,10 @@ if __name__ == '__main__':
                         help='Optional JSON file for persistent law memory')
     parser.add_argument('--theory-memory-file', type=str, default=None,
                         help='Optional JSON file for persistent cumulative theory memory')
+    parser.add_argument('--hf-output-file', type=str, default=None,
+                        help='Optional JSON artifact path for HF non-final campaign output')
+    parser.add_argument('--hf-skip-prep', action='store_true',
+                        help='HF non-final campaign records domain worlds without running prep cases')
     parser.add_argument('--no-save-memory', action='store_true',
                         help='Load memory without writing updates back to disk')
     parser.add_argument('--no-save-theory-memory', action='store_true',
@@ -2782,6 +2930,44 @@ if __name__ == '__main__':
 
     if args.domain_curriculum_preview:
         run_domain_curriculum_preview(theory_memory=theory_memory)
+        raise SystemExit(0)
+
+    if args.domain_world_discovery_ingest:
+        theory_memory = theory_memory or CumulativeTheoryMemory()
+        run_domain_world_discovery_ingest(
+            theory_memory=theory_memory,
+            seed=args.domain_world_seed,
+            variant=args.domain_world_variant,
+        )
+        if (
+            args.theory_memory_file
+            and theory_memory is not None
+            and not args.no_save_theory_memory
+        ):
+            theory_memory.save(args.theory_memory_file)
+        raise SystemExit(0)
+
+    if args.hf_non_final_campaign:
+        theory_memory = theory_memory or CumulativeTheoryMemory()
+        run_hf_non_final_campaign(
+            theory_memory=theory_memory,
+            seeds=args.seeds,
+            steps=args.benchmark_steps,
+            object_counts=_parse_csv_ints(args.object_counts),
+            world_types=_parse_csv_worlds(args.world_types),
+            hidden_worlds=args.equation_hidden_worlds,
+            num_agents=args.agents,
+            output_file=args.hf_output_file,
+            domain_seed=args.domain_world_seed,
+            domain_variant=args.domain_world_variant,
+            include_prep=not args.hf_skip_prep,
+        )
+        if (
+            args.theory_memory_file
+            and theory_memory is not None
+            and not args.no_save_theory_memory
+        ):
+            theory_memory.save(args.theory_memory_file)
         raise SystemExit(0)
 
     if args.equation_campaign:

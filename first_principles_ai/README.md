@@ -114,6 +114,12 @@ python3 main.py --discovery-readiness --theory-memory-file tmp/theory-memory.jso
 # Preview generated math-domain worlds without running the final
 python3 main.py --domain-curriculum-preview --theory-memory-file tmp/theory-memory.json
 
+# Persist generated domain-world discoveries into the theory notebook
+python3 main.py --domain-world-discovery-ingest --theory-memory-file tmp/theory-memory.json
+
+# HF-friendly non-final run: emits HF_PROGRESS lines and writes a JSON artifact
+python3 main.py --hf-non-final-campaign --benchmark-steps 80 --world-types standard --object-counts 3 --equation-hidden-worlds 0 --theory-memory-file tmp/theory-memory.json --hf-output-file tmp/hf-non-final-report.json
+
 # Heavy/final campaigns should be launched on Hugging Face compute where practical
 # so local preview and tests stay lightweight.
 
