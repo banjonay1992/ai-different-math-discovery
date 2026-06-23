@@ -135,6 +135,8 @@ def run_experiment(
     enable_equation_probes: bool = False,
     planned_actions: list[dict] | None = None,
     equation_operator_priors: list[dict] | None = None,
+    equation_max_operator_feedback_rows: int = 384,
+    equation_max_operator_feedback_operators: int = 5,
 ):
     """
     Run the first-principles discovery experiment.
@@ -191,6 +193,8 @@ def run_experiment(
     equation_workbench = EquationWorkbench(
         kb,
         generated_operator_priors=equation_operator_priors,
+        max_operator_feedback_rows=equation_max_operator_feedback_rows,
+        max_operator_feedback_operators=equation_max_operator_feedback_operators,
     )
     kb.equation_workbench = equation_workbench
 
@@ -1813,6 +1817,8 @@ def _run_math_foundation_prep_case(
             allow_memory_probes=False,
             enable_equation_probes=True,
             equation_operator_priors=equation_operator_priors,
+            equation_max_operator_feedback_rows=96,
+            equation_max_operator_feedback_operators=2,
         )
     metrics = _foundation_metrics_from_knowledge(kb)
     equations = _equation_metrics_from_knowledge(kb)
@@ -1855,6 +1861,8 @@ def _run_math_final_discovery_case(
             allow_memory_probes=False,
             enable_equation_probes=True,
             equation_operator_priors=equation_operator_priors,
+            equation_max_operator_feedback_rows=96,
+            equation_max_operator_feedback_operators=2,
         )
     foundation = _foundation_metrics_from_knowledge(kb)
     equations = _equation_metrics_from_knowledge(kb)

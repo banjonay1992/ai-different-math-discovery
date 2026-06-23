@@ -16,6 +16,7 @@ from agent.representation import KnowledgeBase
 from main import (
     _foundation_metrics_from_knowledge,
     run_discovery_readiness_audit,
+    run_experiment,
     run_math_final_discovery,
     run_math_foundation_prep,
 )
@@ -107,6 +108,22 @@ class MathFoundationTests(unittest.TestCase):
 
         self.assertFalse(metrics['ready_for_final'])
         self.assertIn('number_system_stability', metrics['missing_gates'])
+
+    def test_run_experiment_passes_operator_feedback_budget_to_workbench(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            _, kb, _ = run_experiment(
+                num_steps=1,
+                num_initial_objects=1,
+                seed=0,
+                verbose=False,
+                report_interval=1,
+                equation_max_operator_feedback_rows=64,
+                equation_max_operator_feedback_operators=2,
+            )
+
+        self.assertEqual(64, kb.equation_workbench.max_operator_feedback_rows)
+        self.assertEqual(2, kb.equation_workbench.max_operator_feedback_operators)
 
     def test_math_foundation_prep_runs_without_final_campaign(self):
         theory_memory = CumulativeTheoryMemory()
