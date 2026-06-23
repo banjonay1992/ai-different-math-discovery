@@ -363,6 +363,69 @@ class MathDomainWorldTests(unittest.TestCase):
         self.assertEqual(plan['requested'], plan['effective'])
         self.assertEqual(0.0, plan['residual_pressure']['score'])
 
+    def test_compute_budget_targets_high_value_worlds_before_expanding(self):
+        plan = plan_adaptive_compute_budget(
+            readiness={
+                'missing_gates': [
+                    'anomaly_repair_loop',
+                    'operator_discovery_claims',
+                    'claim_driven_planning',
+                ],
+                'next_steps': [],
+            },
+            scientist_report={
+                'coverage': {
+                    'residual_experiment_count': 24,
+                    'stress_world_count': 5,
+                },
+                'next_actions': [{
+                    'action_kind': 'run_harder_hidden_world',
+                    'suggested_world_type': 'localized_gravity',
+                }],
+                'harder_stress_worlds': [
+                    {
+                        'key': 'localized_off_center_gravity',
+                        'world_type': 'localized_gravity',
+                        'priority': 0.92,
+                    },
+                    {
+                        'key': 'time_varying_force',
+                        'world_type': 'time_varying',
+                        'priority': 0.78,
+                    },
+                ],
+            },
+            resource_report={
+                'long_run_ready': True,
+                'bounded_windows': {'operator_outcomes_within_window': True},
+            },
+            requested_steps=80,
+            requested_seeds=1,
+            requested_hidden_worlds=1,
+            requested_world_types=[
+                'standard',
+                'inverse_square_repulsion',
+                'localized_gravity',
+                'time_varying',
+            ],
+            max_steps=160,
+            max_seeds=2,
+            max_hidden_worlds=2,
+        )
+
+        targeting = plan['targeting_plan']
+        self.assertTrue(plan['targeted'])
+        self.assertTrue(targeting['focused'])
+        self.assertEqual(
+            ['standard', 'localized_gravity', 'time_varying'],
+            targeting['effective_world_types'],
+        )
+        self.assertEqual(plan['requested']['steps'], plan['effective']['steps'])
+        self.assertLess(
+            targeting['effective_case_count'],
+            targeting['requested_case_count'],
+        )
+
     def test_hf_campaign_expands_compute_only_from_residual_pressure(self):
         memory = CumulativeTheoryMemory()
         captured = {}
@@ -394,6 +457,64 @@ class MathDomainWorldTests(unittest.TestCase):
         self.assertEqual(plan['effective']['steps'], captured['steps'])
         self.assertEqual(plan['effective']['seeds'], captured['seeds'])
         self.assertIn('compute_budget_plan', output.getvalue())
+
+    def test_hf_campaign_targets_prep_worlds_for_efficiency(self):
+        memory = CumulativeTheoryMemory()
+        captured = {}
+
+        def fake_prep_runner(**kwargs):
+            captured.update(kwargs)
+            return [
+                {
+                    'context': world_type,
+                    'seed': 0,
+                    'objects': 3,
+                    'steps': kwargs['steps'],
+                    'ready_for_final': True,
+                    'equation_passed': True,
+                    'passed': True,
+                }
+                for world_type in kwargs['world_types']
+            ]
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = run_hf_non_final_campaign(
+                theory_memory=memory,
+                seeds=1,
+                steps=40,
+                object_counts=[3],
+                world_types=[
+                    'standard',
+                    'inverse_square_repulsion',
+                    'localized_gravity',
+                    'time_varying',
+                ],
+                hidden_worlds=1,
+                include_prep=True,
+                live_scientist=False,
+                scientist_seed_count=2,
+                scientist_variants=[0, 1],
+                max_adaptive_steps=80,
+                max_adaptive_seeds=2,
+                max_adaptive_hidden_worlds=2,
+                prep_runner=fake_prep_runner,
+            )
+
+        plan = result['compute_budget_plan']
+        prep_plan = result['prep_execution_plan']
+        self.assertTrue(plan['targeted'])
+        self.assertTrue(prep_plan['targeted'])
+        self.assertLess(len(captured['world_types']), 4)
+        self.assertEqual(
+            ['standard', 'localized_gravity', 'time_varying'],
+            captured['world_types'],
+        )
+        self.assertLess(
+            prep_plan['estimated_effective_compute_units'],
+            prep_plan['estimated_requested_compute_units'],
+        )
+        self.assertIn('compute_targeted', output.getvalue())
 
     def test_hf_adaptive_comparison_runs_fixed_and_adaptive_from_same_snapshot(self):
         memory = CumulativeTheoryMemory()
@@ -446,6 +567,72 @@ class MathDomainWorldTests(unittest.TestCase):
         self.assertEqual('hf_adaptive_comparison', artifact['run_kind'])
         self.assertIn('comparison', artifact)
         self.assertIn('readiness_delta', artifact['comparison'])
+
+    def test_hf_adaptive_comparison_can_improve_readiness_per_compute(self):
+        memory = CumulativeTheoryMemory()
+
+        def fake_prep_runner(**kwargs):
+            results = []
+            for world_type in kwargs['world_types']:
+                for seed in range(kwargs['seeds']):
+                    results.append({
+                        'context': world_type,
+                        'seed': seed,
+                        'objects': 3,
+                        'steps': kwargs['steps'],
+                        'ready_for_final': True,
+                        'equation_passed': True,
+                        'passed': True,
+                    })
+            for index in range(kwargs['hidden_worlds']):
+                results.append({
+                    'context': f'hidden_{index:02d}',
+                    'seed': index,
+                    'objects': 3,
+                    'steps': kwargs['steps'],
+                    'ready_for_final': True,
+                    'equation_passed': True,
+                    'passed': True,
+                })
+            return results
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            report = run_hf_adaptive_comparison(
+                theory_memory=memory,
+                seeds=1,
+                steps=40,
+                object_counts=[3],
+                world_types=[
+                    'standard',
+                    'inverse_square_repulsion',
+                    'localized_gravity',
+                    'time_varying',
+                ],
+                hidden_worlds=1,
+                scientist_seed_count=2,
+                scientist_variants=[0, 1],
+                live_scientist=False,
+                max_adaptive_steps=80,
+                max_adaptive_seeds=2,
+                max_adaptive_hidden_worlds=2,
+                prep_runner=fake_prep_runner,
+            )
+
+        fixed, adaptive = report['variants']
+        comparison = report['comparison']
+        self.assertFalse(fixed['telemetry']['compute_targeted'])
+        self.assertTrue(adaptive['telemetry']['compute_targeted'])
+        self.assertLess(
+            adaptive['telemetry']['compute_units'],
+            fixed['telemetry']['compute_units'],
+        )
+        self.assertGreater(
+            adaptive['telemetry']['readiness_per_compute_unit'],
+            fixed['telemetry']['readiness_per_compute_unit'],
+        )
+        self.assertTrue(comparison['adaptive_improved_readiness_per_compute'])
+        self.assertIn('recommendation', comparison)
 
     def test_hf_campaign_compacts_memory_between_batches(self):
         memory = CumulativeTheoryMemory()

@@ -132,10 +132,11 @@ python3 main.py --hf-non-final-campaign --benchmark-steps 80 --world-types stand
 # Bigger HF non-final run with multi-seed domain discovery and live scientist trace
 python3 main.py --hf-non-final-campaign --benchmark-steps 160 --seeds 2 --world-types standard,sideways_wind,vortex,localized_gravity,time_varying,inverse_square_repulsion --object-counts 3,4 --equation-hidden-worlds 2 --domain-world-seed-count 4 --domain-world-variants 0,1 --scientist-seed-count 4 --scientist-variants 0,1 --theory-memory-file tmp/theory-memory.json --hf-output-file tmp/hf-non-final-report.json
 
-# Long HF runs auto-compact theory memory between batches and adapt compute only under residual pressure
+# Long HF runs auto-compact theory memory and adapt compute only under residual pressure
 python3 main.py --hf-non-final-campaign --benchmark-steps 160 --hf-max-adaptive-steps 320 --hf-max-adaptive-seeds 3 --memory-keep-records 96 --memory-keep-operator-outcomes 192 --theory-memory-file tmp/theory-memory.json --hf-output-file tmp/hf-non-final-report.json
 
-# Compare fixed versus adaptive non-final compute from the same memory snapshot
+# Compare fixed versus adaptive non-final compute from the same memory snapshot.
+# Adaptive prep targets high-value worlds first, so the report can prove readiness per compute.
 python3 main.py --hf-adaptive-comparison --benchmark-steps 80 --seeds 1 --world-types standard,localized_gravity,time_varying --object-counts 3 --equation-hidden-worlds 1 --hf-max-adaptive-steps 160 --hf-max-adaptive-seeds 2 --hf-max-adaptive-hidden-worlds 2 --theory-memory-file tmp/theory-memory.json --hf-output-file tmp/hf-adaptive-comparison-report.json
 
 # Heavy/final campaigns should be launched on Hugging Face compute where practical

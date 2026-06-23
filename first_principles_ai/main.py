@@ -1754,6 +1754,7 @@ def run_hf_non_final_campaign(
         requested_steps=steps,
         requested_seeds=seeds,
         requested_hidden_worlds=hidden_worlds,
+        requested_world_types=world_types,
         max_steps=max_adaptive_steps or max(steps, steps * 2),
         max_seeds=max_adaptive_seeds or max(seeds, seeds + 1),
         max_hidden_worlds=(
@@ -1766,6 +1767,21 @@ def run_hf_non_final_campaign(
     _emit_hf_progress('compute_budget_plan', compute_budget_plan)
 
     prep_results = []
+    targeting_plan = dict(compute_budget_plan.get('targeting_plan') or {})
+    prep_world_types = list(
+        targeting_plan.get('effective_world_types')
+        or world_types
+    )
+    prep_execution_plan = {
+        'requested_world_types': list(world_types),
+        'effective_world_types': prep_world_types,
+        'object_counts': list(object_counts),
+        'requested_steps': steps,
+        'requested_seeds': seeds,
+        'requested_hidden_worlds': hidden_worlds,
+        'targeted': bool(targeting_plan.get('focused')),
+        'targeting_reasons': list(targeting_plan.get('reasons') or []),
+    }
     if include_prep:
         effective = dict(compute_budget_plan.get('effective') or {})
         effective_steps = int(effective.get('steps', steps) or steps)
@@ -1773,8 +1789,28 @@ def run_hf_non_final_campaign(
         effective_hidden_worlds = int(
             effective.get('hidden_worlds', hidden_worlds) or 0
         )
+        prep_execution_plan.update({
+            'effective_steps': effective_steps,
+            'effective_seeds': effective_seeds,
+            'effective_hidden_worlds': effective_hidden_worlds,
+        })
+        prep_execution_plan['estimated_requested_compute_units'] = (
+            steps
+            * max(1, seeds)
+            * max(1, len(world_types) * max(1, len(object_counts)) + hidden_worlds)
+        )
+        prep_execution_plan['estimated_effective_compute_units'] = (
+            effective_steps
+            * max(1, effective_seeds)
+            * max(
+                1,
+                len(prep_world_types) * max(1, len(object_counts))
+                + effective_hidden_worlds,
+            )
+        )
         _emit_hf_progress('foundation_prep_start', {
-            'world_types': world_types,
+            'world_types': prep_world_types,
+            'requested_world_types': world_types,
             'requested_seeds': seeds,
             'requested_steps': steps,
             'requested_hidden_worlds': hidden_worlds,
@@ -1782,12 +1818,19 @@ def run_hf_non_final_campaign(
             'steps': effective_steps,
             'hidden_worlds': effective_hidden_worlds,
             'compute_expanded': compute_budget_plan['expanded'],
+            'compute_targeted': prep_execution_plan['targeted'],
+            'estimated_requested_compute_units': prep_execution_plan[
+                'estimated_requested_compute_units'
+            ],
+            'estimated_effective_compute_units': prep_execution_plan[
+                'estimated_effective_compute_units'
+            ],
         })
         prep_results = prep_runner(
             seeds=effective_seeds,
             steps=effective_steps,
             object_counts=object_counts,
-            world_types=world_types,
+            world_types=prep_world_types,
             hidden_worlds=effective_hidden_worlds,
             num_agents=num_agents,
             theory_memory=theory_memory,
@@ -1820,6 +1863,7 @@ def run_hf_non_final_campaign(
         'readiness': readiness,
         'readiness_before_prep': readiness_before_prep,
         'compute_budget_plan': compute_budget_plan,
+        'prep_execution_plan': prep_execution_plan,
         'compaction_events': compaction_events,
         'resource_efficiency': resource_efficiency,
         'prep_results': prep_results,
@@ -1986,12 +2030,21 @@ def _hf_campaign_telemetry(
     plan = dict(result.get('compute_budget_plan') or {})
     requested = dict(plan.get('requested') or {})
     effective = dict(plan.get('effective') or requested)
+    prep_execution_plan = dict(result.get('prep_execution_plan') or {})
     resource = dict(result.get('resource_efficiency') or {})
     canonical = dict(resource.get('canonical_law_compression') or {})
     arithmetic = dict(result.get('arithmetic_rediscovery_report') or {})
     memory_bytes = estimate_json_bytes(result.get('theory_memory') or {})
     artifact_bytes = estimate_json_bytes(result)
-    compute_units = _hf_compute_units(effective)
+    compute_units = _hf_compute_units(
+        effective,
+        prep_results=list(result.get('prep_results') or []),
+        prep_execution_plan=prep_execution_plan,
+    )
+    requested_compute_units = _hf_requested_compute_units(
+        requested,
+        prep_execution_plan=prep_execution_plan,
+    )
     readiness_score = float(readiness.get('readiness_score', 0.0) or 0.0)
     elapsed_seconds = max(0.001, float(elapsed_seconds or 0.001))
     return {
@@ -2009,7 +2062,16 @@ def _hf_campaign_telemetry(
         'compute_requested': requested,
         'compute_effective': effective,
         'compute_units': compute_units,
+        'requested_compute_units': requested_compute_units,
+        'compute_unit_savings': max(0, requested_compute_units - compute_units),
+        'compute_unit_savings_ratio': round(
+            max(0, requested_compute_units - compute_units)
+            / max(1, requested_compute_units),
+            3,
+        ),
         'compute_expanded': bool(plan.get('expanded')),
+        'compute_targeted': bool(plan.get('targeted')),
+        'prep_execution_plan': prep_execution_plan,
         'residual_pressure_score': (
             dict(plan.get('residual_pressure') or {}).get('score', 0.0)
         ),
@@ -2058,6 +2120,7 @@ def _compare_hf_variant_telemetry(
         - float(fixed.get('readiness_per_compute_unit', 0.0) or 0.0),
         7,
     )
+    adaptive_improved_efficiency = readiness_per_compute_delta > 0
     adaptive_kept_quality = (
         float(adaptive.get('readiness_score', 0.0) or 0.0)
         >= float(fixed.get('readiness_score', 0.0) or 0.0)
@@ -2068,22 +2131,33 @@ def _compare_hf_variant_telemetry(
         bool(adaptive.get('canonical_law_ready'))
         and bool(adaptive.get('long_run_ready'))
     )
-    recommendation = (
-        'keep_adaptive_budgeting'
-        if adaptive_kept_quality and adaptive_kept_compression
-        else 'prefer_fixed_until_adaptive_quality_recovers'
-    )
+    if adaptive_kept_quality and adaptive_kept_compression and adaptive_improved_efficiency:
+        recommendation = 'keep_efficiency_targeted_adaptive_budgeting'
+    elif adaptive_kept_quality and adaptive_improved_efficiency:
+        recommendation = 'keep_targeted_adaptive_and_compact_memory_next'
+    elif adaptive_kept_quality and adaptive_kept_compression:
+        recommendation = 'keep_adaptive_for_quality_but_improve_efficiency'
+    else:
+        recommendation = 'prefer_fixed_until_adaptive_quality_recovers'
     return {
         'fixed_variant': fixed['variant'],
         'adaptive_variant': adaptive['variant'],
         'readiness_delta': readiness_delta,
         'adaptive_kept_or_improved_quality': adaptive_kept_quality,
         'adaptive_kept_compression_ready': adaptive_kept_compression,
+        'adaptive_improved_readiness_per_compute': adaptive_improved_efficiency,
         'compute_unit_ratio_adaptive_to_fixed': compute_ratio,
         'memory_byte_ratio_adaptive_to_fixed': memory_ratio,
         'readiness_per_compute_unit_delta': readiness_per_compute_delta,
         'fixed_compute_units': fixed.get('compute_units', 0),
         'adaptive_compute_units': adaptive.get('compute_units', 0),
+        'fixed_requested_compute_units': fixed.get('requested_compute_units', 0),
+        'adaptive_requested_compute_units': adaptive.get('requested_compute_units', 0),
+        'adaptive_compute_unit_savings': adaptive.get('compute_unit_savings', 0),
+        'adaptive_compute_unit_savings_ratio': adaptive.get(
+            'compute_unit_savings_ratio',
+            0.0,
+        ),
         'fixed_memory_bytes': fixed.get('memory_bytes', 0),
         'adaptive_memory_bytes': adaptive.get('memory_bytes', 0),
         'fixed_readiness': fixed.get('readiness_score', 0.0),
@@ -2092,11 +2166,53 @@ def _compare_hf_variant_telemetry(
     }
 
 
-def _hf_compute_units(effective: dict) -> int:
+def _hf_compute_units(
+    effective: dict,
+    *,
+    prep_results: list[dict] | None = None,
+    prep_execution_plan: dict | None = None,
+) -> int:
+    if prep_results:
+        return sum(
+            max(1, int(result.get('steps', effective.get('steps', 1)) or 1))
+            for result in prep_results
+        )
+    prep_execution_plan = prep_execution_plan or {}
     steps = max(1, int(effective.get('steps', 1) or 1))
     seeds = max(1, int(effective.get('seeds', 1) or 1))
     hidden_worlds = max(0, int(effective.get('hidden_worlds', 0) or 0))
-    return steps * seeds * max(1, hidden_worlds + 1)
+    world_types = list(prep_execution_plan.get('effective_world_types') or [])
+    object_counts = list(prep_execution_plan.get('object_counts') or [1])
+    case_count = len(world_types) * max(1, len(object_counts)) + hidden_worlds
+    if case_count <= 0:
+        case_count = hidden_worlds + 1
+    return steps * seeds * max(1, case_count)
+
+
+def _hf_requested_compute_units(
+    requested: dict,
+    *,
+    prep_execution_plan: dict | None = None,
+) -> int:
+    prep_execution_plan = prep_execution_plan or {}
+    steps = max(1, int(requested.get('steps', 1) or 1))
+    seeds = max(1, int(requested.get('seeds', 1) or 1))
+    hidden_worlds = max(
+        0,
+        int(
+            prep_execution_plan.get(
+                'requested_hidden_worlds',
+                requested.get('hidden_worlds', 0),
+            )
+            or 0
+        ),
+    )
+    world_types = list(prep_execution_plan.get('requested_world_types') or [])
+    object_counts = list(prep_execution_plan.get('object_counts') or [1])
+    case_count = len(world_types) * max(1, len(object_counts)) + hidden_worlds
+    if case_count <= 0:
+        case_count = hidden_worlds + 1
+    return steps * seeds * max(1, case_count)
 
 
 def _safe_float_ratio(numerator, denominator) -> float:
