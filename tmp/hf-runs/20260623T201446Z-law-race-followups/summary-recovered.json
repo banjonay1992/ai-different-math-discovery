@@ -1,0 +1,121 @@
+{
+  "artifact_upload_note": "The HF run completed with command return code 0, then upload to the protected HF dataset failed with 403. A recovery upload job also failed with dataset write permission errors, so this summary is persisted on the GitHub run branch.",
+  "branch": "codex/discovery-law-race-holdouts",
+  "command_returncode": 0,
+  "elapsed_seconds": 560.0,
+  "followup_outcomes": [
+    {
+      "context": "repulsion",
+      "equation": "k * taper(separation, 4_852) * unit_generated_center_vector / separation^0_25",
+      "iteration": 1,
+      "kind": "selected_law_conflict_resolution",
+      "outcome": "conflict_rival_supported",
+      "score": 0.91
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "equation": "k * unit_local_inferred_vector / separation^1_5",
+      "iteration": 2,
+      "kind": "selected_law_conflict_resolution",
+      "outcome": "conflict_domain_split_supported",
+      "score": 0.72
+    },
+    {
+      "context": "repulsion",
+      "equation": "k * taper(separation, 6_065) * unit_generated_center_vector / separation^1_5",
+      "iteration": 3,
+      "kind": "transfer_test",
+      "outcome": "transfer_absent",
+      "score": 0.91
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "equation": "k * taper(separation, 9_683) * unit_generated_center_vector / separation^0_5",
+      "iteration": 4,
+      "kind": "model_disagreement_probe",
+      "outcome": "rival_confirmed",
+      "score": 0.75
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "equation": "k * unit_local_inferred_vector / separation^2",
+      "iteration": 5,
+      "kind": "model_disagreement_probe",
+      "outcome": "target_confirmed",
+      "score": 0.87
+    },
+    {
+      "context": "repulsion",
+      "equation": "k * taper(separation, 5_911) * unit_generated_center_vector / separation^0_5",
+      "iteration": 6,
+      "kind": "model_disagreement_probe",
+      "outcome": "evidence_absent",
+      "score": 0.91
+    }
+  ],
+  "interesting_notes": [
+    "The new conflict-resolution loop chose selected_law_conflict_resolution first, which confirms the new priority path is live.",
+    "The first law race supported a rival instead of defending the selected law.",
+    "The second law race produced conflict_domain_split_supported, which is the desired shift from single-law selection toward piecewise/domain-limited reasoning.",
+    "Older model_disagreement probes still spent two slots on inverse_square_repulsion, returning rival_confirmed then target_confirmed; next fix should consolidate repeated model-disagreement outcomes into domain-split pressure sooner.",
+    "Localized gravity still headlined the simple local vector law, so off-center/localized dynamics remain weaker than time-varying, repulsion, and vortex rediscovery."
+  ],
+  "job_id": "6a3ae930d530f3857e66d934",
+  "raw_campaign_rows": [
+    {
+      "context": "repulsion",
+      "equation": "baseline_adjusted_delta_velocity ~= k * taper(separation, 6_065) * unit_generated_center_vector / separation^1",
+      "equations": 36,
+      "leaks": 0,
+      "score": 0.92,
+      "seed": 0
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "equation": "baseline_adjusted_delta_velocity ~= k * unit_local_inferred_vector / separation^1_5",
+      "equations": 31,
+      "leaks": 0,
+      "score": 0.83,
+      "seed": 0
+    },
+    {
+      "context": "localized_gravity",
+      "equation": "baseline_adjusted_delta_velocity ~= k * unit_local_inferred_vector",
+      "equations": 28,
+      "leaks": 0,
+      "score": 0.71,
+      "seed": 0
+    },
+    {
+      "context": "vortex",
+      "equation": "baseline_adjusted_delta_velocity ~= k * taper(separation, 8_02) * perpendicular(unit_generated_center_vector) / separation^0_5",
+      "equations": 34,
+      "leaks": 0,
+      "score": 0.64,
+      "seed": 0
+    },
+    {
+      "context": "time_varying",
+      "equation": "baseline_adjusted_delta_vx ~= a * sin(step/80) + b * cos(step/80)",
+      "equations": 34,
+      "leaks": 0,
+      "score": 0.9,
+      "seed": 0
+    },
+    {
+      "context": "hidden_00_0000",
+      "equation": "baseline_adjusted_delta_velocity ~= k * taper(separation, 7_424) * unit_generated_center_vector / separation^1",
+      "equations": 30,
+      "leaks": 0,
+      "score": 0.89,
+      "seed": 0
+    }
+  ],
+  "reported_readiness": {
+    "gates": "25/25",
+    "score": 1.0,
+    "status": "ready_for_watched_final"
+  },
+  "run_id": "20260623T201446Z-law-race-followups",
+  "runs_final": false
+}
