@@ -1,0 +1,457 @@
+# First Principles AI — Discovery from Scratch
+
+An agent starts with **zero knowledge** about mathematics or physics. It observes a 2D physics world and must discover concepts independently — no training data, no human examples, just observation and reasoning.
+
+After the experiment, we compare the agent's discoveries to human concepts. If they converge, those concepts are properties of reality — not human inventions.
+
+## The Idea
+
+Current AI trains on human output and learns to produce human-like output. We never test whether it *understands* anything. This project takes a different approach:
+
+1. Give an agent a world to observe (with real physics: gravity, collisions, friction)
+2. Let it form its own concepts from observation
+3. Let it hypothesize and test rules about how the world works
+4. Compare its discoveries to human mathematical/physical concepts
+5. If they match — those concepts are real, not cultural artifacts
+
+This is **convergent epistemology**: if two independent systems arrive at the same truth, that truth is likely real.
+
+## What the Agent Discovers
+
+Running `python3 main.py --steps 2000` produces:
+
+- **11 concepts** (100% convergence with human knowledge):
+  - Natural Numbers (Counting)
+  - Linear Momentum (x, y, magnitude)
+  - Kinetic Energy
+  - Mass (Additivity)
+  - Center of Mass (x, y)
+  - Collision/Interaction Events
+  - Euclidean Distance
+  - Average Speed
+
+- **2 confirmed rules** (100% convergence):
+  - Successor Function: "When an object appears, count increases by exactly 1" (Peano axiom)
+  - Predecessor Function: "When an object disappears, count decreases by exactly 1"
+
+- **Conservation hypotheses correctly rejected** — the agent noticed that momentum and energy are NOT conserved in a world with gravity and friction. This is correct physics.
+
+## Architecture
+
+```
+first_principles_ai/
+├── world/
+│   ├── physics.py       # 2D physics engine (gravity, collisions, friction)
+│   └── environment.py   # Agent's interface to the world (observe, push, spawn, remove)
+├── agent/
+│   ├── perception.py    # Converts raw state into structured observations
+│   ├── representation.py  # Explicit, inspectable knowledge base (concepts, rules, hypotheses)
+│   ├── predictor.py     # Reasoning engine: observe → detect regularities → hypothesize → test
+│   └── curiosity.py     # Curiosity-driven action selection (seek maximum information gain)
+├── discovery/
+│   ├── tracker.py       # Logs all discoveries with timestamps and evidence
+│   └── comparison.py    # Maps agent discoveries to human concepts (convergence test)
+├── main.py              # Entry point — runs the experiment
+└── requirements.txt
+```
+
+## Key Design Decisions
+
+### Knowledge is explicit, not neural weights
+The agent's knowledge is stored as inspectable `Concept` and `Rule` objects. You can see what it knows, when it learned it, and what evidence supports it. This makes the system **correctable** — you can inspect and fix individual beliefs.
+
+### Curiosity drives exploration
+The agent has no external reward. It is driven by **prediction error** — when its predictions are wrong, it gets curious. It seeks situations where it doesn't know what will happen. This is the same drive that makes children learn.
+
+### Hypothesis testing, not pattern matching
+The agent doesn't learn by correlating inputs with outputs. It:
+1. Observes features over time
+2. Detects regularities (constants, patterns)
+3. Forms explicit hypotheses ("momentum is conserved")
+4. Tests them against new observations
+5. Confirms or rejects based on evidence
+
+### Self-correcting
+Because knowledge is built from first principles, the agent can:
+- Trace back through its reasoning chain
+- Detect contradictions in its own knowledge
+- Reject hypotheses that don't match reality
+- Re-derive anything from observation
+
+## Usage
+
+```bash
+# Install dependencies
+pip3 install numpy
+
+# Run the experiment (default: 2000 steps)
+python3 main.py
+
+# Custom configuration
+python3 main.py --steps 5000 --objects 10 --seed 123
+
+# Try alternate physics worlds
+python3 main.py --world-type vortex --steps 1000
+
+# Benchmark detection across worlds and seeds
+python3 main.py --benchmark-worlds --seeds 20 --benchmark-steps 800 --object-counts 4,5,8
+
+# Let the agent choose many experiments from a candidate pool
+python3 main.py --explore-worlds --exploration-budget 24 --benchmark-steps 500 --seeds 12 --object-counts 4,5,8
+
+# Benchmark emergent math coverage across repeated runs
+python3 main.py --math-benchmark --seeds 3 --benchmark-steps 160 --world-types standard --object-counts 5
+
+# Build equation review packs from a starter-kit equation workbench
+python3 main.py --equation-campaign --seeds 1 --benchmark-steps 220 --world-types standard,sideways_wind,vortex --equation-hidden-worlds 2
+
+# Check whether the math-foundation gates are ready before the final watched run
+python3 main.py --math-foundation-prep --seeds 1 --benchmark-steps 220 --world-types standard,sideways_wind,vortex --equation-hidden-worlds 2
+
+# Inspect the saved discovery notebook without running simulations or the final
+python3 main.py --discovery-readiness --theory-memory-file tmp/theory-memory.json
+
+# Run the watched final math/equation discovery performance campaign
+python3 main.py --math-final-discovery --benchmark-steps 600 --object-counts 5 --equation-hidden-worlds 3 --theory-memory-file tmp/theory-memory.json
+
+# Train on generated hidden worlds, then evaluate unseen holdouts
+python3 main.py --hidden-holdout-benchmark --hidden-train-worlds 6 --hidden-holdout-worlds 6 --benchmark-steps 600
+
+# Let the agent spend a long budget on hidden generated worlds
+python3 main.py --explore-hidden-worlds --exploration-budget 100 --benchmark-steps 800 --memory-file hidden_law_memory.json
+
+# Quiet mode (no real-time discovery prints)
+python3 main.py --quiet
+```
+
+Available world types:
+
+- `standard`
+- `zero_gravity`
+- `central_force`
+- `repulsion`
+- `sideways_wind`
+- `vortex`
+- `inverse_square_repulsion`
+- `localized_gravity`
+- `time_varying`
+
+## What This Proves
+
+When the agent independently discovers:
+- **Counting** — it means natural numbers are a property of discrete reality, not a human invention
+- **Momentum** — it means momentum is a real conserved quantity in physics, not just a useful calculation
+- **Arithmetic rules** — it means addition/subtraction by one is a fundamental property of discrete objects
+
+The agent arrived at these concepts from **observation alone** — no human data, no training set, no examples. The convergence with human knowledge suggests these concepts are discovered, not invented.
+
+## First-Principles Direction
+
+The system now includes an early general dynamics learner. In addition to
+specialized detectors, it fits small candidate equations to observed object
+motion and keeps laws that reduce prediction error. This is the first step
+toward replacing hand-written discovery checks with agent-derived models.
+
+It also now invents some of its own equation terms from what the current model
+fails to explain: likely radial/tangential centers from residual directions and
+candidate oscillation periods from residual time series. It can also propose
+localized cutoff windows when residuals appear to have a finite region where a
+law applies, and local tapered-power terms when residual strength fades across
+that region instead of switching on/off abruptly.
+
+The learner can now compose several discovered terms into one compact dynamics
+law, for example combining a radial field with a periodic field when neither
+single explanation is enough.
+
+It also scores law elegance: extra components, repeated law families, and
+seeded grid terms carry a small cost, so the agent prefers the simplest
+explanation that preserves predictive accuracy.
+
+The benchmark path now carries cross-experiment law memory. Each run is stored
+as an episode, repeated law families are consolidated into semantic schemas,
+and new runs report which prior schemas transferred or failed to appear. This
+keeps the agent's long-term memory auditable while moving toward reusable
+principles such as radial fields, tangential fields, temporal forces, and
+composed dynamics.
+
+The memory design follows four research-inspired constraints:
+
+1. Keep fast episodic memory separate from slower semantic abstraction.
+2. Use replay/transfer checks so old discoveries can be compared against new worlds.
+3. Prefer compressed explanations over overfit collections of terms.
+4. Store enough context to notice when a law is local to some worlds rather than universal.
+
+Memory is now active, not just reflective. Learned schemas can guide future law
+search by proposing remembered centers and periods, and spatial/temporal priors
+can request counterexample probes when no stronger hypothesis is already being
+tested. Uniform acceleration remains a search prior only, because active probes
+can interfere with absence-of-gravity evidence.
+
+The system now also has a raw math-discovery substrate. It watches object-level
+transitions directly, invents internal patterns for persistence, stable
+channels, collection extent changes, repeatable transforms, opposed transforms,
+adjacent transform sequences, returning sequences, same-net sequence sets,
+swapped-order sequence matches, and channel rankings, then compares those
+internal discoveries to human math only after the fact. This keeps the
+experiment honest: the agent-facing layer does not store labels such as
+addition, subtraction, successor, predecessor, composition, identity,
+equivalence, commutativity, or equality as taught concepts.
+
+Multi-agent communication is now grounded in those internal math structures
+when they exist. Agents exchange symbols for handles such as `math:C_001`
+rather than starting from human-ish labels like `many_objects` or
+`object_moving`; the older feature labels remain only as a cold-start fallback
+before emergent math concepts have been installed. Receivers are not handed the
+sender's intended meaning; they infer plausible symbol mappings from the shared
+context candidates. Those inferred mappings are then reinforced only when the
+receiver's inferred meaning matches a math structure that was actually active
+in the observed transition, with extra credit for intervention/transform
+patterns that make the signal useful for action.
+
+The CLI can compare cold and warm agents:
+
+```bash
+python3 main.py --transfer-benchmark --seeds 3 --benchmark-steps 500
+```
+
+It can directly benchmark emergent math coverage. This runs repeated worlds,
+collects post-hoc human-math comparison concepts, checks for missing target
+concepts, and flags any taught-label leakage in the agent-facing emergent math
+descriptions:
+
+```bash
+python3 main.py --math-benchmark --seeds 3 --benchmark-steps 160 --world-types standard
+```
+
+The equation workbench is the starter-kit layer for manual research loops. It
+gives the agent primitive variables, simple operators, held-out scoring, and
+compact equation installation without giving domain labels such as gravity,
+Newton, or vortex. The campaign command prints review packs with top equations,
+categorized dynamics equations, interesting misses, equation-driven probe
+counts, and leak checks so we can inspect what clicked and then amend the
+starter kit deliberately:
+
+The workbench also scores baseline-adjusted residual equations. It first
+removes repeated scalar drift from velocity changes, then checks whether the
+remaining change aligns with direction vectors, perpendicular-vector templates,
+local high-change centres, distance-scaled strength templates, or repeating
+step templates. Generated cutoff-window operators can then test whether the
+residual has an inside/outside domain rather than a smooth global falloff; a
+cutoff law must beat both global direction and smooth distance-scaled
+references before it is accepted. Generated tapered-power operators go one
+step further by testing whether residual strength follows a distance exponent
+while tapering toward a local boundary; they must beat global smooth falloff
+and hard-cutoff references. Weak residuals stay visible only in category
+review, while
+stronger residual equations can become the headline interesting equation and
+request extra probes. Spatial residuals spawn around their inferred centre;
+distance-strength residuals compare near and far samples; repeating residuals
+ask the agent to wait and compare the next cycle; cutoff residuals probe near
+the inferred boundary.
+
+On top of the fitted equations, the autonomous discovery loop now builds a
+small theory ledger. Each strong equation is converted into an explanation,
+the residual concept it had to invent, generated operator proposals, proof-like
+checks, known failure notes, and a next experiment. When two residual
+explanations are close, the loop chooses a probe that should make one theory
+stronger and the other weaker. Probe plans now carry an explicit disagreement
+signature: the falsification mode, concrete probe points, each rival theory's
+prediction, and what observation would count against it. Campaigns also
+consolidate theory families across worlds and remember those disagreement
+signatures as research leads, so repeated discoveries become reusable ideas
+with proof gaps and rival-model probes instead of isolated fits. This is the
+bridge from "the template fits" toward "this residual suggests a theory; what
+test would falsify it?"
+
+Cumulative theory memory now evaluates those families instead of only ranking
+them. Each repeated family is marked as provisional, local, reusable,
+established, domain-limited, or needing a counterexample, with evidence counts
+and the next proof obligation. That keeps "generalizes" separate from "fit
+twice in one context" and gives the next experiment a reason beyond collecting
+more data.
+It also emits a ranked next-experiment queue, such as transfer tests for local
+families, disagreement-counterexample probes for weak-proof families, and
+hidden-holdout challenges for established families. The queue is translated
+into concrete suggested campaign cases with a world type, seed, object count,
+step budget, expected result, and falsification condition; these are printed
+for review instead of automatically starting the final watched run.
+Recorded rival-model disagreements can also become concrete
+model-disagreement probes with their original probe points, rival predictions,
+and falsification clauses attached.
+Equation campaigns can optionally spend a small follow-up budget on those
+planned probes. Model-disagreement follow-ups replay the concrete probe points
+from the signature as forced spawn interventions, then feed the observed result
+back into cumulative memory as a confirmed transfer, counterexample, weak
+transfer, holdout survival, or replication failure; model-disagreement probes
+can also mark the target confirmed, a rival confirmed, or the disagreement
+still open. Follow-up budgets are adaptive: after each observed outcome, the
+next probe is replanned from the revised theory memory instead of using a stale
+batch of old suggestions. Repeated still-open or rival-confirmed disagreements
+are downweighted so the loop can refine the question or switch to another proof
+obligation rather than cycling on the same stale probe. Still-open
+disagreements also refine their probe geometry, such as widening exponent-race
+samples into near/mid/far checks or pushing boundary probes into inside,
+half-strength, and outside-tail regions. The default remains review-only, so
+the final watched run is still a separate user-started command.
+The cumulative theory ledger can also be persisted with
+`--theory-memory-file`, giving the system a durable cross-run notebook of
+families, proof certificates, planned outcomes, disagreement history, and
+refined follow-up probes. Use `--no-save-theory-memory` to inspect a loaded
+notebook without writing new results back. The same notebook is available to
+equation campaigns, foundation prep, and the eventual watched final-discovery
+command, so the final session can start from accumulated theory memory rather
+than a blank ledger.
+It also emits a non-final discovery-readiness audit: gates for residual-to-theory
+formation, proof-like evaluation, model disagreement planning, representation
+agenda, executable operator priors, operator feedback, anomaly repair, discovery
+claims, claim-driven planning, first-principles adaptive dimensions, a broad
+algebraic/equation foundation baseline, and concrete next experiments. This
+audit is printed during prep/review commands so the final watched run can stay
+manual.
+The audit now carries an evidence dossier too: compact summaries of the
+strongest invented-operator chains, proof-like claims, concrete planned tests,
+open disagreement probes, and proof certificates behind the readiness score.
+It can also be run by itself with `--discovery-readiness`; that command only
+loads the theory notebook, prints the gate audit, evidence dossier, and
+recommended non-final next actions, and never starts the watched final campaign.
+When a planned case is later run, memory can record the outcome as transfer
+confirmed, transfer absent, counterexample found, holdout survived, or
+replication failed. Counterexamples are fed back into the family ledger, so a
+formerly broad theory can be revised into a domain-limited one instead of being
+left as an overgeneralized success. Domain-limited families carry an explicit
+domain hypothesis: contexts where the family still applies, contexts where it
+failed, and the next test for the narrowed claim. Campaign summaries print
+those domain revisions alongside proof gaps and next experiments.
+Families also emit proof certificates: a compact claim, the evidence for
+accepting it so far, the reasons it is not universal yet, what observation
+would break it, and the next proof obligation. This gives the autonomous loop a
+machine-readable argument it can inspect when choosing follow-up experiments,
+instead of treating proof status as just another score.
+The same memory now produces a representation agenda: proposed new
+measurements, operators, or domain predicates that should be added to the
+agent's mathematical language. For example, exponent disagreements can produce
+a log-ratio residual-strength variable, boundary disagreements can produce a
+signed boundary-margin variable, taper disagreements can promote a continuous
+taper operator, and counterexamples can promote a learned domain predicate.
+Those proposals are now grounded in a small first-principles basis instead of a
+fixed 2D coordinate assumption: identity/equality, composition, inverse
+operations, order/metric comparison, symmetry transforms, recursion/iteration,
+conservation/balance, domain partitioning, and dimension lifting. Residual
+failures can therefore propose adaptive dimensions such as a scale-free
+strength exponent, signed boundary margin, local taper coordinate, signed
+alignment projection pair, domain indicator, or context-transfer axis. A
+generated operator records which primitive moves and lifted dimensions it used,
+so future reviews can ask whether the system needed a genuinely new coordinate
+or merely refit an old 2D feature.
+The memory also carries a much wider algebraic foundation baseline. It includes
+expression families such as affine, polynomial, rational, power-law,
+logarithmic, exponential, sinusoidal, piecewise, recurrence,
+finite-difference/integral, vector, matrix, set, graph, probability, extremum,
+and symmetry-invariant forms. It also records algebraic structures such as
+semigroups, monoids, groups, rings, fields, vector spaces, ordered and metric
+spaces, boolean/domain lattices, neighborhoods, graphs, and probability spaces.
+These are not answer templates. They are a search grammar: the agent must still
+earn each equation through held-out residual scoring, domain checks, proof-like
+obligations, and named falsifiers. Generated operator priors now carry the
+algebraic families, structures, proof obligations, and complexity controls that
+justify trying them.
+Executable parts of that agenda are converted into generated operator priors
+for later workbench runs, where they still have to win held-out residual
+scoring before becoming installed equations. The notebook records whether each
+memory-generated operator was confirmed, weak, or unmatched, and feeds that
+evidence back into future prior usefulness instead of retrying every invented
+term equally. It also derives a small domain hypothesis for each invented
+operator, so a prior that failed in one context can be avoided there while
+remaining available for unseen worlds or contexts where it was confirmed. If a
+held-out fit finds better parameters for the same invented operator, such as a
+nearby separation exponent, those refined parameters are carried forward into
+the next generated prior. Refined priors also create validation experiments
+that look for an unseen context where the amended operator should either earn
+fresh support or be marked as too narrow. When a prior is confirmed in one
+context but becomes weak or unmatched in another, memory now records that as an
+operator-prior anomaly and schedules a repair probe in the failure context. That
+repair probe asks what missing domain predicate, boundary condition, or extra
+factor would explain why the invented operator broke. These anomalies also feed
+back into the representation agenda as candidate domain predicates, so the next
+round can invent a measurement that separates the success context from the
+failure context before retrying the operator. Follow-up repair and validation
+runs are then judged from their actual operator-prior feedback: confirmed, weak,
+or failed, with any newly refined parameters attached to the planned outcome.
+Once enough evidence exists, memory emits an operator-prior discovery claim: a
+proof-like summary of the invented expression, where it worked, where it failed,
+which repair or validation probes confirmed it, and what obligation comes next.
+A confirmed repair also suppresses repeating the same repair probe. These claims
+can choose their own next experiments: repaired or merely supported invented
+operators ask for unseen-context validation, domain-limited claims ask for a
+domain-predicate validation in a success or failure context, and validated
+operators ask for a hidden holdout that could break or narrow the claim.
+Domain-predicate validation treats an unmatched prior in an explicitly excluded
+context as evidence for the narrowed domain, while a confirmed prior in that
+excluded context falsifies the domain predicate. Campaign summaries also print
+operator-prior discovery chains: invention, feedback, anomaly, repair, claim,
+and next experiment in one reviewable timeline.
+
+Generated operators feed back into later discovery cycles. For example, once
+the loop proposes an inverse-separation operator, phase-basis operator, or
+localized cutoff-window/tapered-power operator, the workbench stores it in an
+operator bank and scores new equations built from it on later held-out
+observations. This lets the agent refine candidates such as
+`unit_generated_center_vector / separation^2.25` or
+`inside(separation <= r) * taper(separation, r) * unit_generated_center_vector / separation^p`
+even when that exact term was not in the original starter grid.
+
+```bash
+python3 main.py --equation-campaign --seeds 1 --benchmark-steps 220 --world-types standard,sideways_wind,vortex --equation-hidden-worlds 2
+```
+
+During equation campaigns only, strong direction/perpendicular equations can
+request low-motion probe objects at new locations. Normal physics and hidden
+holdout benchmarks keep that behavior disabled so their scores remain
+comparable.
+
+The math foundation prep layer is the final gate before a user-watched
+discovery run. It checks that the agent has number-like extent structure,
+equation templates, path composition/inverse checks, proof/check traces,
+geometry bases, self-directed math probes, and the cumulative discovery-loop
+readiness gates. The final run performs the
+watched math/equation discovery campaign and reports readiness, equation
+counts, installed equations, leak checks, probe suggestions, and the most
+interesting equation from each context:
+
+```bash
+python3 main.py --math-final-discovery --benchmark-steps 600 --object-counts 5 --equation-hidden-worlds 3 --theory-memory-file tmp/theory-memory.json
+```
+
+It can also run an autonomous exploration campaign. The planner scores
+candidate worlds, object counts, and seeds by coverage gaps, transfer-test
+opportunities, seed diversity, and interaction richness, then spends its budget
+on the next most useful experiment:
+
+```bash
+python3 main.py --explore-worlds --exploration-budget 24 --benchmark-steps 500 --seeds 12
+```
+
+The next proof gate is hidden procedural worlds. These worlds are generated
+from mixtures of uniform, radial, repulsive, tangential, temporal, and localized
+components. The benchmark keeps the component manifest for scoring, but raw
+observations expose only `hidden_procedural`, not the hidden recipe. The blind
+score asks whether learned law families recover reusable structure on unseen
+holdouts and whether warm memory helps without increasing leaks.
+
+It can also persist cross-run law memory:
+
+```bash
+python3 main.py --benchmark-worlds --memory-file law_memory.json
+python3 main.py --world-type vortex --memory-file law_memory.json
+```
+
+## Limitations & Future Directions
+
+This is a prototype. To extend:
+
+1. **Collision-specific conservation** — test momentum conservation only during collision events (where it holds), not globally (where gravity breaks it)
+2. **Spatial reasoning** — let the agent discover geometric relationships (triangle inequality, angle sums)
+3. **Multi-agent communication** — let agents invent their own language and compare its structure to human language
+4. **Program synthesis** — let the agent write code to solve problems in its world
+5. **3D physics** — add a dimension and see if the agent rediscovers 3D-specific concepts
+6. **Symbolic notation** — let the agent invent its own mathematical notation and compare to human notation
