@@ -2025,6 +2025,60 @@ class DiscoveryLoopTests(unittest.TestCase):
             memory.summary(),
         )
 
+    def test_blind_holdout_validation_retries_absent_holdout_on_fresh_hidden_seed(self):
+        memory = self._build_selected_tapered_law_memory()
+        validation = memory.blind_holdout_validation_experiments(limit=1)[0]
+        absent = memory.evaluate_planned_result(
+            validation,
+            context='hidden_00_0000',
+            seed=0,
+            report={
+                'theories': [],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(absent)
+        memory.record_result('hidden_00_0000', 0, {'theories': []})
+
+        retry = memory.blind_holdout_validation_experiments(limit=1)[0]
+        plans = memory.planned_experiments(
+            world_types=['hidden_procedural'],
+            object_counts=[5],
+            steps=240,
+            limit=6,
+        )
+        retry_plan = next(
+            plan for plan in plans
+            if plan['experiment_kind'] == 'blind_holdout_validation'
+        )
+        confirmed = memory.evaluate_planned_result(
+            retry,
+            context='hidden_00_0001',
+            seed=1,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 0.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.83,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(confirmed)
+
+        self.assertEqual('blind_holdout_absent', absent['outcome'])
+        self.assertEqual('blind_holdout_validation', retry['experiment_kind'])
+        self.assertEqual(1, retry['proof_evidence']['attempt_count'])
+        self.assertEqual(1, retry['proof_evidence']['absent_count'])
+        self.assertIn('retry on a fresh hidden seed', retry['reason'])
+        self.assertEqual(1, retry_plan['seed'])
+        self.assertTrue(retry_plan['hidden_holdout'])
+        self.assertEqual('blind_holdout_confirmed', confirmed['outcome'])
+        self.assertEqual([], memory.blind_holdout_validation_experiments(limit=1))
+
     def test_rediscovery_goal_progress_penalizes_unresolved_selected_laws(self):
         memory = self._build_selected_tapered_law_memory()
         replay = memory.selected_law_replay_agenda(limit=1)[0]

@@ -4410,7 +4410,12 @@ class CumulativeTheoryMemory:
                 continue
             replay_key = self._selected_law_replay_key(invariant)
             outcome_stats = self._blind_holdout_validation_outcome_stats(replay_key)
-            if outcome_stats['settled_count'] > 0:
+            if outcome_stats['confirmed_count'] > 0:
+                continue
+            if (
+                outcome_stats['attempt_count'] >= 3
+                and outcome_stats['settled_count'] > 0
+            ):
                 continue
             theory_kind = self._equation_invariant_theory_kind(invariant)
             selected_variant = self._multi_parameter_variant_from_invariant(
@@ -4435,6 +4440,12 @@ class CumulativeTheoryMemory:
                     - min(0.20, 0.08 * outcome_stats['attempt_count']),
                 ),
             )
+            retry_reason = ''
+            if outcome_stats['settled_count'] > 0:
+                retry_reason = (
+                    ' Earlier blind holdouts did not confirm the selected law; '
+                    'retry on a fresh hidden seed before treating absence as a domain split.'
+                )
             recommendations.append({
                 'theory_kind': theory_kind,
                 'experiment_kind': 'blind_holdout_validation',
@@ -4446,6 +4457,7 @@ class CumulativeTheoryMemory:
                 'reason': (
                     'execute blind holdout benchmark for selected law: '
                     f"{invariant.get('robust_claim')}"
+                    f"{retry_reason}"
                 ),
                 'expected_result': benchmark.get('expected_result'),
                 'falsifies_if': benchmark.get('falsifies_if'),
@@ -4454,6 +4466,9 @@ class CumulativeTheoryMemory:
                     'context_count': 1,
                     'proof_rate': 0.0,
                     'attempt_count': outcome_stats['attempt_count'],
+                    'confirmed_count': outcome_stats['confirmed_count'],
+                    'conflicted_count': outcome_stats['conflicted_count'],
+                    'absent_count': outcome_stats['absent_count'],
                 },
                 'invariant_key': invariant.get('key'),
                 'selected_law_replay_key': replay_key,
@@ -5000,16 +5015,24 @@ class CumulativeTheoryMemory:
             if outcome.get('experiment_kind') == 'blind_holdout_validation'
             and outcome.get('selected_law_replay_key') == replay_key
         ]
+        confirmed = sum(
+            1 for outcome in outcomes
+            if outcome.get('outcome') == 'blind_holdout_confirmed'
+        )
+        conflicted = sum(
+            1 for outcome in outcomes
+            if outcome.get('outcome') == 'blind_holdout_conflicted'
+        )
+        absent = sum(
+            1 for outcome in outcomes
+            if outcome.get('outcome') == 'blind_holdout_absent'
+        )
         return {
             'attempt_count': len(outcomes),
-            'settled_count': sum(
-                1 for outcome in outcomes
-                if outcome.get('outcome') in {
-                    'blind_holdout_confirmed',
-                    'blind_holdout_conflicted',
-                    'blind_holdout_absent',
-                }
-            ),
+            'confirmed_count': confirmed,
+            'conflicted_count': conflicted,
+            'absent_count': absent,
+            'settled_count': confirmed + conflicted + absent,
         }
 
     def _multi_parameter_variant_from_invariant(
@@ -8810,13 +8833,27 @@ class CumulativeTheoryMemory:
         used_seeds = {
             int(record.get('seed', seed_start))
             for record in self.records
-            if record.get('context') == context
+            if self._record_context_matches_plan_context(
+                str(record.get('context') or ''),
+                context,
+            )
             and isinstance(record.get('seed'), int)
         }
         seed = seed_start
         while seed in used_seeds or any(case[0] == context and case[1] == seed for case in used_cases):
             seed += 1
         return seed
+
+    def _record_context_matches_plan_context(
+        self,
+        record_context: str,
+        plan_context: str,
+    ) -> bool:
+        if record_context == plan_context:
+            return True
+        if plan_context == 'hidden_procedural':
+            return record_context.startswith('hidden_')
+        return False
 
     def _report_dict(self, report) -> dict:
         return report.to_dict() if hasattr(report, 'to_dict') else dict(report or {})
