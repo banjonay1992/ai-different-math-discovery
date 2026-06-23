@@ -163,6 +163,12 @@ The learner can now compose several discovered terms into one compact dynamics
 law, for example combining a radial field with a periodic field when neither
 single explanation is enough.
 
+Repeated discoveries can now be consolidated into self-authored equation
+templates. These are generalized hypotheses such as a residual vector field
+with a dominant separation exponent or a perpendicular/tapered local field,
+with observed variants marked as approximations until holdout probes confirm
+or narrow the form.
+
 It also scores law elegance: extra components, repeated law families, and
 seeded grid terms carry a small cost, so the agent prefers the simplest
 explanation that preserves predictive accuracy.
@@ -262,6 +268,10 @@ signatures as research leads, so repeated discoveries become reusable ideas
 with proof gaps and rival-model probes instead of isolated fits. This is the
 bridge from "the template fits" toward "this residual suggests a theory; what
 test would falsify it?"
+The ledger also writes self-authored equation templates from repeated evidence:
+it picks dominant parameters, records rough variants as approximations, and
+attaches proof obligations plus falsification tests before treating the template
+as more than a working hypothesis.
 
 Cumulative theory memory now evaluates those families instead of only ranking
 them. Each repeated family is marked as provisional, local, reusable,
@@ -305,12 +315,13 @@ It also emits a non-final discovery-readiness audit: gates for residual-to-theor
 formation, proof-like evaluation, model disagreement planning, representation
 agenda, executable operator priors, operator feedback, anomaly repair, discovery
 claims, claim-driven planning, first-principles adaptive dimensions, a broad
-algebraic/equation foundation baseline, and concrete next experiments. This
-audit is printed during prep/review commands so the final watched run can stay
-manual.
+algebraic/equation foundation baseline, self-authored equation synthesis, and
+concrete next experiments. This audit is printed during prep/review commands so
+the final watched run can stay manual.
 The audit now carries an evidence dossier too: compact summaries of the
 strongest invented-operator chains, proof-like claims, concrete planned tests,
-open disagreement probes, and proof certificates behind the readiness score.
+open disagreement probes, self-authored equations, and proof certificates behind
+the readiness score.
 It can also be run by itself with `--discovery-readiness`; that command only
 loads the theory notebook, prints the gate audit, evidence dossier, and
 recommended non-final next actions, and never starts the watched final campaign.

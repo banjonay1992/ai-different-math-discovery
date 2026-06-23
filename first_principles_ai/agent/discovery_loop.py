@@ -554,6 +554,8 @@ class TheoryRecord:
     concept_keys: list[str]
     next_experiment: str
     status: str
+    target: str = ''
+    expression: str = ''
     parameters: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -569,7 +571,48 @@ class TheoryRecord:
             'concept_keys': list(self.concept_keys),
             'next_experiment': self.next_experiment,
             'status': self.status,
+            'target': self.target,
+            'expression': self.expression,
             'parameters': _rounded_dict(self.parameters),
+        }
+
+
+@dataclass
+class SelfAuthoredEquation:
+    """A generalized equation synthesized from repeated theory evidence."""
+    key: str
+    equation_kind: str
+    target: str
+    expression: str
+    support_count: int
+    support_contexts: list[str]
+    support_seeds: list[int]
+    confidence: float
+    status: str
+    dominant_parameters: dict[str, Any]
+    variant_expressions: list[str]
+    approximation_notes: list[str]
+    proof_obligations: list[str]
+    falsification_tests: list[str]
+    generated_from: list[str]
+
+    def to_dict(self) -> dict:
+        return {
+            'key': self.key,
+            'equation_kind': self.equation_kind,
+            'target': self.target,
+            'expression': self.expression,
+            'support_count': self.support_count,
+            'support_contexts': list(self.support_contexts),
+            'support_seeds': list(self.support_seeds),
+            'confidence': round(self.confidence, 3),
+            'status': self.status,
+            'dominant_parameters': _rounded_dict(self.dominant_parameters),
+            'variant_expressions': list(self.variant_expressions),
+            'approximation_notes': list(self.approximation_notes),
+            'proof_obligations': list(self.proof_obligations),
+            'falsification_tests': list(self.falsification_tests),
+            'generated_from': list(self.generated_from),
         }
 
 
@@ -1015,6 +1058,11 @@ class TheoryFamily:
             self.examples.append({
                 'context': context,
                 'seed': seed,
+                'theory_kind': theory.get('theory_kind'),
+                'source_equation_key': theory.get('source_equation_key'),
+                'target': theory.get('target') or _target_from_claim(str(theory.get('claim', ''))),
+                'expression': theory.get('expression'),
+                'parameters': _rounded_dict(dict(theory.get('parameters') or {})),
                 'claim': theory.get('claim'),
                 'score': round(score, 3),
             })
@@ -1471,6 +1519,337 @@ class CumulativeTheoryMemory:
         )
         return evaluations
 
+    def self_authored_equations(
+        self,
+        limit: int = 5,
+        min_support: int = 2,
+    ) -> list[dict[str, Any]]:
+        """Write generalized equation templates from repeated theory evidence."""
+        authored = []
+        for family in self.families.values():
+            equation = self._self_authored_equation_from_family(
+                family,
+                min_support=min_support,
+            )
+            if equation is not None:
+                authored.append(equation.to_dict())
+        authored.sort(
+            key=lambda item: (
+                item['confidence'],
+                item['support_count'],
+                item['equation_kind'],
+            ),
+            reverse=True,
+        )
+        return authored[:limit]
+
+    def _self_authored_equation_from_family(
+        self,
+        family: TheoryFamily,
+        min_support: int,
+    ) -> SelfAuthoredEquation | None:
+        if family.support_count < min_support:
+            return None
+        examples = [dict(example) for example in family.examples]
+        if not examples:
+            return None
+        distinct_occurrences = {
+            (str(example.get('context', 'unknown')), example.get('seed'))
+            for example in examples
+        }
+        if len(distinct_occurrences) < min_support:
+            return None
+
+        kind = family.theory_kind
+        relation = 'perpendicular' if 'perpendicular' in kind else 'direction'
+        target = self._dominant_text(
+            [
+                str(example.get('target') or _target_from_claim(str(example.get('claim', ''))))
+                for example in examples
+            ],
+            fallback='baseline_adjusted_delta_velocity',
+        )
+        dominant_parameters = self._dominant_equation_parameters(kind, examples)
+        expression = self._self_authored_expression(
+            kind=kind,
+            target=target,
+            relation=relation,
+            parameters=dominant_parameters,
+        )
+        if not expression:
+            return None
+
+        support_seeds = sorted({
+            int(example['seed'])
+            for example in examples
+            if isinstance(example.get('seed'), int)
+        })
+        variant_expressions = self._distinct_nonempty(
+            str(example.get('expression') or '')
+            for example in examples
+        )[:5]
+        confidence = max(0.0, min(
+            1.0,
+            0.62 * family.generalization_score
+            + 0.28 * family.proof_rate
+            + 0.10 * min(1.0, family.support_count / 5.0),
+        ))
+        if family.generalization_status in {'established', 'reusable'}:
+            status = 'candidate_law'
+        elif family.support_count >= 2:
+            status = 'working_equation'
+        else:
+            status = 'hypothesis'
+
+        return SelfAuthoredEquation(
+            key=self._self_authored_equation_key(kind, dominant_parameters),
+            equation_kind=kind,
+            target=target,
+            expression=expression,
+            support_count=len(distinct_occurrences),
+            support_contexts=sorted(family.contexts),
+            support_seeds=support_seeds,
+            confidence=confidence,
+            status=status,
+            dominant_parameters=dominant_parameters,
+            variant_expressions=variant_expressions,
+            approximation_notes=self._self_authored_approximation_notes(
+                kind,
+                dominant_parameters,
+                examples,
+                family,
+            ),
+            proof_obligations=self._self_authored_proof_obligations(kind),
+            falsification_tests=self._self_authored_falsification_tests(
+                kind,
+                dominant_parameters,
+            ),
+            generated_from=self._distinct_nonempty(
+                str(example.get('source_equation_key') or '')
+                for example in examples
+            )[:5],
+        )
+
+    def _dominant_equation_parameters(
+        self,
+        kind: str,
+        examples: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        parameters: dict[str, Any] = {}
+        if any(name in kind for name in ('distance_scaled', 'tapered_distance')):
+            exponent = self._dominant_numeric_parameter(examples, 'distance_exponent')
+            if exponent is not None:
+                parameters['distance_exponent'] = exponent
+        if 'cutoff' in kind or 'tapered_distance' in kind:
+            cutoff_radius = self._dominant_numeric_parameter(examples, 'cutoff_radius')
+            if cutoff_radius is not None:
+                parameters['cutoff_radius'] = cutoff_radius
+        if kind in {'periodic_residual', 'generated_periodic_residual'}:
+            period = self._dominant_numeric_parameter(examples, 'period_steps')
+            if period is not None:
+                parameters['period_steps'] = period
+        centers = [
+            dict(example.get('parameters') or {})
+            for example in examples
+            if isinstance(example.get('parameters'), dict)
+        ]
+        center_x = self._dominant_numeric_parameter_from_dicts(centers, 'center_x')
+        center_y = self._dominant_numeric_parameter_from_dicts(centers, 'center_y')
+        if center_x is not None:
+            parameters['example_center_x'] = center_x
+        if center_y is not None:
+            parameters['example_center_y'] = center_y
+        return parameters
+
+    def _self_authored_expression(
+        self,
+        kind: str,
+        target: str,
+        relation: str,
+        parameters: dict[str, Any],
+    ) -> str | None:
+        vector = (
+            'perpendicular(unit(center - position))'
+            if relation == 'perpendicular'
+            else 'unit(center - position)'
+        )
+        if kind in {'periodic_residual', 'generated_periodic_residual'}:
+            period = _format_number(parameters.get('period_steps', 'T'))
+            return (
+                f'{target} ~= a*sin(2*pi*step/{period}) '
+                f'+ b*cos(2*pi*step/{period})'
+            )
+        if 'tapered_distance' in kind:
+            radius = _format_number(parameters.get('cutoff_radius', 'R'))
+            exponent = _format_number(parameters.get('distance_exponent', 'p'))
+            return (
+                f'{target} ~= k * taper(separation, {radius}) * '
+                f'{vector} / separation^{exponent}'
+            )
+        if 'cutoff' in kind:
+            radius = _format_number(parameters.get('cutoff_radius', 'R'))
+            return (
+                f'{target} ~= k * inside(separation <= {radius}) * {vector}'
+            )
+        if 'distance_scaled' in kind:
+            exponent = _format_number(parameters.get('distance_exponent', 'p'))
+            return f'{target} ~= k * {vector} / separation^{exponent}'
+        if 'perpendicular' in kind or 'direction' in kind:
+            return f'{target} ~= k * {vector}'
+        return None
+
+    def _self_authored_approximation_notes(
+        self,
+        kind: str,
+        dominant_parameters: dict[str, Any],
+        examples: list[dict[str, Any]],
+        family: TheoryFamily,
+    ) -> list[str]:
+        notes = []
+        for name in ('distance_exponent', 'cutoff_radius', 'period_steps'):
+            values = self._numeric_parameter_values(examples, name)
+            if len(values) > 1:
+                dominant = dominant_parameters.get(name)
+                notes.append(
+                    f'observed {name} variants {", ".join(_format_number(value) for value in values)}; '
+                    f'using {_format_number(dominant)} as the current dominant template'
+                )
+        if family.proof_rate < 0.75:
+            notes.append('proof checks are still weak, so treat this as an authored hypothesis')
+        if family.support_count < 3:
+            notes.append('needs another seed or hidden holdout before being treated as stable')
+        if 'distance_scaled' in kind and 'distance_exponent' not in dominant_parameters:
+            notes.append('distance exponent is symbolic until near/far residual ratios settle it')
+        return notes
+
+    def _self_authored_proof_obligations(self, kind: str) -> list[str]:
+        obligations = ['heldout_counterexample', 'dimensional_consistency']
+        if 'distance_scaled' in kind or 'tapered_distance' in kind:
+            obligations.extend(['domain_nonzero_positive', 'monotonicity_or_extremum'])
+        if 'cutoff' in kind or 'tapered_distance' in kind:
+            obligations.extend(['boundary_and_partition'])
+        if 'perpendicular' in kind:
+            obligations.extend(['symmetry_invariance'])
+        if kind in {'periodic_residual', 'generated_periodic_residual'}:
+            obligations.extend(['induction_or_recurrence', 'symmetry_invariance'])
+        return self._distinct_nonempty(obligations)
+
+    def _self_authored_falsification_tests(
+        self,
+        kind: str,
+        parameters: dict[str, Any],
+    ) -> list[str]:
+        tests = []
+        if 'distance_scaled' in kind:
+            exponent = _format_number(parameters.get('distance_exponent', 'p'))
+            tests.append(
+                f'near/far holdouts should preserve residual magnitude ratio for exponent {exponent}'
+            )
+        if 'cutoff' in kind:
+            radius = _format_number(parameters.get('cutoff_radius', 'R'))
+            tests.append(
+                f'samples just outside radius {radius} should lose the residual family'
+            )
+        if 'tapered_distance' in kind:
+            radius = _format_number(parameters.get('cutoff_radius', 'R'))
+            tests.append(
+                f'center/mid/boundary samples should show graded strength before radius {radius}'
+            )
+        if 'perpendicular' in kind:
+            tests.append(
+                'rotating around the inferred center should rotate residual vectors by a quarter turn'
+            )
+        if 'direction' in kind and 'perpendicular' not in kind:
+            tests.append(
+                'new positions around the inferred center should keep center-aligned residuals'
+            )
+        if kind in {'periodic_residual', 'generated_periodic_residual'}:
+            period = _format_number(parameters.get('period_steps', 'T'))
+            tests.append(
+                f'matched states separated by period {period} should repeat residual phase'
+            )
+        tests.append('a hidden holdout should recover the same equation family or narrow its domain')
+        return tests
+
+    def _self_authored_equation_key(
+        self,
+        kind: str,
+        parameters: dict[str, Any],
+    ) -> str:
+        parameter_bits = [
+            f'{name}:{_format_number(value)}'
+            for name, value in sorted(parameters.items())
+            if name in {'distance_exponent', 'cutoff_radius', 'period_steps'}
+        ]
+        suffix = ':'.join(parameter_bits) if parameter_bits else 'template'
+        return f'authored_equation:{kind}:{suffix}'
+
+    def _dominant_numeric_parameter(
+        self,
+        examples: list[dict[str, Any]],
+        name: str,
+    ) -> float | None:
+        return self._dominant_numeric_parameter_from_dicts(
+            [
+                dict(example.get('parameters') or {})
+                for example in examples
+                if isinstance(example.get('parameters'), dict)
+            ],
+            name,
+        )
+
+    def _dominant_numeric_parameter_from_dicts(
+        self,
+        items: list[dict[str, Any]],
+        name: str,
+    ) -> float | None:
+        values = [
+            round(float(item[name]), 6)
+            for item in items
+            if isinstance(item.get(name), (int, float))
+        ]
+        if not values:
+            return None
+        counts: dict[float, int] = {}
+        for value in values:
+            counts[value] = counts.get(value, 0) + 1
+        return max(counts.items(), key=lambda item: (item[1], -abs(item[0])))[0]
+
+    def _numeric_parameter_values(
+        self,
+        examples: list[dict[str, Any]],
+        name: str,
+    ) -> list[float]:
+        values = set()
+        for example in examples:
+            parameters = dict(example.get('parameters') or {})
+            value = parameters.get(name)
+            if isinstance(value, (int, float)):
+                values.add(round(float(value), 6))
+        return sorted(values)
+
+    def _dominant_text(self, values: list[str], fallback: str) -> str:
+        counts: dict[str, int] = {}
+        for value in values:
+            clean = value.strip()
+            if not clean:
+                continue
+            counts[clean] = counts.get(clean, 0) + 1
+        if not counts:
+            return fallback
+        return max(counts.items(), key=lambda item: (item[1], item[0]))[0]
+
+    def _distinct_nonempty(self, values) -> list[str]:
+        seen = set()
+        result = []
+        for value in values:
+            text = str(value).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+        return result
+
     def proof_gaps(self) -> list[dict]:
         gaps = []
         for family in self.families.values():
@@ -1556,6 +1935,7 @@ class CumulativeTheoryMemory:
             limit=5,
         )
         proof_certificates = self.proof_certificates(limit=5)
+        self_authored_equations = self.self_authored_equations(limit=5)
         first_principles = self.first_principles_basis()
         adaptive_dimensions = self.adaptive_dimension_agenda(limit=5)
         algebraic_foundation = self.algebraic_foundation_baseline()
@@ -1656,6 +2036,20 @@ class CumulativeTheoryMemory:
                 'let a repaired or supported operator claim schedule unseen-context validation',
             ),
             (
+                'self_authored_equation_synthesis',
+                'repeated discoveries are consolidated into self-authored equation templates',
+                bool(self_authored_equations),
+                1.0,
+                {
+                    'authored_count': len(self_authored_equations),
+                    'best_confidence': (
+                        self_authored_equations[0]['confidence']
+                        if self_authored_equations else 0.0
+                    ),
+                },
+                'cluster repeated discoveries and write a generalized equation template with falsification tests',
+            ),
+            (
                 'first_principles_adaptive_dimensions',
                 'primitive rules can lift residuals into new dimensions',
                 bool(first_principles) and bool(adaptive_dimensions),
@@ -1742,11 +2136,13 @@ class CumulativeTheoryMemory:
                 planned_experiments=planned_experiments,
                 proof_certificates=proof_certificates,
                 disagreement_experiments=disagreement_experiments,
+                self_authored_equations=self_authored_equations,
             ),
             'first_principles_basis': first_principles,
             'adaptive_dimension_agenda': adaptive_dimensions,
             'algebraic_foundation_baseline': algebraic_foundation,
             'algebraic_expression_agenda': algebraic_agenda,
+            'self_authored_equations': self_authored_equations,
         }
 
     def discovery_evidence_dossier(
@@ -1759,6 +2155,7 @@ class CumulativeTheoryMemory:
         planned_experiments: list[dict[str, Any]] | None = None,
         proof_certificates: list[dict[str, Any]] | None = None,
         disagreement_experiments: list[dict[str, Any]] | None = None,
+        self_authored_equations: list[dict[str, Any]] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Compact evidence trail for the non-final readiness score."""
         chains = (
@@ -1802,6 +2199,11 @@ class CumulativeTheoryMemory:
             disagreement_experiments
             if disagreement_experiments is not None
             else self.disagreement_experiments(limit=limit)
+        )
+        authored = (
+            self_authored_equations
+            if self_authored_equations is not None
+            else self.self_authored_equations(limit=limit)
         )
 
         chain_summaries = []
@@ -1894,6 +2296,19 @@ class CumulativeTheoryMemory:
                 'rival_theory_kinds': list(experiment.get('rival_theory_kinds') or []),
             })
 
+        authored_summaries = []
+        for equation in authored[:limit]:
+            authored_summaries.append({
+                'key': equation.get('key'),
+                'equation_kind': equation.get('equation_kind'),
+                'status': equation.get('status'),
+                'confidence': round(float(equation.get('confidence', 0.0) or 0.0), 3),
+                'support_count': int(equation.get('support_count', 0) or 0),
+                'expression': equation.get('expression'),
+                'proof_obligations': list(equation.get('proof_obligations') or [])[:3],
+                'falsification_tests': list(equation.get('falsification_tests') or [])[:2],
+            })
+
         return {
             'chains': chain_summaries,
             'claims': claim_summaries,
@@ -1901,6 +2316,7 @@ class CumulativeTheoryMemory:
             'next_experiments': next_summaries,
             'proof_certificates': proof_summaries,
             'disagreement_probes': disagreement_summaries,
+            'self_authored_equations': authored_summaries,
         }
 
     def _discovery_readiness_actions(
@@ -1929,6 +2345,7 @@ class CumulativeTheoryMemory:
             'model_disagreement_planning',
             'representation_agenda',
             'executable_operator_priors',
+            'self_authored_equation_synthesis',
             'first_principles_adaptive_dimensions',
             'algebraic_foundation_baseline',
         }:
@@ -2422,6 +2839,7 @@ class CumulativeTheoryMemory:
             'family_evaluations': self.family_evaluations(),
             'proof_gaps': self.proof_gaps(),
             'proof_certificates': self.proof_certificates(),
+            'self_authored_equations': self.self_authored_equations(),
             'discovery_readiness': self.discovery_readiness_report(),
             'discovery_evidence_dossier': self.discovery_evidence_dossier(),
             'first_principles_basis': self.first_principles_basis(),
@@ -2975,6 +3393,16 @@ class CumulativeTheoryMemory:
                     f"    {item['signal']}: families={families}, "
                     f"priority={item['priority']:.2f}, obligations={obligations}"
                 )
+        authored_equations = self.self_authored_equations(limit=limit)
+        if authored_equations:
+            lines.append("  Self-authored equations:")
+            for equation in authored_equations:
+                lines.append(
+                    f"    {equation['equation_kind']}: status={equation['status']}, "
+                    f"support={equation['support_count']}, "
+                    f"confidence={equation['confidence']:.2f}"
+                )
+                lines.append(f"      expression: {equation['expression']}")
         disagreements = self.disagreement_experiments(limit=limit)
         if disagreements:
             lines.append("  Disagreement probes:")
@@ -5195,6 +5623,8 @@ class AutonomousDiscoveryLoop:
                 concept_keys=concept_keys,
                 next_experiment='wait_to_compare_later_phase',
                 status=status,
+                target=target,
+                expression=expression,
                 parameters=parameters,
             )
 
@@ -5231,6 +5661,8 @@ class AutonomousDiscoveryLoop:
                 concept_keys=concept_keys,
                 next_experiment='sample_center_mid_boundary_and_outside_the_local_region',
                 status=status,
+                target=target,
+                expression=expression,
                 parameters=parameters,
             )
 
@@ -5264,6 +5696,8 @@ class AutonomousDiscoveryLoop:
                 concept_keys=concept_keys,
                 next_experiment='sample_inside_and_outside_the_inferred_cutoff',
                 status=status,
+                target=target,
+                expression=expression,
                 parameters=parameters,
             )
 
@@ -5303,6 +5737,8 @@ class AutonomousDiscoveryLoop:
                 concept_keys=concept_keys,
                 next_experiment='compare_near_and_far_samples_from_inferred_center',
                 status=status,
+                target=target,
+                expression=expression,
                 parameters=parameters,
             )
 
@@ -5331,6 +5767,8 @@ class AutonomousDiscoveryLoop:
                 concept_keys=concept_keys,
                 next_experiment='spawn_near_and_away_from_inferred_center',
                 status=status,
+                target=target,
+                expression=expression,
                 parameters=parameters,
             )
 
@@ -5356,6 +5794,8 @@ class AutonomousDiscoveryLoop:
                 concept_keys=concept_keys,
                 next_experiment='sample_new_locations_around_inferred_center',
                 status=status,
+                target=target,
+                expression=expression,
                 parameters=parameters,
             )
 
@@ -5373,6 +5813,8 @@ class AutonomousDiscoveryLoop:
                 concept_keys=[f'concept:{relation}_vector_relation'],
                 next_experiment='sample_same_relation_at_new_locations',
                 status=status,
+                target=target,
+                expression=expression,
                 parameters=parameters,
             )
 
@@ -5389,6 +5831,8 @@ class AutonomousDiscoveryLoop:
                 concept_keys=['concept:simple_transition_baseline'],
                 next_experiment='look_for_residuals_after_simple_transition',
                 status=status,
+                target=target,
+                expression=expression,
                 parameters=parameters,
             )
 
@@ -6243,6 +6687,19 @@ def _get(equation, name: str, default=None):
     return getattr(equation, name, default)
 
 
+def _target_from_claim(claim: str) -> str:
+    for marker in (
+        ' is better explained',
+        ' contains ',
+        ' changes ',
+        ' follows ',
+        ' has ',
+    ):
+        if marker in claim:
+            return claim.split(marker, 1)[0].strip()
+    return ''
+
+
 def _coerce_float(value, fallback: float) -> float:
     if isinstance(value, (int, float)):
         return float(value)
@@ -6264,3 +6721,12 @@ def _rounded_value(value):
     if isinstance(value, list):
         return [_rounded_value(item) for item in value]
     return value
+
+
+def _format_number(value) -> str:
+    if isinstance(value, (int, float)):
+        rounded = round(float(value), 6)
+        if rounded.is_integer():
+            return str(int(rounded))
+        return str(rounded).rstrip('0').rstrip('.')
+    return str(value)

@@ -1264,6 +1264,143 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertTrue(plan['hidden_holdout'])
         self.assertEqual(240, plan['steps'])
 
+    def test_cumulative_memory_writes_self_authored_equation_templates(self):
+        loop = AutonomousDiscoveryLoop()
+        radial_a = loop.build_report([
+            equation(
+                key='raw_eq:radial_a',
+                role='residual_distance_scaled_direction_equation',
+                expression='k * unit_inferred_vector / separation^2',
+                parameters={
+                    'center_x': 8.0,
+                    'center_y': 12.0,
+                    'distance_exponent': 2.0,
+                    'distance_mse_improvement': 0.44,
+                },
+            )
+        ], step=160)
+        radial_b = loop.build_report([
+            equation(
+                key='raw_eq:radial_b',
+                role='local_residual_distance_scaled_direction_equation',
+                expression='k * unit_local_inferred_vector / separation^2',
+                parameters={
+                    'center_x': 9.0,
+                    'center_y': 11.0,
+                    'distance_exponent': 2.0,
+                    'distance_mse_improvement': 0.31,
+                },
+            )
+        ], step=170)
+        radial_rough = loop.build_report([
+            equation(
+                key='raw_eq:radial_rough',
+                role='generated_operator_distance_scaled_direction_equation',
+                expression='k * unit_generated_center_vector / separation^1_5',
+                parameters={
+                    'center_x': 9.5,
+                    'center_y': 11.5,
+                    'distance_exponent': 1.5,
+                    'distance_mse_improvement': 0.18,
+                },
+            )
+        ], step=180)
+        vortex_a = loop.build_report([
+            equation(
+                key='raw_eq:vortex_a',
+                role='generated_operator_tapered_distance_perpendicular_equation',
+                expression='k * taper(separation, 8) * perpendicular(unit_generated_center_vector) / separation^0_5',
+                parameters={
+                    'center_x': 10.0,
+                    'center_y': 10.0,
+                    'cutoff_radius': 8.0,
+                    'distance_exponent': 0.5,
+                    'tapered_vs_smooth_improvement': 0.25,
+                    'tapered_vs_cutoff_improvement': 0.18,
+                },
+            )
+        ], step=190)
+        vortex_b = loop.build_report([
+            equation(
+                key='raw_eq:vortex_b',
+                role='generated_operator_tapered_distance_perpendicular_equation',
+                expression='k * taper(separation, 7.5) * perpendicular(unit_generated_center_vector) / separation^0_5',
+                parameters={
+                    'center_x': 10.5,
+                    'center_y': 9.5,
+                    'cutoff_radius': 7.5,
+                    'distance_exponent': 0.5,
+                    'tapered_vs_smooth_improvement': 0.22,
+                    'tapered_vs_cutoff_improvement': 0.16,
+                },
+            )
+        ], step=200)
+        memory = CumulativeTheoryMemory()
+
+        memory.record_result('inverse_square_repulsion', 0, radial_a)
+        memory.record_result('hidden_00_0000', 1, radial_b)
+        memory.record_result('inverse_square_repulsion', 2, radial_rough)
+        memory.record_result('vortex', 0, vortex_a)
+        memory.record_result('vortex', 1, vortex_b)
+        authored = memory.self_authored_equations(limit=5)
+        packed = memory.to_dict()
+
+        radial = next(
+            item for item in authored
+            if item['equation_kind'] == 'distance_scaled_direction_residual'
+        )
+        self.assertEqual(3, radial['support_count'])
+        self.assertEqual(2.0, radial['dominant_parameters']['distance_exponent'])
+        self.assertEqual(
+            'baseline_adjusted_delta_velocity ~= k * unit(center - position) / separation^2',
+            radial['expression'],
+        )
+        self.assertIn('domain_nonzero_positive', radial['proof_obligations'])
+        self.assertTrue(any(
+            '1.5' in note and '2' in note
+            for note in radial['approximation_notes']
+        ))
+        self.assertTrue(any(
+            'near/far holdouts' in test
+            for test in radial['falsification_tests']
+        ))
+
+        vortex = next(
+            item for item in authored
+            if item['equation_kind'] == 'tapered_distance_perpendicular_residual'
+        )
+        self.assertEqual(2, vortex['support_count'])
+        self.assertIn(
+            'perpendicular(unit(center - position))',
+            vortex['expression'],
+        )
+        self.assertIn('symmetry_invariance', vortex['proof_obligations'])
+        self.assertTrue(any(
+            'quarter turn' in test
+            for test in vortex['falsification_tests']
+        ))
+
+        self.assertIn('self_authored_equations', packed)
+        self.assertTrue(packed['self_authored_equations'])
+        self.assertTrue(
+            packed['discovery_readiness']['gates'][
+                'self_authored_equation_synthesis'
+            ]['passed']
+        )
+        self.assertTrue(
+            packed['discovery_evidence_dossier']['self_authored_equations']
+        )
+        self.assertIn('Self-authored equations:', memory.summary())
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            _print_cumulative_theory_review(memory)
+        printed = output.getvalue()
+
+        self.assertIn('Theory self-authored equations:', printed)
+        self.assertIn('baseline_adjusted_delta_velocity', printed)
+        self.assertIn('perpendicular(unit(center - position))', printed)
+
     def test_cumulative_theory_memory_marks_local_family_as_transfer_gap(self):
         loop = AutonomousDiscoveryLoop()
         first = loop.build_report([
@@ -1699,13 +1836,18 @@ class DiscoveryLoopTests(unittest.TestCase):
             0,
             loop.build_report([shallow, steep], step=180),
         )
+        memory.record_result(
+            'inverse_square_repulsion',
+            1,
+            loop.build_report([steep], step=181),
+        )
         prior = next(
             item for item in memory.generated_operator_priors(limit=5)
             if item['operator_kind'] == 'inverse_separation_power'
         )
         memory.record_operator_prior_results(
             'inverse_square_repulsion',
-            1,
+            2,
             {
                 'operator_prior_results': [{
                     'operator_key': prior['key'],
@@ -1727,7 +1869,7 @@ class DiscoveryLoopTests(unittest.TestCase):
         )
         memory.record_operator_prior_results(
             'standard',
-            2,
+            3,
             {
                 'operator_prior_results': [{
                     'operator_key': prior['key'],
@@ -1770,6 +1912,9 @@ class DiscoveryLoopTests(unittest.TestCase):
             16,
         )
         self.assertTrue(readiness['gates']['operator_discovery_claims']['passed'])
+        self.assertTrue(
+            readiness['gates']['self_authored_equation_synthesis']['passed']
+        )
         self.assertGreaterEqual(
             readiness['gates']['operator_discovery_claims']['evidence']['chain_count'],
             1,
@@ -1812,12 +1957,14 @@ class DiscoveryLoopTests(unittest.TestCase):
             ))
         self.assertIn('discovery_readiness', packed)
         self.assertIn('discovery_evidence_dossier', packed)
+        self.assertIn('self_authored_equations', packed)
         self.assertIn('first_principles_basis', packed)
         self.assertIn('adaptive_dimension_agenda', packed)
         self.assertIn('algebraic_foundation_baseline', packed)
         self.assertIn('algebraic_expression_agenda', packed)
         self.assertIn('Discovery readiness:', memory.summary())
         self.assertIn('Discovery evidence dossier:', memory.summary())
+        self.assertIn('Self-authored equations:', memory.summary())
         self.assertIn('Adaptive dimensions:', memory.summary())
         self.assertIn('Algebraic foundation:', memory.summary())
 
@@ -1831,6 +1978,7 @@ class DiscoveryLoopTests(unittest.TestCase):
         )
         self.assertEqual([], empty_readiness['evidence_dossier']['chains'])
         self.assertEqual([], empty_readiness['evidence_dossier']['planned_tests'])
+        self.assertEqual([], empty_readiness['evidence_dossier']['self_authored_equations'])
         self.assertTrue(empty_readiness['recommended_actions'])
         self.assertEqual(
             'non_final_equation_campaign',

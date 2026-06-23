@@ -1992,6 +1992,7 @@ def _dossier_has_entries(dossier: dict) -> bool:
             'next_experiments',
             'proof_certificates',
             'disagreement_probes',
+            'self_authored_equations',
         )
     )
 
@@ -2032,6 +2033,12 @@ def _print_discovery_evidence_dossier(
             f"  disagreement {probe['theory_kind']}: "
             f"mode={probe.get('mode')} priority={probe['priority']:.2f}"
         )
+    for equation in dossier.get('self_authored_equations', [])[:2]:
+        print(
+            f"  authored {equation['equation_kind']}: "
+            f"status={equation['status']} confidence={equation['confidence']:.2f}"
+        )
+        print(f"    expression: {equation['expression']}")
 
 
 def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
@@ -2045,6 +2052,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     adaptive_dimensions = theory_memory.adaptive_dimension_agenda(limit=3)
     algebraic_foundation = theory_memory.algebraic_foundation_baseline()
     algebraic_agenda = theory_memory.algebraic_expression_agenda(limit=3)
+    self_authored_equations = theory_memory.self_authored_equations(limit=3)
     representation_agenda = theory_memory.representation_agenda(limit=3)
     generated_operator_priors = theory_memory.generated_operator_priors(limit=3)
     operator_prior_feedback = theory_memory.operator_prior_feedback(limit=3)
@@ -2079,6 +2087,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         adaptive_dimensions,
         algebraic_foundation,
         algebraic_agenda,
+        self_authored_equations,
         representation_agenda,
         generated_operator_priors,
         operator_prior_feedback,
@@ -2207,6 +2216,17 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
                 f"priority={item['priority']:.2f}"
             )
             print(f"    obligations: {obligations}")
+    if self_authored_equations:
+        print("Theory self-authored equations:")
+        for equation in self_authored_equations:
+            print(
+                f"  {equation['equation_kind']}: status={equation['status']} "
+                f"support={equation['support_count']} "
+                f"confidence={equation['confidence']:.2f}"
+            )
+            print(f"    expression: {equation['expression']}")
+            if equation.get('approximation_notes'):
+                print(f"    note: {equation['approximation_notes'][0]}")
     if representation_agenda:
         print("Theory representation agenda:")
         for proposal in representation_agenda:
