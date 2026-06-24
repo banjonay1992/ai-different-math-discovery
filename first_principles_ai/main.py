@@ -52,6 +52,15 @@ from agent.compute_budget import plan_adaptive_compute_budget
 from agent.discovery_loop import CumulativeTheoryMemory
 from agent.math_foundation import MathFoundationWorkbench
 from agent.resource_efficiency import estimate_json_bytes
+from agent.super_system import (
+    build_experiment_design_cockpit,
+    build_super_system_report,
+    experiment_design_from_plan,
+    format_intervention_action,
+    planned_probe_actions,
+    super_system_summary_lines,
+    theory_beliefs_from_plan,
+)
 from agent.explorer import (
     ExplorationPlanner,
     explain_exploration_outcome,
@@ -1385,56 +1394,7 @@ def _print_equation_followup_progress(event: str, payload: dict):
 
 
 def _planned_probe_actions(plan: dict, max_actions: int = 4) -> list[dict]:
-    signature = dict(plan.get('disagreement_signature') or {})
-    actions = []
-    if plan.get('experiment_kind') == 'equation_invariant_exponent_resolution':
-        source = 'planned_equation_invariant_resolution'
-    elif plan.get('experiment_kind') == 'selected_law_replay':
-        source = 'planned_selected_law_replay'
-    elif plan.get('experiment_kind') == 'selected_law_conflict_resolution':
-        source = 'planned_selected_law_conflict_resolution'
-    elif plan.get('experiment_kind') == 'blind_holdout_validation':
-        source = 'planned_blind_holdout_validation'
-    elif plan.get('experiment_kind') == 'model_disagreement_domain_split':
-        source = 'planned_model_disagreement_domain_split'
-    elif plan.get('experiment_kind') == 'localized_gravity_structure_probe':
-        source = 'planned_localized_gravity_structure_probe'
-    elif plan.get('experiment_kind') == 'domain_predicate_discovery':
-        source = 'planned_domain_predicate_discovery'
-    else:
-        source = 'planned_model_disagreement_probe'
-    for point in list(signature.get('probe_points') or [])[:max_actions]:
-        if not {'x', 'y'} <= set(point):
-            continue
-        action = {
-            'type': 'spawn',
-            'x': float(point['x']),
-            'y': float(point['y']),
-            'vx': 0.0,
-            'vy': 0.0,
-            'source': source,
-            'probe_label': point.get('label'),
-            'disagreement_mode': signature.get('mode'),
-        }
-        if plan.get('invariant_key'):
-            action['invariant_key'] = plan.get('invariant_key')
-        actions.append(action)
-    if actions:
-        return actions
-    action = dict(plan.get('probe_action') or {})
-    if action.get('type') in {'spawn', 'wait', 'push', 'remove'}:
-        if plan.get('experiment_kind') in {
-            'selected_law_conflict_resolution',
-            'blind_holdout_validation',
-            'model_disagreement_domain_split',
-            'localized_gravity_structure_probe',
-            'domain_predicate_discovery',
-        }:
-            action['source'] = source
-        else:
-            action.setdefault('source', 'planned_theory_probe')
-        return [action]
-    return []
+    return planned_probe_actions(plan, max_actions=max_actions)
 
 
 def _interesting_result_rank(result: dict) -> tuple[float, float]:
@@ -1605,6 +1565,42 @@ def run_discovery_readiness_audit(
     if report['ready_for_watched_final']:
         print()
         print("Watched final command is ready, but not run by this audit.")
+    return report
+
+
+def run_super_system_audit(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    output_file: str | Path | None = None,
+    latest_artifact: dict | None = None,
+    world_types: list[str] | None = None,
+    object_counts: list[int] | None = None,
+    steps: int = 240,
+    limit: int = 5,
+) -> dict:
+    """Print and optionally persist the connected non-final system audit."""
+    theory_memory = theory_memory or CumulativeTheoryMemory()
+    report = build_super_system_report(
+        theory_memory,
+        world_types=world_types or [
+            'standard',
+            'sideways_wind',
+            'vortex',
+            'inverse_square_repulsion',
+            'localized_gravity',
+            'time_varying',
+        ],
+        object_counts=object_counts or [5],
+        steps=steps,
+        limit=limit,
+        latest_artifact=latest_artifact,
+    )
+    for line in super_system_summary_lines(report):
+        print(line)
+    if output_file:
+        artifact_path = _write_json_artifact(output_file, report)
+        print()
+        print(f"Super-system artifact: {artifact_path}")
     return report
 
 
@@ -4249,106 +4245,15 @@ def _math_final_rows_for_artifact(results: list[dict]) -> list[dict]:
 
 
 def _theory_beliefs_from_plan(plan: dict) -> list[dict]:
-    signature = dict(plan.get('disagreement_signature') or {})
-    predictions = [
-        dict(prediction)
-        for prediction in list(signature.get('rival_predictions') or [])
-    ]
-    if not predictions:
-        label = (
-            plan.get('primary_theory_label')
-            or plan.get('theory_kind')
-            or 'candidate_theory'
-        )
-        return [{
-            'theory': str(label),
-            'belief': 1.0,
-            'score': round(float(plan.get('priority', 1.0) or 1.0), 3),
-            'prediction': plan.get('expected_result'),
-            'falsified_if': plan.get('falsifies_if'),
-        }]
-    raw_scores = [
-        max(0.0, float(prediction.get('score', 0.0) or 0.0))
-        for prediction in predictions
-    ]
-    score_total = sum(raw_scores)
-    equal_belief = 1.0 / max(1, len(predictions))
-    beliefs = []
-    for prediction, raw_score in zip(predictions, raw_scores):
-        belief = raw_score / score_total if score_total > 0 else equal_belief
-        beliefs.append({
-            'theory': str(
-                prediction.get('theory_key')
-                or prediction.get('theory_kind')
-                or 'candidate_theory'
-            ),
-            'belief': round(belief, 3),
-            'score': round(raw_score, 3),
-            'prediction': prediction.get('prediction'),
-            'falsified_if': prediction.get('falsified_if'),
-        })
-    return beliefs
+    return theory_beliefs_from_plan(plan)
 
 
 def _format_intervention_action(action: dict) -> str:
-    if not action:
-        return 'observe/wait for the next natural transition'
-    action_type = str(action.get('type') or 'wait')
-    if action_type == 'spawn':
-        return (
-            f"spawn probe at x={float(action.get('x', 0.0)):.2f}, "
-            f"y={float(action.get('y', 0.0)):.2f}"
-        )
-    if action_type == 'move':
-        return (
-            f"move object {action.get('object_id', '?')} to "
-            f"x={float(action.get('x', 0.0)):.2f}, "
-            f"y={float(action.get('y', 0.0)):.2f}"
-        )
-    if action_type == 'push':
-        return (
-            f"push object {action.get('object_id', '?')} with "
-            f"fx={float(action.get('fx', 0.0)):.2f}, "
-            f"fy={float(action.get('fy', 0.0)):.2f}"
-        )
-    if action_type in {'remove', 'freeze', 'duplicate'}:
-        return f"{action_type} object {action.get('object_id', '?')}"
-    return action_type
+    return format_intervention_action(action)
 
 
 def _experiment_design_from_plan(plan: dict) -> dict:
-    planned_actions = _planned_probe_actions(plan)
-    action = (
-        dict(plan.get('probe_action') or {})
-        if plan.get('probe_action')
-        else (planned_actions[0] if planned_actions else {'type': 'wait'})
-    )
-    signature = dict(plan.get('disagreement_signature') or {})
-    question = (
-        signature.get('question')
-        or plan.get('reason')
-        or 'Which theory loses predictive power under the next probe?'
-    )
-    return {
-        'experiment_kind': plan.get('experiment_kind'),
-        'priority': round(float(plan.get('priority', 0.0) or 0.0), 3),
-        'world_type': plan.get('world_type'),
-        'seed': plan.get('seed'),
-        'object_count': plan.get('object_count'),
-        'steps': plan.get('steps'),
-        'question': question,
-        'beliefs': _theory_beliefs_from_plan(plan),
-        'intervention': action,
-        'intervention_text': _format_intervention_action(action),
-        'expected_result': plan.get('expected_result'),
-        'falsifies_if': plan.get('falsifies_if'),
-        'counterexample_reward': (
-            'high'
-            if 'counterexample' in str(plan.get('experiment_kind', ''))
-            or plan.get('falsifies_if')
-            else 'normal'
-        ),
-    }
+    return experiment_design_from_plan(plan)
 
 
 def _experiment_design_cockpit(
@@ -4359,13 +4264,13 @@ def _experiment_design_cockpit(
     steps: int = 240,
     limit: int = 5,
 ) -> list[dict]:
-    plans = theory_memory.planned_experiments(
+    return build_experiment_design_cockpit(
+        theory_memory,
         world_types=world_types or WORLD_TYPES,
         object_counts=object_counts or [5],
         steps=steps,
         limit=limit,
     )
-    return [_experiment_design_from_plan(plan) for plan in plans]
 
 
 def _compact_artifact_summary_for_log(artifact: dict) -> dict:
@@ -5521,6 +5426,12 @@ if __name__ == '__main__':
                         help='Print a non-final readiness audit from cumulative theory memory')
     parser.add_argument('--rediscovery-goal-progress', action='store_true',
                         help='Print stricter non-final progress toward the 85% rediscovery goal')
+    parser.add_argument('--super-system-audit', action='store_true',
+                        help='Print a connected non-final audit across every discovery subsystem')
+    parser.add_argument('--super-system-output-file', type=str, default=None,
+                        help='Optional JSON path for the connected super-system audit')
+    parser.add_argument('--super-system-limit', type=int, default=5,
+                        help='Rows per subsystem to include in the super-system audit')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -5692,6 +5603,17 @@ if __name__ == '__main__':
 
     if args.rediscovery_goal_progress:
         run_rediscovery_goal_progress_audit(theory_memory=theory_memory)
+        raise SystemExit(0)
+
+    if args.super_system_audit:
+        run_super_system_audit(
+            theory_memory=theory_memory,
+            output_file=args.super_system_output_file,
+            world_types=_parse_csv_worlds(args.world_types),
+            object_counts=_parse_csv_ints(args.object_counts),
+            steps=args.benchmark_steps,
+            limit=args.super_system_limit,
+        )
         raise SystemExit(0)
 
     if args.memory_efficiency_review or args.compact_theory_memory:
