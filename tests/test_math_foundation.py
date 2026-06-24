@@ -27,6 +27,7 @@ from main import (
     _math_final_artifact_summary,
     _persist_math_final_artifact,
     _print_section_study_summary,
+    _runtime_profile_summary,
     _section_best_result,
     _section_composite_decomposition,
     _section_leak_diagnosis,
@@ -34,7 +35,9 @@ from main import (
     _select_interesting_equation,
     _should_force_residual_first,
     _weak_case_diagnostics,
+    merge_final_artifacts,
     parse_live_progress_line,
+    run_gpu_feasibility_benchmark,
     run_discovery_readiness_audit,
     run_experiment,
     run_math_final_discovery,
@@ -986,6 +989,7 @@ class MathFoundationTests(unittest.TestCase):
         self.assertIn('weak_case_diagnostics', artifact)
         self.assertIn('super_system_snapshot', artifact)
         self.assertIn('resource_efficiency', artifact)
+        self.assertIn('runtime_profile', artifact)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_file = os.path.join(tmpdir, 'final.json')
@@ -1043,6 +1047,136 @@ class MathFoundationTests(unittest.TestCase):
             diagnostics['reason_counts']['planned_holdout_or_repair_conflict'],
         )
         self.assertTrue(diagnostics['next_actions'])
+
+    def test_runtime_profile_summary_ranks_slow_contexts(self):
+        profile = _runtime_profile_summary(
+            [
+                {
+                    'context': 'standard',
+                    'seed': 0,
+                    'phase': 'math_final_discovery',
+                    'passed': True,
+                    'equation_count': 2,
+                    'interesting_score': 0.9,
+                    'case_elapsed_seconds': 1.0,
+                },
+                {
+                    'context': 'vortex',
+                    'seed': 1,
+                    'phase': 'math_final_discovery',
+                    'passed': True,
+                    'equation_count': 4,
+                    'interesting_score': 0.7,
+                    'case_elapsed_seconds': 3.5,
+                },
+            ],
+            [{'event': 'section_cycle_profile', 'context': 'vortex'}],
+        )
+
+        self.assertTrue(profile['enabled'])
+        self.assertEqual(2, profile['case_count'])
+        self.assertEqual('vortex', profile['by_context'][0]['context'])
+        self.assertEqual(1, len(profile['section_events']))
+
+    def test_merge_final_artifacts_combines_shards_and_profiles(self):
+        shard_a = {
+            'run_kind': 'math_final_discovery',
+            'run_id': 'shard-a',
+            'result_count': 1,
+            'passed_count': 1,
+            'rows': [{
+                'context': 'standard',
+                'seed': 0,
+                'objects': 5,
+                'steps': 40,
+                'phase': 'math_final_discovery',
+                'passed': True,
+                'ready_for_final': True,
+                'equation_passed': True,
+                'leak_count': 0,
+                'interesting_score': 0.97,
+                'interesting_role': 'position_update_equation',
+                'interesting_target': 'next_x',
+                'interesting_expression': 'x + vx * dt',
+                'interesting_parameters': {},
+                'case_elapsed_seconds': 1.2,
+            }],
+            'runtime_profile': {
+                'section_events': [{
+                    'event': 'section_cycle_profile',
+                    'context': 'standard',
+                    'elapsed_seconds': 1.3,
+                }],
+            },
+        }
+        shard_b = {
+            'run_kind': 'math_final_discovery',
+            'run_id': 'shard-b',
+            'result_count': 1,
+            'passed_count': 0,
+            'rows': [{
+                'context': 'localized_gravity',
+                'seed': 1,
+                'objects': 5,
+                'steps': 40,
+                'phase': 'math_final_discovery',
+                'passed': False,
+                'ready_for_final': True,
+                'equation_passed': False,
+                'leak_count': 1,
+                'interesting_score': 0.1,
+                'interesting_role': 'local_residual_direction_equation',
+                'interesting_target': 'baseline_adjusted_delta_velocity',
+                'interesting_expression': 'leaky expression',
+                'interesting_parameters': {},
+                'case_elapsed_seconds': 2.4,
+            }],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path_a = os.path.join(tmpdir, 'a.json')
+            path_b = os.path.join(tmpdir, 'b.json')
+            merged_path = os.path.join(tmpdir, 'merged.json')
+            with open(path_a, 'w', encoding='utf-8') as handle:
+                json.dump(shard_a, handle)
+            with open(path_b, 'w', encoding='utf-8') as handle:
+                json.dump(shard_b, handle)
+
+            merged = merge_final_artifacts(
+                [path_a, path_b],
+                output_file=merged_path,
+                run_id='merged-demo',
+            )
+
+            with open(merged_path, 'r', encoding='utf-8') as handle:
+                saved = json.load(handle)
+
+        self.assertEqual('math_final_shard_merge', merged['run_kind'])
+        self.assertEqual(2, merged['result_count'])
+        self.assertEqual(1, merged['passed_count'])
+        self.assertEqual(1, merged['weak_case_diagnostics']['weak_case_count'])
+        self.assertTrue(merged['runtime_profile']['enabled'])
+        self.assertEqual('merged-demo', saved['run_id'])
+
+    def test_gpu_feasibility_benchmark_is_non_final_and_writes_artifact(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'gpu.json')
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                report = run_gpu_feasibility_benchmark(
+                    sample_count=256,
+                    repeats=1,
+                    prefer_cuda=False,
+                    output_file=output_file,
+                )
+            with open(output_file, 'r', encoding='utf-8') as handle:
+                saved = json.load(handle)
+
+        self.assertFalse(report['runs_final'])
+        self.assertEqual('gpu_feasibility_benchmark', report['run_kind'])
+        self.assertIn('recommendation', report)
+        self.assertEqual(report['recommendation'], saved['recommendation'])
+        self.assertIn('GPU FEASIBILITY BENCHMARK', output.getvalue())
 
     def test_math_final_artifact_prints_compact_upload_failure_summary(self):
         theory_memory = CumulativeTheoryMemory()

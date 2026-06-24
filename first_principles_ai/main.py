@@ -2728,8 +2728,10 @@ def run_math_final_discovery(
     hf_output_repo: str | None = None,
     run_id: str | None = None,
     parallel_cases: int = 1,
+    profile_final_run: bool = False,
 ) -> list[dict]:
     """Run the watched discovery campaign and report live performance metrics."""
+    final_started = time.perf_counter()
     starting_memory_summary = (
         theory_memory.memory_checkpoint_summary()
         if theory_memory is not None
@@ -2744,6 +2746,7 @@ def run_math_final_discovery(
     parallel_cases = max(1, int(parallel_cases or 1))
     results = []
     theory_memory = theory_memory or CumulativeTheoryMemory()
+    runtime_profile_events: list[dict] | None = [] if profile_final_run else None
 
     print("=" * 70, flush=True)
     print("FINAL WATCHED MATH DISCOVERY CAMPAIGN", flush=True)
@@ -2786,6 +2789,7 @@ def run_math_final_discovery(
                 num_agents=num_agents,
                 world_type=world_type,
                 parallel_cases=parallel_cases,
+                runtime_profile_events=runtime_profile_events,
             )
             results.extend(cycle_results)
             section_results.extend(cycle_results)
@@ -2820,6 +2824,7 @@ def run_math_final_discovery(
             manifest_source='generated',
             theory_memory_checkpoint_file=theory_memory_checkpoint_file,
             parallel_cases=parallel_cases,
+            runtime_profile_events=runtime_profile_events,
         )
 
     if self_authored_worlds:
@@ -2875,6 +2880,7 @@ def run_math_final_discovery(
                 self_authored_world_design=design,
                 theory_memory_checkpoint_file=theory_memory_checkpoint_file,
                 parallel_cases=parallel_cases,
+                runtime_profile_events=runtime_profile_events,
             )
 
     print("-" * 132, flush=True)
@@ -2923,8 +2929,24 @@ def run_math_final_discovery(
                 'num_agents': num_agents,
                 'section_study_cycles': section_study_cycles,
                 'parallel_cases': parallel_cases,
+                'profile_final_run': bool(profile_final_run),
             },
             starting_memory_summary=starting_memory_summary,
+            runtime_profile_events=(
+                [
+                    *(runtime_profile_events or []),
+                    {
+                        'event': 'final_run_profile',
+                        'elapsed_seconds': round(
+                            time.perf_counter() - final_started,
+                            3,
+                        ),
+                        'result_count': len(results),
+                    },
+                ]
+                if profile_final_run
+                else None
+            ),
         )
     return results
 
@@ -2943,6 +2965,7 @@ def _run_hidden_manifest_final_section(
     self_authored_world_design: dict | None = None,
     theory_memory_checkpoint_file: str | Path | None = None,
     parallel_cases: int = 1,
+    runtime_profile_events: list[dict] | None = None,
 ):
     section_results = []
     for cycle in range(section_study_cycles):
@@ -2972,6 +2995,7 @@ def _run_hidden_manifest_final_section(
                 ),
             },
             parallel_cases=parallel_cases,
+            runtime_profile_events=runtime_profile_events,
         )
         results.extend(cycle_results)
         section_results.extend(cycle_results)
@@ -2993,7 +3017,10 @@ def _run_hidden_manifest_final_section(
 
 
 def _execute_math_final_case_payload(payload: dict) -> dict:
-    return _run_math_final_discovery_case(**payload)
+    started = time.perf_counter()
+    result = _run_math_final_discovery_case(**payload)
+    result['case_elapsed_seconds'] = round(time.perf_counter() - started, 3)
+    return result
 
 
 def _run_math_final_section_cycle(
@@ -3009,7 +3036,9 @@ def _run_math_final_section_cycle(
     hidden_manifest: HiddenWorldManifest | None = None,
     result_metadata: dict | None = None,
     parallel_cases: int = 1,
+    runtime_profile_events: list[dict] | None = None,
 ) -> list[dict]:
+    cycle_started = time.perf_counter()
     descriptors = []
     for index, case in enumerate(
         _section_cycle_cases(
@@ -3055,7 +3084,7 @@ def _run_math_final_section_cycle(
 
     worker_count = min(max(1, int(parallel_cases or 1)), len(descriptors) or 1)
     if worker_count <= 1:
-        return [
+        completed = [
             _finalize_math_final_case_result(
                 _execute_math_final_case_payload(descriptor['payload']),
                 descriptor,
@@ -3064,6 +3093,15 @@ def _run_math_final_section_cycle(
             )
             for descriptor in descriptors
         ]
+        _record_section_cycle_profile(
+            runtime_profile_events,
+            context=context,
+            cycle=cycle,
+            worker_count=worker_count,
+            completed=completed,
+            started=cycle_started,
+        )
+        return completed
 
     completed = []
     pending: dict[int, dict] = {}
@@ -3092,7 +3130,52 @@ def _run_math_final_section_cycle(
                     )
                 )
                 next_index += 1
+    _record_section_cycle_profile(
+        runtime_profile_events,
+        context=context,
+        cycle=cycle,
+        worker_count=worker_count,
+        completed=completed,
+        started=cycle_started,
+    )
     return completed
+
+
+def _record_section_cycle_profile(
+    runtime_profile_events: list[dict] | None,
+    *,
+    context: str,
+    cycle: int,
+    worker_count: int,
+    completed: list[dict],
+    started: float,
+):
+    if runtime_profile_events is None:
+        return
+    elapsed = time.perf_counter() - started
+    case_seconds = [
+        float(result.get('case_elapsed_seconds', 0.0) or 0.0)
+        for result in completed
+    ]
+    event = {
+        'event': 'section_cycle_profile',
+        'context': context,
+        'cycle': cycle + 1,
+        'worker_count': worker_count,
+        'case_count': len(completed),
+        'elapsed_seconds': round(elapsed, 3),
+        'case_seconds_sum': round(sum(case_seconds), 3),
+        'case_seconds_max': round(max(case_seconds) if case_seconds else 0.0, 3),
+        'parallel_efficiency_estimate': round(
+            sum(case_seconds) / max(0.001, elapsed * max(1, worker_count)),
+            3,
+        ),
+    }
+    runtime_profile_events.append(event)
+    print(
+        "PROFILE_EVENT " + json.dumps(event, sort_keys=True),
+        flush=True,
+    )
 
 
 def _finalize_math_final_case_result(
@@ -4269,6 +4352,7 @@ def _math_final_rows_for_artifact(results: list[dict]) -> list[dict]:
             'interesting_target': equation.get('target'),
             'interesting_expression': equation.get('expression'),
             'interesting_parameters': dict(equation.get('parameters') or {}),
+            'case_elapsed_seconds': result.get('case_elapsed_seconds'),
             'planned_experiment_kind': (
                 dict(result.get('planned_experiment') or {}).get('experiment_kind')
             ),
@@ -4385,6 +4469,88 @@ def _weak_case_diagnostics(results: list[dict]) -> dict:
     }
 
 
+def _runtime_profile_summary(
+    results: list[dict],
+    events: list[dict] | None = None,
+) -> dict:
+    case_rows = []
+    context_totals: dict[str, dict[str, float]] = {}
+    for result in results:
+        elapsed = result.get('case_elapsed_seconds')
+        if not isinstance(elapsed, (int, float)) or isinstance(elapsed, bool):
+            continue
+        context = str(result.get('context') or 'unknown')
+        elapsed = max(0.0, float(elapsed))
+        case_rows.append({
+            'context': context,
+            'seed': result.get('seed'),
+            'phase': result.get('phase', 'math_final_discovery'),
+            'elapsed_seconds': round(elapsed, 3),
+            'passed': bool(result.get('passed')),
+            'equation_count': int(result.get('equation_count', 0) or 0),
+            'interesting_score': round(
+                float(result.get('interesting_score', 0.0) or 0.0),
+                3,
+            ),
+        })
+        bucket = context_totals.setdefault(context, {
+            'case_count': 0.0,
+            'total_case_seconds': 0.0,
+            'max_case_seconds': 0.0,
+        })
+        bucket['case_count'] += 1.0
+        bucket['total_case_seconds'] += elapsed
+        bucket['max_case_seconds'] = max(bucket['max_case_seconds'], elapsed)
+
+    by_context = []
+    for context, bucket in sorted(context_totals.items()):
+        count = int(bucket['case_count'])
+        total = bucket['total_case_seconds']
+        by_context.append({
+            'context': context,
+            'case_count': count,
+            'total_case_seconds': round(total, 3),
+            'avg_case_seconds': round(total / max(1, count), 3),
+            'max_case_seconds': round(bucket['max_case_seconds'], 3),
+        })
+    by_context.sort(
+        key=lambda item: (
+            item['total_case_seconds'],
+            item['max_case_seconds'],
+        ),
+        reverse=True,
+    )
+    total_case_seconds = sum(item['elapsed_seconds'] for item in case_rows)
+    slowest = sorted(
+        case_rows,
+        key=lambda item: item['elapsed_seconds'],
+        reverse=True,
+    )[:8]
+    section_events = [
+        dict(event)
+        for event in list(events or [])
+        if event.get('event') == 'section_cycle_profile'
+    ]
+    return {
+        'enabled': bool(case_rows or section_events),
+        'case_count': len(case_rows),
+        'total_case_seconds': round(total_case_seconds, 3),
+        'avg_case_seconds': round(
+            total_case_seconds / max(1, len(case_rows)),
+            3,
+        ),
+        'slowest_cases': slowest,
+        'by_context': by_context,
+        'section_events': section_events,
+        'event_count': len(events or []),
+        'shard_recommendation': (
+            'split the slowest contexts into separate HF jobs and merge artifacts'
+            if len(by_context) >= 3
+            else 'collect more profiled sections before sharding'
+        ),
+    }
+
+
 def _artifact_status_needs_log_fallback(upload: dict) -> bool:
     return upload.get('status') not in {'uploaded', 'uploaded_via_pr'}
 
@@ -4469,6 +4635,16 @@ def _compact_artifact_summary_for_log(artifact: dict) -> dict:
                 or {}
             ),
         },
+        'runtime_profile': {
+            'enabled': dict(artifact.get('runtime_profile') or {}).get('enabled'),
+            'case_count': dict(artifact.get('runtime_profile') or {}).get('case_count'),
+            'total_case_seconds': dict(
+                artifact.get('runtime_profile') or {}
+            ).get('total_case_seconds'),
+            'artifact_persist_seconds': dict(
+                artifact.get('runtime_profile') or {}
+            ).get('artifact_persist_seconds'),
+        },
     }
 
 
@@ -4479,6 +4655,7 @@ def _math_final_artifact_summary(
     run_id: str,
     run_config: dict,
     starting_memory_summary: dict,
+    runtime_profile_events: list[dict] | None = None,
 ) -> dict:
     section_groups = _section_groups(results)
     section_consolidations = [
@@ -4529,6 +4706,10 @@ def _math_final_artifact_summary(
         'leak_diagnostics': leak_diagnostics,
         'weak_case_diagnostics': weak_case_diagnostics,
         'composite_decompositions': composite_decompositions,
+        'runtime_profile': _runtime_profile_summary(
+            results,
+            runtime_profile_events,
+        ),
         'readiness': theory_memory.discovery_readiness_report(),
         'resource_efficiency': resource_efficiency,
         'canonical_law_compression': (
@@ -4546,6 +4727,293 @@ def _math_final_artifact_summary(
         'super_system_snapshot': super_system_snapshot,
         'theory_memory': theory_memory.to_dict(),
     }
+
+
+def _result_from_artifact_row(row: dict) -> dict:
+    leak_count = max(0, int(row.get('leak_count', 0) or 0))
+    return {
+        'context': row.get('context'),
+        'seed': row.get('seed'),
+        'objects': row.get('objects'),
+        'steps': row.get('steps'),
+        'phase': row.get('phase', 'math_final_discovery'),
+        'passed': bool(row.get('passed')),
+        'ready_for_final': bool(row.get('ready_for_final')),
+        'equation_passed': bool(row.get('equation_passed')),
+        'label_leaks': [
+            {'labels': ['unknown'], 'description': 'leak preserved from shard row'}
+            for _ in range(leak_count)
+        ],
+        'interesting_score': row.get('interesting_score') or 0.0,
+        'interesting_equation': {
+            'role': row.get('interesting_role'),
+            'target': row.get('interesting_target'),
+            'expression': row.get('interesting_expression'),
+            'score': row.get('interesting_score') or 0.0,
+            'parameters': dict(row.get('interesting_parameters') or {}),
+        },
+        'case_elapsed_seconds': row.get('case_elapsed_seconds'),
+        **(
+            {
+                'planned_experiment': {
+                    'experiment_kind': row.get('planned_experiment_kind'),
+                }
+            }
+            if row.get('planned_experiment_kind')
+            else {}
+        ),
+        **(
+            {
+                'planned_experiment_outcome': {
+                    'outcome': row.get('planned_outcome'),
+                }
+            }
+            if row.get('planned_outcome')
+            else {}
+        ),
+    }
+
+
+def merge_final_artifacts(
+    artifact_files: list[str | Path],
+    *,
+    output_file: str | Path | None = None,
+    run_id: str | None = None,
+) -> dict:
+    """Merge sharded final-run summaries without rerunning discovery."""
+    artifacts = []
+    for path in artifact_files:
+        artifact_path = Path(path)
+        with artifact_path.open('r', encoding='utf-8') as handle:
+            artifact = json.load(handle)
+        artifact['_source_path'] = str(artifact_path)
+        artifacts.append(artifact)
+
+    rows = []
+    source_artifacts = []
+    runtime_events = []
+    for artifact in artifacts:
+        source_artifacts.append({
+            'path': artifact.get('_source_path'),
+            'run_id': artifact.get('run_id'),
+            'run_kind': artifact.get('run_kind'),
+            'result_count': artifact.get('result_count'),
+            'passed_count': artifact.get('passed_count'),
+            'weak_case_count': (
+                dict(artifact.get('weak_case_diagnostics') or {})
+                .get('weak_case_count')
+            ),
+            'upload_status': (
+                dict(artifact.get('hf_upload') or {}).get('status')
+            ),
+        })
+        rows.extend(dict(row) for row in artifact.get('rows') or [])
+        profile = dict(artifact.get('runtime_profile') or {})
+        for event in list(profile.get('section_events') or []):
+            runtime_events.append({
+                **dict(event),
+                'source_run_id': artifact.get('run_id'),
+            })
+
+    results = [_result_from_artifact_row(row) for row in rows]
+    section_groups = _section_groups(results)
+    merged_run_id = run_id or _default_hf_run_id(prefix='math-final-merged')
+    merged = {
+        'run_kind': 'math_final_shard_merge',
+        'runs_final': True,
+        'run_id': merged_run_id,
+        'shard_count': len(artifacts),
+        'source_artifacts': source_artifacts,
+        'result_count': len(results),
+        'passed_count': sum(1 for result in results if result.get('passed')),
+        'equation_clean_count': sum(
+            1 for result in results
+            if result.get('equation_passed') and not result.get('label_leaks')
+        ),
+        'ready_count': sum(1 for result in results if result.get('ready_for_final')),
+        'section_count': len(section_groups),
+        'rows': rows,
+        'section_consolidations': [
+            _section_parameter_consolidation(context, group_rows)
+            for context, group_rows in sorted(section_groups.items())
+        ],
+        'leak_diagnostics': [
+            diagnosis for diagnosis in (
+                _section_leak_diagnosis(context, group_rows)
+                for context, group_rows in sorted(section_groups.items())
+            )
+            if diagnosis.get('leak_count')
+        ],
+        'weak_case_diagnostics': _weak_case_diagnostics(results),
+        'composite_decompositions': [
+            decomposition for decomposition in (
+                _section_composite_decomposition(context, group_rows)
+                for context, group_rows in sorted(section_groups.items())
+            )
+            if (
+                decomposition.get('inferred_component_count', 0) > 1
+                or decomposition.get('benchmark_manifest_components')
+            )
+        ],
+        'runtime_profile': _runtime_profile_summary(results, runtime_events),
+    }
+    if output_file:
+        merged['artifact_path'] = str(_write_json_artifact(output_file, merged))
+    return merged
+
+
+def run_merge_final_artifacts(
+    artifact_files: list[str | Path],
+    *,
+    output_file: str | Path | None = None,
+    run_id: str | None = None,
+) -> dict:
+    report = merge_final_artifacts(
+        artifact_files,
+        output_file=output_file,
+        run_id=run_id,
+    )
+    print("=" * 70)
+    print("FINAL ARTIFACT SHARD MERGE")
+    print("=" * 70)
+    print(f"Shards: {report['shard_count']}")
+    print(
+        f"Rows: {report['passed_count']}/{report['result_count']} passed, "
+        f"weak_cases={report['weak_case_diagnostics']['weak_case_count']}"
+    )
+    profile = dict(report.get('runtime_profile') or {})
+    if profile.get('enabled'):
+        print(
+            "Runtime profile: "
+            f"cases={profile['case_count']} "
+            f"total_case_seconds={profile['total_case_seconds']}"
+        )
+        for item in list(profile.get('by_context') or [])[:5]:
+            print(
+                f"  {item['context']}: total={item['total_case_seconds']}s "
+                f"avg={item['avg_case_seconds']}s"
+            )
+    if output_file:
+        print(f"Merged artifact: {output_file}")
+    return report
+
+
+def run_gpu_feasibility_benchmark(
+    *,
+    sample_count: int = 50000,
+    repeats: int = 3,
+    prefer_cuda: bool = True,
+    output_file: str | Path | None = None,
+) -> dict:
+    """Tiny tensor-style benchmark for deciding whether a GPU port is worth it."""
+    sample_count = max(128, int(sample_count or 128))
+    repeats = max(1, int(repeats or 1))
+
+    xs = [((index % 997) - 498) / 31.0 for index in range(sample_count)]
+    ys = [((index % 991) - 495) / 29.0 for index in range(sample_count)]
+    cpu_started = time.perf_counter()
+    checksum = 0.0
+    for _ in range(repeats):
+        total = 0.0
+        for x, y in zip(xs, ys):
+            separation = (x * x + y * y) ** 0.5 + 1e-6
+            total += x / (separation * separation)
+            total += y / (separation ** 1.5)
+        checksum = total
+    python_cpu_seconds = time.perf_counter() - cpu_started
+
+    torch_status = 'not_checked'
+    torch_cpu_seconds = None
+    cuda_seconds = None
+    cuda_available = False
+    device_name = None
+    try:
+        import torch  # type: ignore
+
+        torch_status = 'available'
+        tx = torch.tensor(xs, dtype=torch.float32)
+        ty = torch.tensor(ys, dtype=torch.float32)
+        started = time.perf_counter()
+        torch_checksum = None
+        for _ in range(repeats):
+            separation = torch.sqrt(tx * tx + ty * ty) + 1e-6
+            torch_checksum = (
+                tx / (separation * separation)
+                + ty / torch.pow(separation, 1.5)
+            ).sum()
+        torch_cpu_seconds = time.perf_counter() - started
+        if torch_checksum is not None:
+            checksum = float(torch_checksum.item())
+        cuda_available = bool(torch.cuda.is_available())
+        if prefer_cuda and cuda_available:
+            device = torch.device('cuda')
+            device_name = torch.cuda.get_device_name(0)
+            gx = tx.to(device)
+            gy = ty.to(device)
+            torch.cuda.synchronize()
+            started = time.perf_counter()
+            gpu_checksum = None
+            for _ in range(repeats):
+                separation = torch.sqrt(gx * gx + gy * gy) + 1e-6
+                gpu_checksum = (
+                    gx / (separation * separation)
+                    + gy / torch.pow(separation, 1.5)
+                ).sum()
+            torch.cuda.synchronize()
+            cuda_seconds = time.perf_counter() - started
+            if gpu_checksum is not None:
+                checksum = float(gpu_checksum.item())
+    except Exception as error:
+        torch_status = f'unavailable:{error.__class__.__name__}'
+
+    reference_cpu_seconds = (
+        torch_cpu_seconds
+        if torch_cpu_seconds is not None
+        else python_cpu_seconds
+    )
+    gpu_speedup = (
+        reference_cpu_seconds / cuda_seconds
+        if cuda_seconds and cuda_seconds > 0
+        else 0.0
+    )
+    if cuda_seconds and gpu_speedup >= 3.0:
+        recommendation = 'prototype_tensor_backend_before_full_gpu_runs'
+    elif cuda_seconds:
+        recommendation = 'prefer_cpu_sharding_until_gpu_kernel_is_larger'
+    else:
+        recommendation = 'prefer_cpu_sharding_until_tensor_backend_exists'
+    report = {
+        'run_kind': 'gpu_feasibility_benchmark',
+        'runs_final': False,
+        'sample_count': sample_count,
+        'repeats': repeats,
+        'python_cpu_seconds': round(python_cpu_seconds, 6),
+        'torch_status': torch_status,
+        'torch_cpu_seconds': (
+            round(torch_cpu_seconds, 6)
+            if torch_cpu_seconds is not None
+            else None
+        ),
+        'cuda_available': cuda_available,
+        'cuda_seconds': round(cuda_seconds, 6) if cuda_seconds is not None else None,
+        'cuda_device': device_name,
+        'gpu_speedup_vs_reference_cpu': round(gpu_speedup, 3),
+        'recommendation': recommendation,
+        'checksum': round(float(checksum), 6),
+    }
+    if output_file:
+        report['artifact_path'] = str(_write_json_artifact(output_file, report))
+    print("=" * 70)
+    print("GPU FEASIBILITY BENCHMARK")
+    print("=" * 70)
+    print(
+        f"samples={sample_count} repeats={repeats} "
+        f"python_cpu={report['python_cpu_seconds']}s "
+        f"torch_cpu={report['torch_cpu_seconds']} "
+        f"cuda={report['cuda_seconds']}"
+    )
+    print(f"recommendation={recommendation}")
+    return report
 
 
 def _default_hf_run_id(prefix: str = 'math-final') -> str:
@@ -4636,6 +5104,7 @@ def _persist_math_final_artifact(
     run_id: str | None,
     run_config: dict,
     starting_memory_summary: dict,
+    runtime_profile_events: list[dict] | None = None,
 ) -> dict:
     resolved_run_id = run_id or os.environ.get('HF_RUN_ID') or _default_hf_run_id()
     output_file = (
@@ -4649,7 +5118,9 @@ def _persist_math_final_artifact(
         run_id=resolved_run_id,
         run_config=run_config,
         starting_memory_summary=starting_memory_summary,
+        runtime_profile_events=runtime_profile_events,
     )
+    persist_started = time.perf_counter()
     artifact_path = _write_json_artifact(output_file, artifact)
     upload = _upload_math_final_artifact(
         artifact_path,
@@ -4673,6 +5144,11 @@ def _persist_math_final_artifact(
             run_id=resolved_run_id,
         )
         _write_json_artifact(artifact_path, artifact)
+    artifact.setdefault('runtime_profile', {})['artifact_persist_seconds'] = round(
+        time.perf_counter() - persist_started,
+        3,
+    )
+    _write_json_artifact(artifact_path, artifact)
     print(
         "HF_ARTIFACT "
         + json.dumps({
@@ -5651,12 +6127,28 @@ if __name__ == '__main__':
                         help='Keep following the progress file after existing lines are read')
     parser.add_argument('--live-progress-max-events', type=int, default=0,
                         help='Stop after this many parsed progress events (0 means no limit)')
+    parser.add_argument('--merge-final-artifacts', action='store_true',
+                        help='Merge sharded final-discovery JSON artifacts without rerunning discovery')
+    parser.add_argument('--merge-artifact-files', type=str, default=None,
+                        help='Comma-separated JSON artifact files to merge')
+    parser.add_argument('--merge-output-file', type=str, default=None,
+                        help='Optional JSON path for the merged final artifact')
+    parser.add_argument('--gpu-feasibility-benchmark', action='store_true',
+                        help='Run a tiny non-final CPU/GPU tensor feasibility benchmark')
+    parser.add_argument('--gpu-sample-count', type=int, default=50000,
+                        help='Samples for the tiny GPU feasibility benchmark')
+    parser.add_argument('--gpu-repeats', type=int, default=3,
+                        help='Repeats for the tiny GPU feasibility benchmark')
+    parser.add_argument('--gpu-output-file', type=str, default=None,
+                        help='Optional JSON path for the GPU feasibility report')
     parser.add_argument('--math-final-discovery', action='store_true',
                         help='Run the final math discovery campaign when the user is ready to watch')
     parser.add_argument('--section-study-cycles', type=int, default=1,
                         help='Repeat and consolidate each final world section before moving on')
     parser.add_argument('--parallel-cases', type=int, default=1,
                         help='Independent final cases to run concurrently inside each section cycle')
+    parser.add_argument('--profile-final-run', action='store_true',
+                        help='Record per-case and per-section runtime profile data in final artifacts')
     parser.add_argument('--equation-hidden-worlds', type=int, default=0,
                         help='Generated hidden worlds to include in equation campaign')
     parser.add_argument('--equation-hidden-start', type=int, default=0,
@@ -5751,6 +6243,28 @@ if __name__ == '__main__':
             progress_file=args.live_progress_file,
             follow=args.live_progress_follow,
             max_events=args.live_progress_max_events,
+        )
+        raise SystemExit(0)
+
+    if args.merge_final_artifacts:
+        if not args.merge_artifact_files:
+            raise SystemExit('--merge-artifact-files is required')
+        run_merge_final_artifacts(
+            [
+                item.strip()
+                for item in args.merge_artifact_files.split(',')
+                if item.strip()
+            ],
+            output_file=args.merge_output_file or args.hf_output_file,
+            run_id=args.hf_run_id,
+        )
+        raise SystemExit(0)
+
+    if args.gpu_feasibility_benchmark:
+        run_gpu_feasibility_benchmark(
+            sample_count=args.gpu_sample_count,
+            repeats=args.gpu_repeats,
+            output_file=args.gpu_output_file or args.hf_output_file,
         )
         raise SystemExit(0)
 
@@ -6010,6 +6524,7 @@ if __name__ == '__main__':
             hf_output_repo=args.hf_output_repo,
             run_id=args.hf_run_id,
             parallel_cases=args.parallel_cases,
+            profile_final_run=args.profile_final_run,
         )
         if (
             args.theory_memory_file
