@@ -1,0 +1,724 @@
+{
+  "equation_case_records": [
+    {
+      "context": "hidden_03_0003",
+      "expression": "x + vx * dt",
+      "label_leak_count": 0,
+      "passed": true,
+      "phase": "equation_followup",
+      "role": "position_update_equation",
+      "score": 0.97,
+      "seed": 0,
+      "target": "next_x"
+    },
+    {
+      "context": "repulsion",
+      "expression": "k * taper(separation, 6_065) * unit_generated_center_vector / separation^1",
+      "label_leak_count": 0,
+      "parameters": {
+        "baseline_x_intercept": 0.000316,
+        "baseline_x_velocity_scale": 0.0002,
+        "baseline_y_intercept": -0.153063,
+        "baseline_y_velocity_scale": -0.001757,
+        "center_x": 10.002,
+        "center_y": 9.514,
+        "cutoff_radius": 6.065,
+        "cutoff_reference_mse": 0.007257,
+        "directional_alignment": 0.993606,
+        "distance_exponent": 1.0,
+        "inside_fraction": 0.5,
+        "inside_train_count": 60,
+        "inside_valid_count": 14,
+        "k": -4.833062,
+        "mid_valid_count": 7,
+        "mse_improvement": 0.916539,
+        "operator_key": "operator:memory_prior:localized_tapered_power:6.245:2.0:direction:repulsion:3",
+        "operator_kind": "localized_tapered_power",
+        "outside_train_count": 59,
+        "outside_valid_count": 15,
+        "reference_mse": 0.013089,
+        "relation": "direction",
+        "smooth_reference_mse": 0.003858,
+        "tapered_mse_improvement": 0.88015,
+        "tapered_vs_cutoff_improvement": 0.78383,
+        "tapered_vs_smooth_improvement": 0.593406
+      },
+      "passed": true,
+      "phase": "equation_followup",
+      "role": "generated_operator_tapered_distance_direction_equation",
+      "score": 0.914,
+      "seed": 9,
+      "target": "baseline_adjusted_delta_velocity"
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "expression": "k * unit_local_inferred_vector / separation^1_5",
+      "label_leak_count": 0,
+      "parameters": {
+        "baseline_x_intercept": -0.008475,
+        "baseline_x_velocity_scale": 0.001212,
+        "baseline_y_intercept": -0.156622,
+        "baseline_y_velocity_scale": -0.000872,
+        "center_x": 9.343,
+        "center_y": 10.066,
+        "distance_exponent": 1.5,
+        "distance_mse_improvement": 0.742908,
+        "k": -0.80431,
+        "reference_mse": 0.000752
+      },
+      "passed": true,
+      "phase": "equation_followup",
+      "role": "local_residual_distance_scaled_direction_equation",
+      "score": 0.811,
+      "seed": 8,
+      "target": "baseline_adjusted_delta_velocity"
+    },
+    {
+      "context": "repulsion",
+      "expression": "k * taper(separation, 6_065) * unit_generated_center_vector / separation^1_75",
+      "label_leak_count": 0,
+      "parameters": {
+        "baseline_x_intercept": 0.024789,
+        "baseline_x_velocity_scale": 0.002927,
+        "baseline_y_intercept": -0.173734,
+        "baseline_y_velocity_scale": -0.000595,
+        "center_x": 10.002,
+        "center_y": 9.514,
+        "cutoff_radius": 6.065,
+        "cutoff_reference_mse": 0.009419,
+        "directional_alignment": 0.985202,
+        "distance_exponent": 1.75,
+        "inside_fraction": 0.5,
+        "inside_train_count": 74,
+        "inside_valid_count": 22,
+        "k": -8.36614,
+        "mid_valid_count": 13,
+        "mse_improvement": 0.877616,
+        "operator_key": "operator:memory_prior:localized_tapered_power:6.245:2.0:direction:repulsion:3",
+        "operator_kind": "localized_tapered_power",
+        "outside_train_count": 80,
+        "outside_valid_count": 16,
+        "reference_mse": 0.015904,
+        "relation": "direction",
+        "smooth_reference_mse": 0.003644,
+        "tapered_mse_improvement": 0.818254,
+        "tapered_vs_cutoff_improvement": 0.69311,
+        "tapered_vs_smooth_improvement": 0.206681
+      },
+      "passed": true,
+      "phase": "equation_followup",
+      "role": "generated_operator_tapered_distance_direction_equation",
+      "score": 0.905,
+      "seed": 10,
+      "target": "baseline_adjusted_delta_velocity"
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "expression": "k * taper(separation, 9_067) * unit_generated_center_vector / separation^0_5",
+      "label_leak_count": 0,
+      "parameters": {
+        "baseline_x_intercept": 0.007956,
+        "baseline_x_velocity_scale": -0.000243,
+        "baseline_y_intercept": -0.165797,
+        "baseline_y_velocity_scale": -0.00058,
+        "center_x": 8.281,
+        "center_y": 9.939,
+        "cutoff_radius": 9.067,
+        "cutoff_reference_mse": 0.001476,
+        "directional_alignment": 0.954217,
+        "distance_exponent": 0.5,
+        "inside_fraction": 0.598958,
+        "inside_train_count": 184,
+        "inside_valid_count": 46,
+        "k": -0.3768,
+        "mid_valid_count": 34,
+        "mse_improvement": 0.725427,
+        "operator_key": "operator:localized_tapered_power:raw_eq:residual_local_direction_direction_vector:direction",
+        "operator_kind": "localized_tapered_power",
+        "outside_train_count": 124,
+        "outside_valid_count": 30,
+        "reference_mse": 0.001824,
+        "relation": "direction",
+        "smooth_reference_mse": 0.000883,
+        "tapered_mse_improvement": 0.571377,
+        "tapered_vs_cutoff_improvement": 0.470354,
+        "tapered_vs_smooth_improvement": 0.114378
+      },
+      "passed": true,
+      "phase": "equation_followup",
+      "role": "generated_operator_tapered_distance_direction_equation",
+      "score": 0.874,
+      "seed": 9,
+      "target": "baseline_adjusted_delta_velocity"
+    }
+  ],
+  "planned_outcomes": [
+    {
+      "best_score": 0.0,
+      "context": "hidden_03_0003",
+      "experiment_kind": "post_run_replay_revision",
+      "outcome": "replay_still_baseline_headline",
+      "proof_passed": false,
+      "replay_expression": "x + vx * dt",
+      "replay_issue": "baseline_headline_needs_residual_replay",
+      "replay_key": "post_run_replay:hidden_03_0003:next_x:linear_transition:scalar_or_unknown:global:0:baseline_headline_needs_residual_replay",
+      "rival_best_score": 0.0,
+      "rival_proof_passed": false,
+      "seed": 0,
+      "target_scope": "hidden_03_0003",
+      "theory_kind": "residual_after_transition"
+    },
+    {
+      "best_score": 0.0,
+      "context": "repulsion",
+      "disagreement_mode": "blind_selected_law_holdout",
+      "experiment_kind": "blind_holdout_validation",
+      "invariant_key": "repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+      "outcome": "blind_holdout_conflicted",
+      "primary_theory_label": "tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+      "proof_passed": false,
+      "rival_best_score": 0.914,
+      "rival_multi_parameter_variants": [
+        {
+          "context": "repulsion",
+          "cutoff_radius": 6.065,
+          "distance_exponent": 0.5,
+          "label": "tapered_distance_direction_residual/separation^-0.5/tapered/cutoff~6.065/unit_generated_center_vector",
+          "law_family": "localized_tapered_power",
+          "score": 0.901,
+          "vector_basis": "unit_generated_center_vector",
+          "window_kind": "tapered"
+        },
+        {
+          "context": "repulsion",
+          "cutoff_radius": 6.065,
+          "distance_exponent": 1.0,
+          "label": "tapered_distance_direction_residual/separation^-1.0/tapered/cutoff~6.065/unit_generated_center_vector",
+          "law_family": "localized_tapered_power",
+          "score": 0.901,
+          "vector_basis": "unit_generated_center_vector",
+          "window_kind": "tapered"
+        },
+        {
+          "context": "repulsion",
+          "cutoff_radius": 6.065,
+          "distance_exponent": 0.25,
+          "label": "tapered_distance_direction_residual/separation^-0.25/tapered/cutoff~6.065/unit_generated_center_vector",
+          "law_family": "localized_tapered_power",
+          "score": 0.901,
+          "vector_basis": "unit_generated_center_vector",
+          "window_kind": "tapered"
+        },
+        {
+          "context": "repulsion",
+          "cutoff_radius": 6.065,
+          "distance_exponent": 1.25,
+          "label": "tapered_distance_direction_residual/separation^-1.25/tapered/cutoff~6.065/unit_generated_center_vector",
+          "law_family": "localized_tapered_power",
+          "score": 0.901,
+          "vector_basis": "unit_generated_center_vector",
+          "window_kind": "tapered"
+        }
+      ],
+      "rival_proof_passed": true,
+      "rival_scope": "repulsion/tapered_distance_direction_residual/separation^-0.5/tapered/cutoff~6.065/unit_generated_center_vector",
+      "rival_theory_labels": [
+        "tapered_distance_direction_residual/separation^-0.5/tapered/cutoff~6.065/unit_generated_center_vector",
+        "tapered_distance_direction_residual/separation^-1.0/tapered/cutoff~6.065/unit_generated_center_vector",
+        "tapered_distance_direction_residual/separation^-0.25/tapered/cutoff~6.065/unit_generated_center_vector",
+        "tapered_distance_direction_residual/separation^-1.25/tapered/cutoff~6.065/unit_generated_center_vector"
+      ],
+      "seed": 9,
+      "selected_law_replay_key": "selected_law_replay:repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered:separation^-1.5",
+      "selected_multi_parameter_variant": {
+        "context": "repulsion",
+        "cutoff_radius": 6.065,
+        "distance_exponent": 1.5,
+        "label": "tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+        "law_family": "localized_tapered_power",
+        "score": 0.901,
+        "vector_basis": "unit_generated_center_vector",
+        "window_kind": "tapered"
+      },
+      "target_scope": "repulsion/tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+      "theory_kind": "tapered_distance_direction_residual"
+    },
+    {
+      "best_score": 0.696,
+      "context": "inverse_square_repulsion",
+      "disagreement_mode": "blind_selected_law_holdout",
+      "experiment_kind": "blind_holdout_validation",
+      "invariant_key": "inverse_square_repulsion:baseline_adjusted_delta_velocity:inverse_separation_power:unit_local_inferred_vector:global",
+      "outcome": "blind_holdout_conflicted",
+      "primary_theory_label": "distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+      "proof_passed": true,
+      "rival_best_score": 0.871,
+      "rival_multi_parameter_variants": [
+        {
+          "context": "inverse_square_repulsion",
+          "distance_exponent": 2.0,
+          "label": "distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+          "law_family": "inverse_separation_power",
+          "score": 0.751,
+          "vector_basis": "unit_local_inferred_vector",
+          "window_kind": "global"
+        },
+        {
+          "context": "inverse_square_repulsion",
+          "distance_exponent": 1.5,
+          "label": "distance_scaled_direction_residual/separation^-1.5/unit_local_inferred_vector",
+          "law_family": "inverse_separation_power",
+          "score": 0.751,
+          "vector_basis": "unit_local_inferred_vector",
+          "window_kind": "global"
+        }
+      ],
+      "rival_proof_passed": true,
+      "rival_scope": "inverse_square_repulsion/distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+      "rival_theory_labels": [
+        "distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+        "distance_scaled_direction_residual/separation^-1.5/unit_local_inferred_vector"
+      ],
+      "seed": 8,
+      "selected_law_replay_key": "selected_law_replay:inverse_square_repulsion:baseline_adjusted_delta_velocity:inverse_separation_power:unit_local_inferred_vector:global:separation^-1.0",
+      "selected_multi_parameter_variant": {
+        "context": "inverse_square_repulsion",
+        "distance_exponent": 1.0,
+        "label": "distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+        "law_family": "inverse_separation_power",
+        "score": 0.751,
+        "vector_basis": "unit_local_inferred_vector",
+        "window_kind": "global"
+      },
+      "target_scope": "inverse_square_repulsion/distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+      "theory_kind": "distance_scaled_direction_residual"
+    },
+    {
+      "best_score": 0.0,
+      "context": "repulsion",
+      "disagreement_mode": "blind_selected_law_holdout",
+      "experiment_kind": "blind_holdout_validation",
+      "invariant_key": "repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+      "outcome": "blind_holdout_conflicted",
+      "primary_theory_label": "tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+      "proof_passed": false,
+      "rival_best_score": 0.905,
+      "rival_multi_parameter_variants": [
+        {
+          "context": "repulsion",
+          "cutoff_radius": 6.065,
+          "distance_exponent": 1.0,
+          "label": "tapered_distance_direction_residual/separation^-1.0/tapered/cutoff~6.065/unit_generated_center_vector",
+          "law_family": "localized_tapered_power",
+          "score": 0.902,
+          "vector_basis": "unit_generated_center_vector",
+          "window_kind": "tapered"
+        },
+        {
+          "context": "repulsion",
+          "cutoff_radius": 6.065,
+          "distance_exponent": 0.5,
+          "label": "tapered_distance_direction_residual/separation^-0.5/tapered/cutoff~6.065/unit_generated_center_vector",
+          "law_family": "localized_tapered_power",
+          "score": 0.902,
+          "vector_basis": "unit_generated_center_vector",
+          "window_kind": "tapered"
+        },
+        {
+          "context": "repulsion",
+          "cutoff_radius": 6.065,
+          "distance_exponent": 0.25,
+          "label": "tapered_distance_direction_residual/separation^-0.25/tapered/cutoff~6.065/unit_generated_center_vector",
+          "law_family": "localized_tapered_power",
+          "score": 0.902,
+          "vector_basis": "unit_generated_center_vector",
+          "window_kind": "tapered"
+        },
+        {
+          "context": "repulsion",
+          "cutoff_radius": 6.065,
+          "distance_exponent": 1.25,
+          "label": "tapered_distance_direction_residual/separation^-1.25/tapered/cutoff~6.065/unit_generated_center_vector",
+          "law_family": "localized_tapered_power",
+          "score": 0.902,
+          "vector_basis": "unit_generated_center_vector",
+          "window_kind": "tapered"
+        }
+      ],
+      "rival_proof_passed": true,
+      "rival_scope": "repulsion/tapered_distance_direction_residual/separation^-1.0/tapered/cutoff~6.065/unit_generated_center_vector",
+      "rival_theory_labels": [
+        "tapered_distance_direction_residual/separation^-1.0/tapered/cutoff~6.065/unit_generated_center_vector",
+        "tapered_distance_direction_residual/separation^-0.5/tapered/cutoff~6.065/unit_generated_center_vector",
+        "tapered_distance_direction_residual/separation^-0.25/tapered/cutoff~6.065/unit_generated_center_vector",
+        "tapered_distance_direction_residual/separation^-1.25/tapered/cutoff~6.065/unit_generated_center_vector"
+      ],
+      "seed": 10,
+      "selected_law_replay_key": "selected_law_replay:repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered:separation^-1.5",
+      "selected_multi_parameter_variant": {
+        "context": "repulsion",
+        "cutoff_radius": 6.065,
+        "distance_exponent": 1.5,
+        "label": "tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+        "law_family": "localized_tapered_power",
+        "score": 0.902,
+        "vector_basis": "unit_generated_center_vector",
+        "window_kind": "tapered"
+      },
+      "target_scope": "repulsion/tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+      "theory_kind": "tapered_distance_direction_residual"
+    },
+    {
+      "best_score": 0.0,
+      "context": "inverse_square_repulsion",
+      "disagreement_mode": "blind_selected_law_holdout",
+      "experiment_kind": "blind_holdout_validation",
+      "invariant_key": "inverse_square_repulsion:baseline_adjusted_delta_velocity:inverse_separation_power:unit_local_inferred_vector:global",
+      "outcome": "blind_holdout_conflicted",
+      "primary_theory_label": "distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+      "proof_passed": false,
+      "rival_best_score": 0.89,
+      "rival_multi_parameter_variants": [
+        {
+          "context": "inverse_square_repulsion",
+          "distance_exponent": 2.0,
+          "label": "distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+          "law_family": "inverse_separation_power",
+          "score": 0.76,
+          "vector_basis": "unit_local_inferred_vector",
+          "window_kind": "global"
+        },
+        {
+          "context": "inverse_square_repulsion",
+          "distance_exponent": 1.5,
+          "label": "distance_scaled_direction_residual/separation^-1.5/unit_local_inferred_vector",
+          "law_family": "inverse_separation_power",
+          "score": 0.76,
+          "vector_basis": "unit_local_inferred_vector",
+          "window_kind": "global"
+        }
+      ],
+      "rival_proof_passed": true,
+      "rival_scope": "inverse_square_repulsion/distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+      "rival_theory_labels": [
+        "distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+        "distance_scaled_direction_residual/separation^-1.5/unit_local_inferred_vector"
+      ],
+      "seed": 9,
+      "selected_law_replay_key": "selected_law_replay:inverse_square_repulsion:baseline_adjusted_delta_velocity:inverse_separation_power:unit_local_inferred_vector:global:separation^-1.0",
+      "selected_multi_parameter_variant": {
+        "context": "inverse_square_repulsion",
+        "distance_exponent": 1.0,
+        "label": "distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+        "law_family": "inverse_separation_power",
+        "score": 0.76,
+        "vector_basis": "unit_local_inferred_vector",
+        "window_kind": "global"
+      },
+      "target_scope": "inverse_square_repulsion/distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+      "theory_kind": "distance_scaled_direction_residual"
+    }
+  ],
+  "records": [
+    {
+      "context": "hidden_03_0003",
+      "phase": "probe_ready",
+      "planned_experiment_outcome": {
+        "best_score": 0.0,
+        "context": "hidden_03_0003",
+        "experiment_kind": "post_run_replay_revision",
+        "outcome": "replay_still_baseline_headline",
+        "proof_passed": false,
+        "replay_expression": "x + vx * dt",
+        "replay_issue": "baseline_headline_needs_residual_replay",
+        "replay_key": "post_run_replay:hidden_03_0003:next_x:linear_transition:scalar_or_unknown:global:0:baseline_headline_needs_residual_replay",
+        "rival_best_score": 0.0,
+        "rival_proof_passed": false,
+        "seed": 0,
+        "target_scope": "hidden_03_0003",
+        "theory_kind": "residual_after_transition"
+      },
+      "proof_check_count": 2,
+      "seed": 0,
+      "theory_count": 4
+    },
+    {
+      "context": "repulsion",
+      "phase": "probe_ready",
+      "planned_experiment_outcome": {
+        "best_score": 0.0,
+        "context": "repulsion",
+        "disagreement_mode": "blind_selected_law_holdout",
+        "experiment_kind": "blind_holdout_validation",
+        "invariant_key": "repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+        "outcome": "blind_holdout_conflicted",
+        "primary_theory_label": "tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+        "proof_passed": false,
+        "rival_best_score": 0.914,
+        "rival_multi_parameter_variants": [
+          {
+            "context": "repulsion",
+            "cutoff_radius": 6.065,
+            "distance_exponent": 0.5,
+            "label": "tapered_distance_direction_residual/separation^-0.5/tapered/cutoff~6.065/unit_generated_center_vector",
+            "law_family": "localized_tapered_power",
+            "score": 0.901,
+            "vector_basis": "unit_generated_center_vector",
+            "window_kind": "tapered"
+          },
+          {
+            "context": "repulsion",
+            "cutoff_radius": 6.065,
+            "distance_exponent": 1.0,
+            "label": "tapered_distance_direction_residual/separation^-1.0/tapered/cutoff~6.065/unit_generated_center_vector",
+            "law_family": "localized_tapered_power",
+            "score": 0.901,
+            "vector_basis": "unit_generated_center_vector",
+            "window_kind": "tapered"
+          },
+          {
+            "context": "repulsion",
+            "cutoff_radius": 6.065,
+            "distance_exponent": 0.25,
+            "label": "tapered_distance_direction_residual/separation^-0.25/tapered/cutoff~6.065/unit_generated_center_vector",
+            "law_family": "localized_tapered_power",
+            "score": 0.901,
+            "vector_basis": "unit_generated_center_vector",
+            "window_kind": "tapered"
+          },
+          {
+            "context": "repulsion",
+            "cutoff_radius": 6.065,
+            "distance_exponent": 1.25,
+            "label": "tapered_distance_direction_residual/separation^-1.25/tapered/cutoff~6.065/unit_generated_center_vector",
+            "law_family": "localized_tapered_power",
+            "score": 0.901,
+            "vector_basis": "unit_generated_center_vector",
+            "window_kind": "tapered"
+          }
+        ],
+        "rival_proof_passed": true,
+        "rival_scope": "repulsion/tapered_distance_direction_residual/separation^-0.5/tapered/cutoff~6.065/unit_generated_center_vector",
+        "rival_theory_labels": [
+          "tapered_distance_direction_residual/separation^-0.5/tapered/cutoff~6.065/unit_generated_center_vector",
+          "tapered_distance_direction_residual/separation^-1.0/tapered/cutoff~6.065/unit_generated_center_vector",
+          "tapered_distance_direction_residual/separation^-0.25/tapered/cutoff~6.065/unit_generated_center_vector",
+          "tapered_distance_direction_residual/separation^-1.25/tapered/cutoff~6.065/unit_generated_center_vector"
+        ],
+        "seed": 9,
+        "selected_law_replay_key": "selected_law_replay:repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered:separation^-1.5",
+        "selected_multi_parameter_variant": {
+          "context": "repulsion",
+          "cutoff_radius": 6.065,
+          "distance_exponent": 1.5,
+          "label": "tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+          "law_family": "localized_tapered_power",
+          "score": 0.901,
+          "vector_basis": "unit_generated_center_vector",
+          "window_kind": "tapered"
+        },
+        "target_scope": "repulsion/tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+        "theory_kind": "tapered_distance_direction_residual"
+      },
+      "proof_check_count": 5,
+      "seed": 9,
+      "theory_count": 8
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "phase": "probe_ready",
+      "planned_experiment_outcome": {
+        "best_score": 0.696,
+        "context": "inverse_square_repulsion",
+        "disagreement_mode": "blind_selected_law_holdout",
+        "experiment_kind": "blind_holdout_validation",
+        "invariant_key": "inverse_square_repulsion:baseline_adjusted_delta_velocity:inverse_separation_power:unit_local_inferred_vector:global",
+        "outcome": "blind_holdout_conflicted",
+        "primary_theory_label": "distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+        "proof_passed": true,
+        "rival_best_score": 0.871,
+        "rival_multi_parameter_variants": [
+          {
+            "context": "inverse_square_repulsion",
+            "distance_exponent": 2.0,
+            "label": "distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+            "law_family": "inverse_separation_power",
+            "score": 0.751,
+            "vector_basis": "unit_local_inferred_vector",
+            "window_kind": "global"
+          },
+          {
+            "context": "inverse_square_repulsion",
+            "distance_exponent": 1.5,
+            "label": "distance_scaled_direction_residual/separation^-1.5/unit_local_inferred_vector",
+            "law_family": "inverse_separation_power",
+            "score": 0.751,
+            "vector_basis": "unit_local_inferred_vector",
+            "window_kind": "global"
+          }
+        ],
+        "rival_proof_passed": true,
+        "rival_scope": "inverse_square_repulsion/distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+        "rival_theory_labels": [
+          "distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+          "distance_scaled_direction_residual/separation^-1.5/unit_local_inferred_vector"
+        ],
+        "seed": 8,
+        "selected_law_replay_key": "selected_law_replay:inverse_square_repulsion:baseline_adjusted_delta_velocity:inverse_separation_power:unit_local_inferred_vector:global:separation^-1.0",
+        "selected_multi_parameter_variant": {
+          "context": "inverse_square_repulsion",
+          "distance_exponent": 1.0,
+          "label": "distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+          "law_family": "inverse_separation_power",
+          "score": 0.751,
+          "vector_basis": "unit_local_inferred_vector",
+          "window_kind": "global"
+        },
+        "target_scope": "inverse_square_repulsion/distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+        "theory_kind": "distance_scaled_direction_residual"
+      },
+      "proof_check_count": 5,
+      "seed": 8,
+      "theory_count": 8
+    },
+    {
+      "context": "repulsion",
+      "phase": "probe_ready",
+      "planned_experiment_outcome": {
+        "best_score": 0.0,
+        "context": "repulsion",
+        "disagreement_mode": "blind_selected_law_holdout",
+        "experiment_kind": "blind_holdout_validation",
+        "invariant_key": "repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+        "outcome": "blind_holdout_conflicted",
+        "primary_theory_label": "tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+        "proof_passed": false,
+        "rival_best_score": 0.905,
+        "rival_multi_parameter_variants": [
+          {
+            "context": "repulsion",
+            "cutoff_radius": 6.065,
+            "distance_exponent": 1.0,
+            "label": "tapered_distance_direction_residual/separation^-1.0/tapered/cutoff~6.065/unit_generated_center_vector",
+            "law_family": "localized_tapered_power",
+            "score": 0.902,
+            "vector_basis": "unit_generated_center_vector",
+            "window_kind": "tapered"
+          },
+          {
+            "context": "repulsion",
+            "cutoff_radius": 6.065,
+            "distance_exponent": 0.5,
+            "label": "tapered_distance_direction_residual/separation^-0.5/tapered/cutoff~6.065/unit_generated_center_vector",
+            "law_family": "localized_tapered_power",
+            "score": 0.902,
+            "vector_basis": "unit_generated_center_vector",
+            "window_kind": "tapered"
+          },
+          {
+            "context": "repulsion",
+            "cutoff_radius": 6.065,
+            "distance_exponent": 0.25,
+            "label": "tapered_distance_direction_residual/separation^-0.25/tapered/cutoff~6.065/unit_generated_center_vector",
+            "law_family": "localized_tapered_power",
+            "score": 0.902,
+            "vector_basis": "unit_generated_center_vector",
+            "window_kind": "tapered"
+          },
+          {
+            "context": "repulsion",
+            "cutoff_radius": 6.065,
+            "distance_exponent": 1.25,
+            "label": "tapered_distance_direction_residual/separation^-1.25/tapered/cutoff~6.065/unit_generated_center_vector",
+            "law_family": "localized_tapered_power",
+            "score": 0.902,
+            "vector_basis": "unit_generated_center_vector",
+            "window_kind": "tapered"
+          }
+        ],
+        "rival_proof_passed": true,
+        "rival_scope": "repulsion/tapered_distance_direction_residual/separation^-1.0/tapered/cutoff~6.065/unit_generated_center_vector",
+        "rival_theory_labels": [
+          "tapered_distance_direction_residual/separation^-1.0/tapered/cutoff~6.065/unit_generated_center_vector",
+          "tapered_distance_direction_residual/separation^-0.5/tapered/cutoff~6.065/unit_generated_center_vector",
+          "tapered_distance_direction_residual/separation^-0.25/tapered/cutoff~6.065/unit_generated_center_vector",
+          "tapered_distance_direction_residual/separation^-1.25/tapered/cutoff~6.065/unit_generated_center_vector"
+        ],
+        "seed": 10,
+        "selected_law_replay_key": "selected_law_replay:repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered:separation^-1.5",
+        "selected_multi_parameter_variant": {
+          "context": "repulsion",
+          "cutoff_radius": 6.065,
+          "distance_exponent": 1.5,
+          "label": "tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+          "law_family": "localized_tapered_power",
+          "score": 0.902,
+          "vector_basis": "unit_generated_center_vector",
+          "window_kind": "tapered"
+        },
+        "target_scope": "repulsion/tapered_distance_direction_residual/separation^-1.5/tapered/cutoff~6.065/unit_generated_center_vector",
+        "theory_kind": "tapered_distance_direction_residual"
+      },
+      "proof_check_count": 5,
+      "seed": 10,
+      "theory_count": 8
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "phase": "probe_ready",
+      "planned_experiment_outcome": {
+        "best_score": 0.0,
+        "context": "inverse_square_repulsion",
+        "disagreement_mode": "blind_selected_law_holdout",
+        "experiment_kind": "blind_holdout_validation",
+        "invariant_key": "inverse_square_repulsion:baseline_adjusted_delta_velocity:inverse_separation_power:unit_local_inferred_vector:global",
+        "outcome": "blind_holdout_conflicted",
+        "primary_theory_label": "distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+        "proof_passed": false,
+        "rival_best_score": 0.89,
+        "rival_multi_parameter_variants": [
+          {
+            "context": "inverse_square_repulsion",
+            "distance_exponent": 2.0,
+            "label": "distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+            "law_family": "inverse_separation_power",
+            "score": 0.76,
+            "vector_basis": "unit_local_inferred_vector",
+            "window_kind": "global"
+          },
+          {
+            "context": "inverse_square_repulsion",
+            "distance_exponent": 1.5,
+            "label": "distance_scaled_direction_residual/separation^-1.5/unit_local_inferred_vector",
+            "law_family": "inverse_separation_power",
+            "score": 0.76,
+            "vector_basis": "unit_local_inferred_vector",
+            "window_kind": "global"
+          }
+        ],
+        "rival_proof_passed": true,
+        "rival_scope": "inverse_square_repulsion/distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+        "rival_theory_labels": [
+          "distance_scaled_direction_residual/separation^-2.0/unit_local_inferred_vector",
+          "distance_scaled_direction_residual/separation^-1.5/unit_local_inferred_vector"
+        ],
+        "seed": 9,
+        "selected_law_replay_key": "selected_law_replay:inverse_square_repulsion:baseline_adjusted_delta_velocity:inverse_separation_power:unit_local_inferred_vector:global:separation^-1.0",
+        "selected_multi_parameter_variant": {
+          "context": "inverse_square_repulsion",
+          "distance_exponent": 1.0,
+          "label": "distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+          "law_family": "inverse_separation_power",
+          "score": 0.76,
+          "vector_basis": "unit_local_inferred_vector",
+          "window_kind": "global"
+        },
+        "target_scope": "inverse_square_repulsion/distance_scaled_direction_residual/separation^-1.0/unit_local_inferred_vector",
+        "theory_kind": "distance_scaled_direction_residual"
+      },
+      "proof_check_count": 5,
+      "seed": 9,
+      "theory_count": 8
+    }
+  ]
+}

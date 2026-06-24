@@ -2143,6 +2143,91 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertEqual('blind_holdout_confirmed', confirmed['outcome'])
         self.assertEqual([], memory.blind_holdout_validation_experiments(limit=1))
 
+    def test_blind_holdout_conflict_routes_to_selected_law_resolution(self):
+        memory = self._build_selected_tapered_law_memory()
+        plan = next(
+            item for item in memory.planned_experiments(
+                world_types=['hidden_procedural', 'localized_gravity'],
+                object_counts=[5],
+                steps=240,
+                limit=4,
+            )
+            if item['experiment_kind'] == 'blind_holdout_validation'
+        )
+        memory.planned_outcomes.append({
+            'theory_kind': plan['theory_kind'],
+            'experiment_kind': 'selected_law_conflict_resolution',
+            'outcome': 'conflict_rival_supported',
+            'context': 'localized_gravity',
+            'seed': 99,
+            'selected_law_replay_key': plan['selected_law_replay_key'],
+        })
+        conflicted = memory.evaluate_planned_result(
+            plan,
+            context='localized_gravity',
+            seed=plan['seed'],
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 1.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.82,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(conflicted)
+        memory.record_equation_case_result(
+            'localized_gravity',
+            plan['seed'],
+            {
+                'interesting_equation': {
+                    'target': 'baseline_adjusted_delta_velocity',
+                    'expression': (
+                        'k * taper(separation, 9) * '
+                        'unit_generated_center_vector / separation^1_5'
+                    ),
+                    'role': 'generated_operator_distance_scaled_direction_equation',
+                    'score': 0.82,
+                    'parameters': {
+                        'cutoff_radius': 9.0,
+                        'distance_exponent': 1.5,
+                    },
+                },
+                'passed': True,
+                'label_leaks': [],
+            },
+            phase='equation_followup',
+        )
+
+        conflict = memory.selected_law_conflict_experiments(limit=1)[0]
+        next_plan = memory.planned_experiments(
+            world_types=['hidden_procedural', 'localized_gravity'],
+            object_counts=[5],
+            steps=240,
+            limit=1,
+        )[0]
+        theorem = next(
+            item for item in memory.theorem_memory(limit=4)
+            if item['theorem_kind'] == 'selected_equation_invariant'
+        )
+
+        self.assertEqual('blind_holdout_conflicted', conflicted['outcome'])
+        self.assertEqual([], memory.blind_holdout_validation_experiments(limit=1))
+        self.assertEqual(
+            'selected_law_conflict_resolution',
+            conflict['experiment_kind'],
+        )
+        self.assertEqual(1, conflict['proof_evidence']['blind_conflicted_count'])
+        self.assertEqual(1, conflict['proof_evidence']['attempt_count'])
+        self.assertEqual(
+            'selected_law_conflict_resolution',
+            next_plan['experiment_kind'],
+        )
+        self.assertEqual('holdout_conflicted', theorem['status'])
+
     def test_rediscovery_goal_progress_penalizes_unresolved_selected_laws(self):
         memory = self._build_selected_tapered_law_memory()
         replay = memory.selected_law_replay_agenda(limit=1)[0]

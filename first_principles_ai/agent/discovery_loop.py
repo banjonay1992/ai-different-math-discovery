@@ -4054,9 +4054,12 @@ class CumulativeTheoryMemory:
             replay_stats = self._selected_law_replay_outcome_stats(
                 self._selected_law_replay_key(invariant),
             )
-            if replay_stats['conflicted_count'] > 0:
+            blind_stats = self._blind_holdout_validation_outcome_stats(
+                self._selected_law_replay_key(invariant),
+            )
+            if replay_stats['conflicted_count'] > 0 or blind_stats['conflicted_count'] > 0:
                 status = 'holdout_conflicted'
-            elif replay_stats['confirmed_count'] > 0:
+            elif replay_stats['confirmed_count'] > 0 or blind_stats['confirmed_count'] > 0:
                 status = 'heldout_confirmed'
             else:
                 status = 'parameter_selected_needs_holdout'
@@ -4088,6 +4091,9 @@ class CumulativeTheoryMemory:
                     'selected_law_replay_confirmed_count': replay_stats['confirmed_count'],
                     'selected_law_replay_conflicted_count': replay_stats['conflicted_count'],
                     'selected_law_replay_settled_count': replay_stats['settled_count'],
+                    'blind_holdout_attempt_count': blind_stats['attempt_count'],
+                    'blind_holdout_confirmed_count': blind_stats['confirmed_count'],
+                    'blind_holdout_conflicted_count': blind_stats['conflicted_count'],
                 },
                 'proof_obligations': [
                     'parameter_resolution_replay',
@@ -4285,15 +4291,27 @@ class CumulativeTheoryMemory:
                 continue
             replay_key = self._selected_law_replay_key(invariant)
             replay_stats = self._selected_law_replay_outcome_stats(replay_key)
-            if replay_stats['conflicted_count'] <= 0:
+            blind_stats = self._blind_holdout_validation_outcome_stats(replay_key)
+            if (
+                replay_stats['conflicted_count'] <= 0
+                and blind_stats['conflicted_count'] <= 0
+            ):
                 continue
             conflict_stats = self._selected_law_conflict_outcome_stats(replay_key)
-            if conflict_stats['settled_count'] > 0:
-                continue
-            conflict_outcomes = self._selected_law_replay_outcomes(
-                replay_key,
-                outcomes={'selected_law_replay_conflicted'},
+            latest_conflict_index = self._latest_selected_law_conflict_source_index(
+                replay_key
             )
+            if (
+                conflict_stats['settled_count'] > 0
+                and conflict_stats['latest_settled_index'] >= latest_conflict_index
+            ):
+                continue
+            effective_attempt_count = (
+                0
+                if latest_conflict_index > conflict_stats['latest_settled_index']
+                else conflict_stats['attempt_count']
+            )
+            conflict_outcomes = self._selected_law_conflict_source_outcomes(replay_key)
             conflict_records = self._records_for_planned_outcomes(conflict_outcomes)
             theory_kind = self._equation_invariant_theory_kind(invariant)
             selected_variant = self._multi_parameter_variant_from_invariant(
@@ -4322,7 +4340,7 @@ class CumulativeTheoryMemory:
                     0.995,
                     0.97
                     + min(0.02, 0.004 * support_count)
-                    - min(0.18, 0.06 * conflict_stats['attempt_count']),
+                    - min(0.18, 0.06 * effective_attempt_count),
                 ),
             )
             recommendations.append({
@@ -4352,7 +4370,9 @@ class CumulativeTheoryMemory:
                     'proof_rate': 0.0,
                     'mean_score': score,
                     'conflicted_count': replay_stats['conflicted_count'],
+                    'blind_conflicted_count': blind_stats['conflicted_count'],
                     'attempt_count': conflict_stats['attempt_count'],
+                    'effective_attempt_count': effective_attempt_count,
                 },
                 'invariant_key': invariant.get('key'),
                 'selected_law_replay_key': replay_key,
@@ -4411,6 +4431,8 @@ class CumulativeTheoryMemory:
             replay_key = self._selected_law_replay_key(invariant)
             outcome_stats = self._blind_holdout_validation_outcome_stats(replay_key)
             if outcome_stats['confirmed_count'] > 0:
+                continue
+            if outcome_stats['conflicted_count'] > 0:
                 continue
             if (
                 outcome_stats['attempt_count'] >= 3
@@ -4970,6 +4992,47 @@ class CumulativeTheoryMemory:
         )
         return rows
 
+    def _selected_law_conflict_source_outcomes(
+        self,
+        replay_key: str,
+    ) -> list[dict[str, Any]]:
+        rows = self._selected_law_replay_outcomes(
+            replay_key,
+            outcomes={'selected_law_replay_conflicted'},
+        )
+        rows.extend(
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'blind_holdout_validation'
+            and outcome.get('selected_law_replay_key') == replay_key
+            and outcome.get('outcome') == 'blind_holdout_conflicted'
+        )
+        rows.sort(
+            key=lambda item: (
+                int(item.get('seed', 0) or 0),
+                str(item.get('context', '')),
+                str(item.get('experiment_kind', '')),
+                str(item.get('outcome', '')),
+            )
+        )
+        return rows
+
+    def _latest_selected_law_conflict_source_index(self, replay_key: str) -> int:
+        latest = -1
+        for index, outcome in enumerate(self.planned_outcomes):
+            if outcome.get('selected_law_replay_key') != replay_key:
+                continue
+            if (
+                outcome.get('experiment_kind') == 'selected_law_replay'
+                and outcome.get('outcome') == 'selected_law_replay_conflicted'
+            ):
+                latest = max(latest, index)
+            elif (
+                outcome.get('experiment_kind') == 'blind_holdout_validation'
+                and outcome.get('outcome') == 'blind_holdout_conflicted'
+            ):
+                latest = max(latest, index)
+        return latest
+
     def _records_for_planned_outcomes(
         self,
         outcomes: list[dict[str, Any]],
@@ -5007,20 +5070,23 @@ class CumulativeTheoryMemory:
 
     def _selected_law_conflict_outcome_stats(self, replay_key: str) -> dict[str, int]:
         outcomes = [
-            outcome for outcome in self.planned_outcomes
+            (index, outcome)
+            for index, outcome in enumerate(self.planned_outcomes)
             if outcome.get('experiment_kind') == 'selected_law_conflict_resolution'
             and outcome.get('selected_law_replay_key') == replay_key
         ]
+        settled_indices = [
+            index for index, outcome in outcomes
+            if outcome.get('outcome') in {
+                'conflict_selected_restored',
+                'conflict_rival_supported',
+                'conflict_domain_split_supported',
+            }
+        ]
         return {
             'attempt_count': len(outcomes),
-            'settled_count': sum(
-                1 for outcome in outcomes
-                if outcome.get('outcome') in {
-                    'conflict_selected_restored',
-                    'conflict_rival_supported',
-                    'conflict_domain_split_supported',
-                }
-            ),
+            'settled_count': len(settled_indices),
+            'latest_settled_index': max(settled_indices) if settled_indices else -1,
         }
 
     def _blind_holdout_validation_outcome_stats(self, replay_key: str) -> dict[str, int]:
