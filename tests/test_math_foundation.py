@@ -193,6 +193,43 @@ class MathFoundationTests(unittest.TestCase):
         self.assertTrue(all('equation_passed' in result for result in results))
         self.assertEqual(2, len(theory_memory.records))
 
+    def test_math_final_discovery_can_repeat_and_consolidate_each_section(self):
+        theory_memory = CumulativeTheoryMemory()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results = run_math_final_discovery(
+                seeds=1,
+                steps=60,
+                object_counts=[3],
+                world_types=['standard'],
+                hidden_worlds=1,
+                num_agents=2,
+                section_study_cycles=2,
+                theory_memory=theory_memory,
+            )
+
+        text = output.getvalue()
+        standard_results = [
+            result for result in results
+            if result['context'] == 'standard'
+        ]
+        hidden_results = [
+            result for result in results
+            if result['context'].startswith('hidden_')
+        ]
+
+        self.assertEqual(3, len(results))
+        self.assertEqual([0, 1], [result['seed'] for result in standard_results])
+        self.assertEqual(1, len(hidden_results))
+        self.assertIn('Section study cycles: 2', text)
+        self.assertIn('Section study cycle 1/2: standard', text)
+        self.assertIn('Section study cycle 2/2: standard', text)
+        self.assertIn('Section study summary: standard cycle=1/2', text)
+        self.assertIn('Section study summary: standard cycle=2/2', text)
+        self.assertIn('Families:', text)
+        self.assertIn('Best so far:', text)
+        self.assertEqual(3, len(theory_memory.records))
+
 
 if __name__ == '__main__':
     unittest.main()

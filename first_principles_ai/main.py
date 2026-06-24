@@ -22,6 +22,7 @@ import contextlib
 import io
 import json
 import time
+from collections import Counter
 from pathlib import Path
 
 # Add project root to path
@@ -2703,11 +2704,13 @@ def run_math_final_discovery(
     world_types: list[str] = None,
     hidden_worlds: int = 3,
     num_agents: int = 2,
+    section_study_cycles: int = 1,
     theory_memory: CumulativeTheoryMemory | None = None,
 ) -> list[dict]:
     """Run the watched discovery campaign and report live performance metrics."""
     object_counts = object_counts or [5]
     world_types = world_types or WORLD_TYPES
+    section_study_cycles = max(1, int(section_study_cycles or 1))
     results = []
     theory_memory = theory_memory or CumulativeTheoryMemory()
 
@@ -2719,6 +2722,7 @@ def run_math_final_discovery(
     print(f"Seeds: 0..{seeds - 1}", flush=True)
     print(f"Object counts: {', '.join(str(count) for count in object_counts)}", flush=True)
     print(f"Steps per run: {steps}", flush=True)
+    print(f"Section study cycles: {section_study_cycles}", flush=True)
     print(flush=True)
     print(
         f"{'Context':24s} {'Seed':>4s} {'Obj':>3s} "
@@ -2730,42 +2734,62 @@ def run_math_final_discovery(
     print("-" * 132, flush=True)
 
     for world_type in world_types:
-        for object_count in object_counts:
-            for seed in range(seeds):
+        section_results = []
+        for cycle in range(section_study_cycles):
+            if section_study_cycles > 1:
                 print(
-                    f"Running final case: {world_type} seed={seed} "
-                    f"objects={object_count} steps={steps}",
+                    f"Section study cycle {cycle + 1}/{section_study_cycles}: "
+                    f"{world_type}",
                     flush=True,
                 )
-                result = _run_math_final_discovery_case(
-                    context=world_type,
-                    seed=seed,
-                    object_count=object_count,
-                    steps=steps,
-                    num_agents=num_agents,
-                    world_type=world_type,
-                    equation_operator_priors=theory_memory.generated_operator_priors(
+            for object_count in object_counts:
+                for seed in range(seeds):
+                    actual_seed = seed + cycle * seeds
+                    print(
+                        f"Running final case: {world_type} seed={actual_seed} "
+                        f"objects={object_count} steps={steps}",
+                        flush=True,
+                    )
+                    result = _run_math_final_discovery_case(
                         context=world_type,
-                    ),
+                        seed=actual_seed,
+                        object_count=object_count,
+                        steps=steps,
+                        num_agents=num_agents,
+                        world_type=world_type,
+                        equation_operator_priors=theory_memory.generated_operator_priors(
+                            context=world_type,
+                        ),
+                    )
+                    results.append(result)
+                    section_results.append(result)
+                    theory_memory.record_result(
+                        result['context'],
+                        result['seed'],
+                        result.get('discovery_loop', {}),
+                    )
+                    theory_memory.record_operator_prior_results(
+                        result['context'],
+                        result['seed'],
+                        result,
+                    )
+                    theory_memory.record_equation_case_result(
+                        result['context'],
+                        result['seed'],
+                        result,
+                        phase='math_final_discovery',
+                    )
+                    _print_math_final_discovery_row(result)
+            if section_study_cycles > 1:
+                _print_section_study_summary(
+                    world_type,
+                    section_results,
+                    theory_memory,
+                    object_counts=object_counts,
+                    steps=steps,
+                    cycle=cycle + 1,
+                    total_cycles=section_study_cycles,
                 )
-                results.append(result)
-                theory_memory.record_result(
-                    result['context'],
-                    result['seed'],
-                    result.get('discovery_loop', {}),
-                )
-                theory_memory.record_operator_prior_results(
-                    result['context'],
-                    result['seed'],
-                    result,
-                )
-                theory_memory.record_equation_case_result(
-                    result['context'],
-                    result['seed'],
-                    result,
-                    phase='math_final_discovery',
-                )
-                _print_math_final_discovery_row(result)
 
     for index in range(hidden_worlds):
         manifest = generate_hidden_world_manifest(index, variant=index)
@@ -3239,6 +3263,94 @@ def _print_math_final_discovery_row(result: dict):
         f"{result['interesting_score']:7.2f} {status:>6s} {equation_text}",
         flush=True,
     )
+
+
+def _counter_preview(counter: Counter, limit: int = 4) -> str:
+    if not counter:
+        return 'none'
+    return ', '.join(
+        f"{key}:{count}" for key, count in counter.most_common(limit)
+    )
+
+
+def _interesting_equation_family(result: dict) -> tuple[str, str]:
+    interesting = dict(result.get('interesting_equation') or {})
+    parameters = dict(interesting.get('parameters') or {})
+    expression = str(interesting.get('expression') or '')
+    family = (
+        parameters.get('operator_kind')
+        or interesting.get('role')
+        or 'unknown'
+    )
+    exponent = parameters.get('distance_exponent')
+    if exponent is None and 'separation^' in expression:
+        exponent = expression.rsplit('separation^', 1)[-1].split()[0]
+    exponent_label = 'none' if exponent is None else str(exponent)
+    return str(family), exponent_label
+
+
+def _print_section_study_summary(
+    context: str,
+    section_results: list[dict],
+    theory_memory: CumulativeTheoryMemory,
+    *,
+    object_counts: list[int],
+    steps: int,
+    cycle: int,
+    total_cycles: int,
+):
+    if not section_results:
+        return
+    passed = sum(1 for result in section_results if result.get('passed'))
+    leaks = sum(len(result.get('label_leaks') or []) for result in section_results)
+    family_counts = Counter()
+    exponent_counts = Counter()
+    for result in section_results:
+        family, exponent = _interesting_equation_family(result)
+        family_counts[family] += 1
+        exponent_counts[exponent] += 1
+    best = max(
+        section_results,
+        key=lambda item: float(item.get('interesting_score', 0.0) or 0.0),
+    )
+    best_equation = dict(best.get('interesting_equation') or {})
+    best_text = (
+        f"{best_equation.get('target', '?')} ~= "
+        f"{best_equation.get('expression', '?')}"
+    )
+    print(
+        f"Section study summary: {context} cycle={cycle}/{total_cycles} "
+        f"rows={len(section_results)} passed={passed}/{len(section_results)} "
+        f"leaks={leaks}",
+        flush=True,
+    )
+    print(
+        f"  Families: {_counter_preview(family_counts)}",
+        flush=True,
+    )
+    print(
+        f"  Distance exponents: {_counter_preview(exponent_counts)}",
+        flush=True,
+    )
+    print(
+        f"  Best so far: {best_text} "
+        f"(score={float(best.get('interesting_score', 0.0) or 0.0):.2f})",
+        flush=True,
+    )
+    followups = theory_memory.planned_experiments(
+        world_types=[context],
+        object_counts=object_counts,
+        steps=steps,
+        limit=2,
+    )
+    if followups:
+        print("  Section follow-up probes:", flush=True)
+        for plan in followups:
+            print(
+                f"    {plan['experiment_kind']} seed={plan['seed']} "
+                f"priority={plan['priority']:.2f}: {plan['reason']}",
+                flush=True,
+            )
 
 
 def _print_equation_category_review(results: list[dict]):
@@ -4157,6 +4269,8 @@ if __name__ == '__main__':
                         help='Stop after this many parsed progress events (0 means no limit)')
     parser.add_argument('--math-final-discovery', action='store_true',
                         help='Run the final math discovery campaign when the user is ready to watch')
+    parser.add_argument('--section-study-cycles', type=int, default=1,
+                        help='Repeat and consolidate each final world section before moving on')
     parser.add_argument('--equation-hidden-worlds', type=int, default=0,
                         help='Generated hidden worlds to include in equation campaign')
     parser.add_argument('--equation-followup-budget', type=int, default=0,
@@ -4471,6 +4585,7 @@ if __name__ == '__main__':
             world_types=_parse_csv_worlds(args.world_types),
             hidden_worlds=args.equation_hidden_worlds,
             num_agents=args.agents,
+            section_study_cycles=args.section_study_cycles,
             theory_memory=theory_memory,
         )
         if (
