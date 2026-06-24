@@ -1218,6 +1218,7 @@ class MathFoundationTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 report = run_backend_profile_comparison(
                     backends=['python', 'numpy'],
+                    equation_scoring_backends=['python', 'numpy'],
                     seeds=1,
                     steps=6,
                     object_counts=[2],
@@ -1229,8 +1230,9 @@ class MathFoundationTests(unittest.TestCase):
 
         self.assertFalse(report['runs_final'])
         self.assertEqual('backend_profile_comparison', report['run_kind'])
-        self.assertEqual(2, len(report['rows']))
+        self.assertEqual(4, len(report['rows']))
         self.assertTrue(report['all_metric_matches'])
+        self.assertEqual(['python', 'numpy'], report['equation_scoring_backends'])
         self.assertEqual(report['all_metric_matches'], saved['all_metric_matches'])
         self.assertIn('backend_summaries', report)
         self.assertTrue(report['rows'][0]['profile']['enabled'])

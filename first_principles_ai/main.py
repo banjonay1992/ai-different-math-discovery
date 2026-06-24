@@ -55,6 +55,7 @@ from agent.self_modify import SelfModifier
 from agent.law_memory import LawMemory
 from agent.math_discovery import EmergentMathDiscovery
 from agent.equation_workbench import EquationWorkbench
+from agent.equation_tensor_backend import available_equation_scoring_backends
 from agent.compute_budget import plan_adaptive_compute_budget
 from agent.discovery_loop import CumulativeTheoryMemory
 from agent.math_foundation import MathFoundationWorkbench
@@ -164,6 +165,7 @@ def _experiment_runtime_profile_summary(
     elapsed_seconds: float,
     steps: int,
     force_backend: str,
+    equation_scoring_backend: str = 'python',
 ) -> dict:
     if profile is None:
         return {'enabled': False}
@@ -183,6 +185,7 @@ def _experiment_runtime_profile_summary(
         'enabled': True,
         'steps': int(steps),
         'force_backend': force_backend,
+        'equation_scoring_backend': equation_scoring_backend,
         'elapsed_seconds': round(elapsed_seconds, 6),
         'profiled_stage_seconds': round(
             sum(float(item['seconds']) for item in stages),
@@ -210,6 +213,7 @@ def run_experiment(
     equation_max_operator_feedback_rows: int = 384,
     equation_max_operator_feedback_operators: int = 5,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
     profile_timings: bool = False,
 ):
     """
@@ -237,6 +241,7 @@ def run_experiment(
     print(f"  World type: {world_type if hidden_manifest is None else 'hidden_procedural'}")
     print(f"  Agents: {num_agents}")
     print(f"  Force backend: {force_backend}")
+    print(f"  Equation scoring backend: {equation_scoring_backend}")
     print(f"  Timing profile: {profile_timings}")
     print()
     print("-" * 70)
@@ -277,6 +282,7 @@ def run_experiment(
         generated_operator_priors=equation_operator_priors,
         max_operator_feedback_rows=equation_max_operator_feedback_rows,
         max_operator_feedback_operators=equation_max_operator_feedback_operators,
+        scoring_backend=equation_scoring_backend,
     )
     kb.equation_workbench = equation_workbench
     _record_stage_timing(runtime_profile, 'agent_init', started)
@@ -629,6 +635,7 @@ def run_experiment(
         elapsed_seconds=time.perf_counter() - run_started,
         steps=num_steps,
         force_backend=force_backend,
+        equation_scoring_backend=equation_scoring_backend,
     )
     return tracker, kb, causal
 
@@ -714,6 +721,7 @@ def run_benchmark(
     num_agents: int = 2,
     law_memory: LawMemory = None,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> list[dict]:
     """Run a seed/object-count sweep over all configured worlds."""
     object_counts = object_counts or [5]
@@ -747,6 +755,7 @@ def run_benchmark(
                         num_agents=num_agents,
                         law_memory=law_memory,
                         force_backend=force_backend,
+                        equation_scoring_backend=equation_scoring_backend,
                     )
 
                 learned_laws = (
@@ -803,6 +812,7 @@ def run_transfer_benchmark(
     num_agents: int = 2,
     law_memory: LawMemory = None,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> list[dict]:
     """Compare cold runs against warm runs that can use law memory priors."""
     object_counts = object_counts or [5]
@@ -830,10 +840,12 @@ def run_transfer_benchmark(
                 cold = _run_experiment_metrics(
                     world_type, seed, object_count, steps, num_agents,
                     law_memory=None, force_backend=force_backend,
+                    equation_scoring_backend=equation_scoring_backend,
                 )
                 warm = _run_experiment_metrics(
                     world_type, seed, object_count, steps, num_agents,
                     law_memory=warm_memory, force_backend=force_backend,
+                    equation_scoring_backend=equation_scoring_backend,
                 )
                 cold_step = cold['first_learned_step']
                 warm_step = warm['first_learned_step']
@@ -884,6 +896,7 @@ def run_autonomous_exploration(
     seed_start: int = 0,
     seed_span: int = 20,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> list[dict]:
     """Let the agent choose a sequence of experiments from a large candidate pool."""
     object_counts = object_counts or [5]
@@ -929,6 +942,7 @@ def run_autonomous_exploration(
             num_agents=num_agents,
             law_memory=law_memory,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
         metrics['steps'] = candidate.steps
         value = score_exploration_outcome(metrics)
@@ -974,6 +988,7 @@ def run_hidden_holdout_benchmark(
     law_memory: LawMemory = None,
     seed_start: int = 0,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> list[dict]:
     """Train memory on hidden worlds, then compare cold/warm holdout discovery."""
     law_memory = law_memory or LawMemory()
@@ -999,6 +1014,7 @@ def run_hidden_holdout_benchmark(
             law_memory=law_memory,
             allow_memory_probes=True,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
         results.append({
             'phase': 'train',
@@ -1024,6 +1040,7 @@ def run_hidden_holdout_benchmark(
             law_memory=None,
             allow_memory_probes=False,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
         warm = _run_hidden_experiment_metrics(
             manifest=manifest,
@@ -1034,6 +1051,7 @@ def run_hidden_holdout_benchmark(
             law_memory=law_memory,
             allow_memory_probes=False,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
         helped_or_matched = (
             warm['score'] >= cold['score']
@@ -1072,6 +1090,7 @@ def run_hidden_autonomous_exploration(
     law_memory: LawMemory = None,
     seed_start: int = 0,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> list[dict]:
     """Run a budgeted campaign over generated hidden worlds."""
     law_memory = law_memory or LawMemory()
@@ -1101,6 +1120,7 @@ def run_hidden_autonomous_exploration(
             law_memory=law_memory,
             allow_memory_probes=True,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
         result = {
             'iteration': iteration,
@@ -1134,6 +1154,7 @@ def run_equation_campaign(
     theory_memory: CumulativeTheoryMemory | None = None,
     emit_hf_artifact_summary: bool = False,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> list[dict]:
     """Run worlds and collect equation-review packs for manual inspection."""
     object_counts = object_counts or [5]
@@ -1173,6 +1194,7 @@ def run_equation_campaign(
                         context=world_type,
                     ),
                     force_backend=force_backend,
+                    equation_scoring_backend=equation_scoring_backend,
                 )
                 results.append(result)
                 theory_memory.record_result(
@@ -1208,6 +1230,7 @@ def run_equation_campaign(
                 context=manifest.hidden_id,
             ),
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
         result['manifest'] = manifest.to_dict()
         results.append(result)
@@ -1238,6 +1261,7 @@ def run_equation_campaign(
         limit=followup_budget,
         enable_equation_probes=enable_equation_probes,
         force_backend=force_backend,
+        equation_scoring_backend=equation_scoring_backend,
         progress_fn=_print_equation_followup_progress,
     )
     if followups:
@@ -1431,6 +1455,7 @@ def _run_equation_followup_cases(
     limit: int,
     enable_equation_probes: bool = True,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
     run_case_fn=None,
     progress_fn=None,
 ) -> list[dict]:
@@ -1482,6 +1507,7 @@ def _run_equation_followup_cases(
             ),
             residual_first=bool(plan.get('residual_first')),
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
         result['phase'] = 'autonomous_followup'
         result['followup_iteration'] = iteration + 1
@@ -1567,6 +1593,7 @@ def run_math_foundation_prep(
     num_agents: int = 2,
     theory_memory: CumulativeTheoryMemory | None = None,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> list[dict]:
     """
     Check readiness gates before the user-watched final discovery run.
@@ -1608,6 +1635,7 @@ def run_math_foundation_prep(
                         context=world_type,
                     ),
                     force_backend=force_backend,
+                    equation_scoring_backend=equation_scoring_backend,
                 )
                 results.append(result)
                 theory_memory.record_result(
@@ -1642,6 +1670,7 @@ def run_math_foundation_prep(
                 context=manifest.hidden_id,
             ),
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
         result['manifest'] = manifest.to_dict()
         results.append(result)
@@ -2018,6 +2047,7 @@ def run_hf_non_final_campaign(
     max_adaptive_seeds: int | None = None,
     max_adaptive_hidden_worlds: int | None = None,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
     prep_runner=None,
 ) -> dict:
     """
@@ -2048,6 +2078,7 @@ def run_hf_non_final_campaign(
         'auto_compact': auto_compact,
         'adaptive_compute': adaptive_compute,
         'force_backend': force_backend,
+        'equation_scoring_backend': equation_scoring_backend,
     })
     domain_records = []
     for variant in domain_variants:
@@ -2209,6 +2240,7 @@ def run_hf_non_final_campaign(
             num_agents=num_agents,
             theory_memory=theory_memory,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
         _emit_hf_progress('foundation_prep_finish', {
             'result_count': len(prep_results),
@@ -2290,6 +2322,7 @@ def run_hf_adaptive_comparison(
     max_adaptive_seeds: int | None = None,
     max_adaptive_hidden_worlds: int | None = None,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
     prep_runner=None,
 ) -> dict:
     """Run fixed and adaptive non-final campaigns from the same memory snapshot."""
@@ -2311,6 +2344,7 @@ def run_hf_adaptive_comparison(
         'scientist_seed_count': scientist_seed_count,
         'scientist_variants': scientist_variants,
         'force_backend': force_backend,
+        'equation_scoring_backend': equation_scoring_backend,
     })
     variants = []
     for name, adaptive_enabled in (
@@ -2348,6 +2382,7 @@ def run_hf_adaptive_comparison(
             max_adaptive_seeds=max_adaptive_seeds,
             max_adaptive_hidden_worlds=max_adaptive_hidden_worlds,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
             prep_runner=prep_runner,
         )
         elapsed_seconds = time.perf_counter() - started
@@ -2871,6 +2906,7 @@ def run_math_final_discovery(
     parallel_cases: int = 1,
     profile_final_run: bool = False,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> list[dict]:
     """Run the watched discovery campaign and report live performance metrics."""
     final_started = time.perf_counter()
@@ -2903,6 +2939,7 @@ def run_math_final_discovery(
     print(f"Section study cycles: {section_study_cycles}", flush=True)
     print(f"Parallel case workers: {parallel_cases}", flush=True)
     print(f"Force backend: {force_backend}", flush=True)
+    print(f"Equation scoring backend: {equation_scoring_backend}", flush=True)
     print(flush=True)
     print(
         f"{'Context':24s} {'Seed':>4s} {'Obj':>3s} "
@@ -2934,6 +2971,7 @@ def run_math_final_discovery(
                 parallel_cases=parallel_cases,
                 runtime_profile_events=runtime_profile_events,
                 force_backend=force_backend,
+                equation_scoring_backend=equation_scoring_backend,
             )
             results.extend(cycle_results)
             section_results.extend(cycle_results)
@@ -2970,6 +3008,7 @@ def run_math_final_discovery(
             parallel_cases=parallel_cases,
             runtime_profile_events=runtime_profile_events,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
 
     if self_authored_worlds:
@@ -3027,6 +3066,7 @@ def run_math_final_discovery(
                 parallel_cases=parallel_cases,
                 runtime_profile_events=runtime_profile_events,
                 force_backend=force_backend,
+                equation_scoring_backend=equation_scoring_backend,
             )
 
     print("-" * 132, flush=True)
@@ -3113,6 +3153,7 @@ def _run_hidden_manifest_final_section(
     parallel_cases: int = 1,
     runtime_profile_events: list[dict] | None = None,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ):
     section_results = []
     for cycle in range(section_study_cycles):
@@ -3144,6 +3185,7 @@ def _run_hidden_manifest_final_section(
             parallel_cases=parallel_cases,
             runtime_profile_events=runtime_profile_events,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
         results.extend(cycle_results)
         section_results.extend(cycle_results)
@@ -3186,6 +3228,7 @@ def _run_math_final_section_cycle(
     parallel_cases: int = 1,
     runtime_profile_events: list[dict] | None = None,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> list[dict]:
     cycle_started = time.perf_counter()
     descriptors = []
@@ -3229,6 +3272,7 @@ def _run_math_final_section_cycle(
                     context=context,
                 ),
                 'force_backend': force_backend,
+                'equation_scoring_backend': equation_scoring_backend,
             },
         })
 
@@ -3413,6 +3457,7 @@ def run_math_benchmark(
     num_agents: int = 2,
     required_concepts: set[str] | None = None,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> list[dict]:
     """Measure emergent math comparison coverage across repeated runs."""
     object_counts = object_counts or [5]
@@ -3448,6 +3493,7 @@ def run_math_benchmark(
                         world_type=world_type,
                         num_agents=num_agents,
                         force_backend=force_backend,
+                        equation_scoring_backend=equation_scoring_backend,
                     )
 
                 metrics = _math_metrics_from_knowledge(kb, required_concepts)
@@ -3514,6 +3560,7 @@ def _run_hidden_experiment_metrics(
     law_memory: LawMemory | None,
     allow_memory_probes: bool = True,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -3528,6 +3575,7 @@ def _run_hidden_experiment_metrics(
             hidden_manifest=manifest,
             allow_memory_probes=allow_memory_probes,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
 
     observation_probe = Environment(
@@ -3556,6 +3604,7 @@ def _run_hidden_experiment_metrics(
         'passed': score >= 0.5 and not hidden_manifest_from_observation(observation_probe),
         'observation_leak': hidden_manifest_from_observation(observation_probe),
         'force_backend': force_backend,
+        'equation_scoring_backend': equation_scoring_backend,
         'learned_rule_count': len(learned_rules),
         'learned_law_types': sorted({
             rule.properties.get('law_type', 'unknown')
@@ -3585,6 +3634,7 @@ def _run_equation_campaign_case(
     equation_operator_priors: list[dict] | None = None,
     residual_first: bool = False,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -3601,6 +3651,7 @@ def _run_equation_campaign_case(
             planned_actions=planned_actions,
             equation_operator_priors=equation_operator_priors,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
     metrics = _equation_metrics_from_knowledge(kb, residual_first=residual_first)
     return {
@@ -3609,6 +3660,7 @@ def _run_equation_campaign_case(
         'objects': object_count,
         'steps': steps,
         'force_backend': force_backend,
+        'equation_scoring_backend': equation_scoring_backend,
         **metrics,
     }
 
@@ -3767,6 +3819,7 @@ def _run_math_foundation_prep_case(
     hidden_manifest: HiddenWorldManifest | None = None,
     equation_operator_priors: list[dict] | None = None,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -3784,6 +3837,7 @@ def _run_math_foundation_prep_case(
             equation_max_operator_feedback_rows=96,
             equation_max_operator_feedback_operators=2,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
     metrics = _foundation_metrics_from_knowledge(kb)
     equations = _equation_metrics_from_knowledge(kb)
@@ -3793,6 +3847,7 @@ def _run_math_foundation_prep_case(
         'objects': object_count,
         'steps': steps,
         'force_backend': force_backend,
+        'equation_scoring_backend': equation_scoring_backend,
         **metrics,
         'equation_count': equations['equation_count'],
         'installed_count': equations['installed_count'],
@@ -3816,6 +3871,7 @@ def _run_math_final_discovery_case(
     planned_actions: list[dict] | None = None,
     residual_first: bool = False,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -3834,6 +3890,7 @@ def _run_math_final_discovery_case(
             equation_max_operator_feedback_rows=96,
             equation_max_operator_feedback_operators=2,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
     foundation = _foundation_metrics_from_knowledge(kb)
     equations = _equation_metrics_from_knowledge(
@@ -3846,6 +3903,7 @@ def _run_math_final_discovery_case(
         'objects': object_count,
         'steps': steps,
         'force_backend': force_backend,
+        'equation_scoring_backend': equation_scoring_backend,
         **foundation,
         **equations,
         'equation_passed': equations['passed'],
@@ -5410,7 +5468,11 @@ def _backend_profile_match(reference: dict, candidate: dict) -> dict:
     }
 
 
-def _backend_profile_summary(rows: list[dict], reference_backend: str) -> list[dict]:
+def _backend_profile_summary(
+    rows: list[dict],
+    reference_backend: str,
+    reference_equation_scoring_backend: str = 'python',
+) -> list[dict]:
     summaries = []
     reference_elapsed_by_case = {
         (
@@ -5420,10 +5482,21 @@ def _backend_profile_summary(rows: list[dict], reference_backend: str) -> list[d
             row['steps'],
         ): float(row.get('elapsed_seconds', 0.0) or 0.0)
         for row in rows
-        if row.get('force_backend') == reference_backend
+        if (
+            row.get('force_backend') == reference_backend
+            and row.get('equation_scoring_backend') == reference_equation_scoring_backend
+        )
     }
-    for backend in sorted({row['force_backend'] for row in rows}):
-        backend_rows = [row for row in rows if row['force_backend'] == backend]
+    backend_pairs = sorted({
+        (row['force_backend'], row.get('equation_scoring_backend', 'python'))
+        for row in rows
+    })
+    for backend, equation_backend in backend_pairs:
+        backend_rows = [
+            row for row in rows
+            if row['force_backend'] == backend
+            and row.get('equation_scoring_backend', 'python') == equation_backend
+        ]
         elapsed = [
             float(row.get('elapsed_seconds', 0.0) or 0.0)
             for row in backend_rows
@@ -5439,6 +5512,7 @@ def _backend_profile_summary(rows: list[dict], reference_backend: str) -> list[d
         avg_reference_elapsed = sum(reference_elapsed) / max(len(reference_elapsed), 1)
         summaries.append({
             'force_backend': backend,
+            'equation_scoring_backend': equation_backend,
             'case_count': len(backend_rows),
             'avg_elapsed_seconds': round(avg_elapsed, 6),
             'speedup_vs_reference_backend': round(
@@ -5462,6 +5536,7 @@ def _backend_profile_summary(rows: list[dict], reference_backend: str) -> list[d
 def run_backend_profile_comparison(
     *,
     backends: list[str] | None = None,
+    equation_scoring_backends: list[str] | None = None,
     seeds: int = 1,
     steps: int = 80,
     object_counts: list[int] | None = None,
@@ -5471,6 +5546,7 @@ def run_backend_profile_comparison(
 ) -> dict:
     """Run a small non-final discovery profile across simulator backends."""
     backends = backends or ['python', 'numpy']
+    equation_scoring_backends = equation_scoring_backends or ['python']
     object_counts = object_counts or [3]
     world_types = world_types or ['standard', 'sideways_wind']
     rows = []
@@ -5481,6 +5557,7 @@ def run_backend_profile_comparison(
     print("BACKEND PROFILE COMPARISON")
     print("=" * 70)
     print(f"Backends: {', '.join(backends)}")
+    print(f"Equation scoring backends: {', '.join(equation_scoring_backends)}")
     print(f"Worlds: {', '.join(world_types)}")
     print(f"Seeds: 0..{seeds - 1}")
     print(f"Object counts: {', '.join(str(count) for count in object_counts)}")
@@ -5488,79 +5565,92 @@ def run_backend_profile_comparison(
     print("Runs final: False")
     print()
     print(
-        f"{'Backend':10s} {'World':22s} {'Seed':>4s} {'Obj':>3s} "
+        f"{'Backend':10s} {'EqBackend':10s} {'World':22s} {'Seed':>4s} {'Obj':>3s} "
         f"{'Elapsed':>8s} {'Hot stage':28s} {'Match':>5s}"
     )
     print("-" * 92)
 
     for backend in backends:
-        for world_type in world_types:
-            for object_count in object_counts:
-                for seed in range(seeds):
-                    started = time.perf_counter()
-                    with contextlib.redirect_stdout(io.StringIO()):
-                        _, kb, _ = run_experiment(
-                            num_steps=steps,
-                            num_initial_objects=object_count,
-                            seed=seed,
-                            verbose=False,
-                            report_interval=max(steps, 1),
-                            world_type=world_type,
-                            num_agents=num_agents,
-                            enable_equation_probes=True,
-                            force_backend=backend,
-                            profile_timings=True,
+        for equation_backend in equation_scoring_backends:
+            for world_type in world_types:
+                for object_count in object_counts:
+                    for seed in range(seeds):
+                        started = time.perf_counter()
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            _, kb, _ = run_experiment(
+                                num_steps=steps,
+                                num_initial_objects=object_count,
+                                seed=seed,
+                                verbose=False,
+                                report_interval=max(steps, 1),
+                                world_type=world_type,
+                                num_agents=num_agents,
+                                enable_equation_probes=True,
+                                force_backend=backend,
+                                equation_scoring_backend=equation_backend,
+                                profile_timings=True,
+                            )
+                        elapsed = time.perf_counter() - started
+                        foundation = _foundation_metrics_from_knowledge(kb)
+                        equations = _equation_metrics_from_knowledge(kb)
+                        interesting = equations.get('interesting_equation') or {}
+                        profile = dict(getattr(kb, 'runtime_profile', {}) or {})
+                        row = {
+                            'context': world_type,
+                            'seed': seed,
+                            'objects': object_count,
+                            'steps': steps,
+                            'force_backend': backend,
+                            'equation_scoring_backend': equation_backend,
+                            'elapsed_seconds': round(elapsed, 6),
+                            'profile': profile,
+                            'hot_stage': profile.get('hot_stage'),
+                            'top_stages': list(profile.get('stages') or [])[:6],
+                            'ready_for_final': foundation['ready_for_final'],
+                            'readiness_score': foundation['readiness_score'],
+                            'equation_passed': equations['passed'],
+                            'equation_count': equations['equation_count'],
+                            'installed_count': equations['installed_count'],
+                            'interesting_role': interesting.get('role'),
+                            'interesting_score': equations['interesting_score'],
+                            'leak_count': len(equations.get('label_leaks') or []),
+                        }
+                        case_key = (world_type, seed, object_count, steps)
+                        if (
+                            backend == reference_backend
+                            and equation_backend == equation_scoring_backends[0]
+                        ):
+                            row['reference_backend'] = True
+                            row['matches_reference'] = True
+                            row['reference_checks'] = {}
+                            reference_rows[case_key] = row
+                        else:
+                            match = _backend_profile_match(reference_rows[case_key], row)
+                            row['reference_backend'] = False
+                            row['matches_reference'] = match['matches_reference']
+                            row['reference_checks'] = match['checks']
+                        rows.append(row)
+                        print(
+                            f"{backend:10s} {equation_backend:10s} "
+                            f"{world_type:22s} {seed:4d} "
+                            f"{object_count:3d} {elapsed:8.3f} "
+                            f"{str(row.get('hot_stage') or 'none')[:28]:28s} "
+                            f"{'YES' if row['matches_reference'] else 'NO':>5s}",
+                            flush=True,
                         )
-                    elapsed = time.perf_counter() - started
-                    foundation = _foundation_metrics_from_knowledge(kb)
-                    equations = _equation_metrics_from_knowledge(kb)
-                    interesting = equations.get('interesting_equation') or {}
-                    profile = dict(getattr(kb, 'runtime_profile', {}) or {})
-                    row = {
-                        'context': world_type,
-                        'seed': seed,
-                        'objects': object_count,
-                        'steps': steps,
-                        'force_backend': backend,
-                        'elapsed_seconds': round(elapsed, 6),
-                        'profile': profile,
-                        'hot_stage': profile.get('hot_stage'),
-                        'top_stages': list(profile.get('stages') or [])[:6],
-                        'ready_for_final': foundation['ready_for_final'],
-                        'readiness_score': foundation['readiness_score'],
-                        'equation_passed': equations['passed'],
-                        'equation_count': equations['equation_count'],
-                        'installed_count': equations['installed_count'],
-                        'interesting_role': interesting.get('role'),
-                        'interesting_score': equations['interesting_score'],
-                        'leak_count': len(equations.get('label_leaks') or []),
-                    }
-                    case_key = (world_type, seed, object_count, steps)
-                    if backend == reference_backend:
-                        row['reference_backend'] = True
-                        row['matches_reference'] = True
-                        row['reference_checks'] = {}
-                        reference_rows[case_key] = row
-                    else:
-                        match = _backend_profile_match(reference_rows[case_key], row)
-                        row['reference_backend'] = False
-                        row['matches_reference'] = match['matches_reference']
-                        row['reference_checks'] = match['checks']
-                    rows.append(row)
-                    print(
-                        f"{backend:10s} {world_type:22s} {seed:4d} "
-                        f"{object_count:3d} {elapsed:8.3f} "
-                        f"{str(row.get('hot_stage') or 'none')[:28]:28s} "
-                        f"{'YES' if row['matches_reference'] else 'NO':>5s}",
-                        flush=True,
-                    )
 
-    summaries = _backend_profile_summary(rows, reference_backend)
+    summaries = _backend_profile_summary(
+        rows,
+        reference_backend,
+        equation_scoring_backends[0],
+    )
     report = {
         'run_kind': 'backend_profile_comparison',
         'runs_final': False,
         'reference_backend': reference_backend,
+        'reference_equation_scoring_backend': equation_scoring_backends[0],
         'backends': list(backends),
+        'equation_scoring_backends': list(equation_scoring_backends),
         'world_types': list(world_types),
         'seeds': int(seeds),
         'steps': int(steps),
@@ -5569,6 +5659,7 @@ def run_backend_profile_comparison(
         'backend_summaries': summaries,
         'all_metric_matches': all(row.get('matches_reference') for row in rows),
         'available_force_backends': available_force_backends(),
+        'available_equation_scoring_backends': available_equation_scoring_backends(),
     }
     if output_file:
         report['artifact_path'] = str(_write_json_artifact(output_file, report))
@@ -5576,6 +5667,7 @@ def run_backend_profile_comparison(
     for summary in summaries:
         print(
             f"{summary['force_backend']}: "
+            f"equation={summary['equation_scoring_backend']} "
             f"avg={summary['avg_elapsed_seconds']}s "
             f"speedup_vs_{reference_backend}="
             f"{summary['speedup_vs_reference_backend']} "
@@ -6545,6 +6637,7 @@ def _run_experiment_metrics(
     num_agents: int,
     law_memory: LawMemory | None,
     force_backend: str = 'python',
+    equation_scoring_backend: str = 'python',
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -6557,6 +6650,7 @@ def _run_experiment_metrics(
             num_agents=num_agents,
             law_memory=law_memory,
             force_backend=force_backend,
+            equation_scoring_backend=equation_scoring_backend,
         )
 
     learned_rules = [
@@ -6582,6 +6676,7 @@ def _run_experiment_metrics(
         'first_learned_step': min(learned_steps) if learned_steps else None,
         'min_sample_count': min(sample_counts) if sample_counts else None,
         'force_backend': force_backend,
+        'equation_scoring_backend': equation_scoring_backend,
         'memory_transfer': (
             law_memory.episodes[-1].transfer_report
             if law_memory is not None and law_memory.episodes
@@ -6716,10 +6811,15 @@ if __name__ == '__main__':
     parser.add_argument('--physics-force-backend', type=str, default='python',
                         choices=['python', 'numpy', 'torch', 'cuda', 'auto'],
                         help='Simulator force backend for physics runs (default: python)')
+    parser.add_argument('--equation-scoring-backend', type=str, default='python',
+                        choices=['python', 'numpy', 'torch', 'cuda', 'auto'],
+                        help='Numeric backend for equation scoring reductions (default: python)')
     parser.add_argument('--backend-profile-comparison', action='store_true',
                         help='Run a non-final timing comparison across physics backends')
     parser.add_argument('--backend-profile-backends', type=str, default='python,numpy',
                         help='Comma-separated backends for timing comparison')
+    parser.add_argument('--backend-profile-equation-backends', type=str, default='python',
+                        help='Comma-separated equation scoring backends for timing comparison')
     parser.add_argument('--backend-profile-output-file', type=str, default=None,
                         help='Optional JSON path for backend profile comparison output')
     parser.add_argument('--math-final-discovery', action='store_true',
@@ -6861,6 +6961,11 @@ if __name__ == '__main__':
                 for item in args.backend_profile_backends.split(',')
                 if item.strip()
             ],
+            equation_scoring_backends=[
+                item.strip()
+                for item in args.backend_profile_equation_backends.split(',')
+                if item.strip()
+            ],
             seeds=args.seeds,
             steps=args.benchmark_steps,
             object_counts=_parse_csv_ints(args.object_counts),
@@ -6882,6 +6987,7 @@ if __name__ == '__main__':
             num_agents=args.agents,
             law_memory=law_memory,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         if args.memory_file and law_memory is not None and not args.no_save_memory:
             law_memory.save(args.memory_file)
@@ -6896,6 +7002,7 @@ if __name__ == '__main__':
             num_agents=args.agents,
             law_memory=law_memory,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         if args.memory_file and law_memory is not None and not args.no_save_memory:
             law_memory.save(args.memory_file)
@@ -6909,6 +7016,7 @@ if __name__ == '__main__':
             world_types=_parse_csv_worlds(args.world_types),
             num_agents=args.agents,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         raise SystemExit(0)
 
@@ -7015,6 +7123,7 @@ if __name__ == '__main__':
             max_adaptive_seeds=args.hf_max_adaptive_seeds,
             max_adaptive_hidden_worlds=args.hf_max_adaptive_hidden_worlds,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         if (
             args.theory_memory_file
@@ -7061,6 +7170,7 @@ if __name__ == '__main__':
             max_adaptive_seeds=args.hf_max_adaptive_seeds,
             max_adaptive_hidden_worlds=args.hf_max_adaptive_hidden_worlds,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         if (
             args.theory_memory_file
@@ -7082,6 +7192,7 @@ if __name__ == '__main__':
             theory_memory=theory_memory,
             emit_hf_artifact_summary=args.hf_log_artifact_summary,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         if (
             args.theory_memory_file
@@ -7101,6 +7212,7 @@ if __name__ == '__main__':
             num_agents=args.agents,
             theory_memory=theory_memory,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         if (
             args.theory_memory_file
@@ -7138,6 +7250,7 @@ if __name__ == '__main__':
             parallel_cases=args.parallel_cases,
             profile_final_run=args.profile_final_run,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         if (
             args.theory_memory_file
@@ -7158,6 +7271,7 @@ if __name__ == '__main__':
             seed_start=args.exploration_seed_start,
             seed_span=args.seeds,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         if args.memory_file and law_memory is not None and not args.no_save_memory:
             law_memory.save(args.memory_file)
@@ -7173,6 +7287,7 @@ if __name__ == '__main__':
             law_memory=law_memory,
             seed_start=args.exploration_seed_start,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         if args.memory_file and law_memory is not None and not args.no_save_memory:
             law_memory.save(args.memory_file)
@@ -7187,6 +7302,7 @@ if __name__ == '__main__':
             law_memory=law_memory,
             seed_start=args.exploration_seed_start,
             force_backend=args.physics_force_backend,
+            equation_scoring_backend=args.equation_scoring_backend,
         )
         if args.memory_file and law_memory is not None and not args.no_save_memory:
             law_memory.save(args.memory_file)
@@ -7205,6 +7321,7 @@ if __name__ == '__main__':
         num_agents=args.agents,
         law_memory=law_memory,
         force_backend=args.physics_force_backend,
+        equation_scoring_backend=args.equation_scoring_backend,
     )
     if args.memory_file and law_memory is not None and not args.no_save_memory:
         law_memory.save(args.memory_file)

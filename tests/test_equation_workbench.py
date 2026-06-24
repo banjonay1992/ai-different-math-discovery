@@ -10,6 +10,7 @@ PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'fir
 sys.path.insert(0, PROJECT_DIR)
 
 from agent.equation_workbench import EquationWorkbench, PrimitiveEquation
+from agent.equation_tensor_backend import available_equation_scoring_backends
 from agent.representation import KnowledgeBase
 from main import _equation_metrics_from_knowledge, _interesting_result_rank, run_equation_campaign
 
@@ -108,6 +109,54 @@ class EquationWorkbenchTests(unittest.TestCase):
 
         self.assertGreater(radial.score, 0.9)
         self.assertAlmostEqual(0.1, radial.parameters['k'], delta=0.01)
+
+    def test_numpy_scoring_backend_matches_python_equations(self):
+        if not available_equation_scoring_backends()['numpy']:
+            self.skipTest('numpy equation scoring backend unavailable')
+
+        python_workbench = EquationWorkbench(min_samples=8, scoring_backend='python')
+        numpy_workbench = EquationWorkbench(min_samples=8, scoring_backend='numpy')
+        for step in range(30):
+            angle = (2 * math.pi * step) / 30
+            x = 10.0 + math.cos(angle) * 4.0
+            y = 10.0 + math.sin(angle) * 4.0
+            dx = 10.0 - x
+            dy = 10.0 - y
+            dist = math.sqrt(dx * dx + dy * dy)
+            dvx = 0.12 * dx / dist
+            dvy = 0.12 * dy / dist
+            before = state(step, step * 0.016, [obj(1, x, y, 0.0, 0.0)])
+            after = state(step + 1, (step + 1) * 0.016, [obj(1, x, y, dvx, dvy)])
+            python_workbench.observe_transition(before, after, {'type': 'wait'}, step + 1)
+            numpy_workbench.observe_transition(before, after, {'type': 'wait'}, step + 1)
+
+        python_equations = {
+            equation.key: equation
+            for equation in python_workbench.discover(step=30)
+        }
+        numpy_equations = {
+            equation.key: equation
+            for equation in numpy_workbench.discover(step=30)
+        }
+
+        self.assertEqual('numpy', numpy_workbench.scoring_backend)
+        for key in (
+            'raw_eq:anchor_radial_delta_vx',
+            'raw_eq:anchor_radial_delta_vy',
+            'raw_eq:anchor_radial_delta_vector',
+        ):
+            self.assertIn(key, python_equations)
+            self.assertIn(key, numpy_equations)
+            self.assertAlmostEqual(
+                python_equations[key].score,
+                numpy_equations[key].score,
+                places=9,
+            )
+            self.assertAlmostEqual(
+                python_equations[key].parameters['k'],
+                numpy_equations[key].parameters['k'],
+                places=9,
+            )
 
     def test_review_pack_groups_foundations_and_interesting_dynamics(self):
         workbench = EquationWorkbench(min_samples=8)

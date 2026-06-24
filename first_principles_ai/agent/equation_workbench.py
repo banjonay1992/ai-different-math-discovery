@@ -15,6 +15,11 @@ from statistics import mean
 from typing import Callable
 
 from agent.discovery_loop import AutonomousDiscoveryLoop
+from agent.equation_tensor_backend import (
+    fitted_scale_reduce,
+    resolve_equation_scoring_backend,
+    vector_scale_reduce,
+)
 from agent.representation import KnowledgeBase, RuleStatus
 
 
@@ -83,6 +88,7 @@ class EquationWorkbench:
         generated_operator_priors: list[dict] | None = None,
         max_operator_feedback_rows: int = 384,
         max_operator_feedback_operators: int = 5,
+        scoring_backend: str = 'python',
     ):
         self.knowledge_base = knowledge_base
         self.min_samples = min_samples
@@ -105,7 +111,17 @@ class EquationWorkbench:
         self.discovery_loop = AutonomousDiscoveryLoop()
         self.generated_operator_bank: dict[str, dict] = {}
         self.generated_operator_prior_count = 0
+        self.scoring_backend_request = 'python'
+        self.scoring_backend = 'python'
+        self.scoring_backend_status = {}
+        self.set_scoring_backend(scoring_backend)
         self.install_generated_operator_priors(generated_operator_priors or [])
+
+    def set_scoring_backend(self, scoring_backend: str | None):
+        status = resolve_equation_scoring_backend(scoring_backend)
+        self.scoring_backend_request = status['requested_backend']
+        self.scoring_backend = status['backend']
+        self.scoring_backend_status = status
 
     def install_generated_operator_priors(self, priors: list[dict]):
         for prior in priors:
@@ -696,11 +712,15 @@ class EquationWorkbench:
         train, valid = self._split_rows(rows)
         if not train or not valid:
             return None
-        numerator = sum(row[spec.target] * spec.feature(row) for row in train)
-        denominator = sum(spec.feature(row) ** 2 for row in train)
-        if abs(denominator) < 1e-12:
+        train_features = [spec.feature(row) for row in train]
+        train_targets = [row[spec.target] for row in train]
+        scale = fitted_scale_reduce(
+            train_features,
+            train_targets,
+            backend=self.scoring_backend,
+        )
+        if scale is None:
             return None
-        scale = numerator / denominator
         predictions = [scale * spec.feature(row) for row in valid]
         targets = [row[spec.target] for row in valid]
         return self._build_equation(
@@ -731,17 +751,19 @@ class EquationWorkbench:
         train, valid = self._split_rows(rows)
         if not train or not valid:
             return None
-        numerator = sum(
-            row['dvx'] * x_feature(row) + row['dvy'] * y_feature(row)
-            for row in train
+        train_x_features = [x_feature(row) for row in train]
+        train_y_features = [y_feature(row) for row in train]
+        train_x_targets = [row['dvx'] for row in train]
+        train_y_targets = [row['dvy'] for row in train]
+        scale = vector_scale_reduce(
+            train_x_features,
+            train_y_features,
+            train_x_targets,
+            train_y_targets,
+            backend=self.scoring_backend,
         )
-        denominator = sum(
-            x_feature(row) ** 2 + y_feature(row) ** 2
-            for row in train
-        )
-        if abs(denominator) < 1e-12:
+        if scale is None:
             return None
-        scale = numerator / denominator
         predictions = []
         targets = []
         for row in valid:
