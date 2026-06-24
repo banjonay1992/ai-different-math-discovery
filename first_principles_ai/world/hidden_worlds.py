@@ -20,6 +20,7 @@ HIDDEN_COMPONENT_TO_EXPECTED_DISCOVERY = {
     'tangential_flow': 'tangential_component',
     'time_wave': 'time_varying_component',
     'localized_pull': 'radial_component',
+    'localized_push': 'repulsive_component',
     'zero_gravity': 'zero_gravity',
     'soft_drag': 'damping_component',
 }
@@ -89,6 +90,16 @@ def generate_hidden_world_manifest(seed: int, variant: int = 0) -> HiddenWorldMa
         ('localized_pull', 'localized_pull'),
         ('soft_drag', 'uniform_push'),
         ('zero_gravity', 'time_wave', 'tangential_flow'),
+        ('localized_push', 'uniform_push'),
+        ('localized_push', 'time_wave'),
+        ('localized_push', 'tangential_flow', 'soft_drag'),
+        ('radial_attraction', 'localized_push', 'time_wave'),
+        ('radial_repulsion', 'localized_pull', 'soft_drag'),
+        ('uniform_push', 'time_wave', 'soft_drag'),
+        ('localized_pull', 'tangential_flow', 'radial_repulsion'),
+        ('zero_gravity', 'localized_push', 'uniform_push'),
+        ('radial_attraction', 'localized_pull', 'localized_push'),
+        ('time_wave', 'tangential_flow', 'soft_drag'),
     ]
     component_types = recipes[variant % len(recipes)]
     components = tuple(
@@ -174,6 +185,13 @@ def apply_hidden_world(world, manifest: HiddenWorldManifest):
                 'strength': params['strength'],
                 'radius': params['radius'],
             })
+        elif component.component_type == 'localized_push':
+            world.repulsion_zones.append({
+                'x': params['x'],
+                'y': params['y'],
+                'strength': params['strength'],
+                'radius': params['radius'],
+            })
         elif component.component_type == 'zero_gravity':
             world.gravity = 0.0
         elif component.component_type == 'soft_drag':
@@ -235,6 +253,13 @@ def _component_for(component_type: str, rng: random.Random) -> HiddenWorldCompon
             'strength': rng.uniform(180.0, 280.0),
             'radius': rng.uniform(7.0, 9.5),
         })
+    if component_type == 'localized_push':
+        return HiddenWorldComponent(component_type, {
+            'x': center_x,
+            'y': center_y,
+            'strength': rng.uniform(70.0, 125.0),
+            'radius': rng.uniform(5.5, 8.5),
+        })
     if component_type == 'zero_gravity':
         return HiddenWorldComponent(component_type, {})
     if component_type == 'soft_drag':
@@ -270,6 +295,8 @@ def _self_authored_recipe_for_design(design: dict) -> tuple[str, ...]:
         or 'tangent' in text
     ):
         return ('tangential_flow', 'radial_attraction')
+    if 'repulsion' in text or 'push' in text or 'domain split' in text:
+        return ('localized_push', 'time_wave')
     if 'cutoff' in text or 'boundary' in text or 'localized' in text:
         return ('localized_pull', 'uniform_push')
     if (
@@ -287,6 +314,7 @@ def _self_authored_recipe_for_design(design: dict) -> tuple[str, ...]:
         ('uniform_push', 'radial_attraction'),
         ('radial_repulsion', 'tangential_flow'),
         ('localized_pull', 'time_wave'),
+        ('localized_push', 'soft_drag'),
         ('zero_gravity', 'uniform_push'),
     ]
     design_key = str(design.get('design_key') or design.get('question') or '')

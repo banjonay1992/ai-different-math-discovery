@@ -15,15 +15,24 @@ from typing import Any, Callable
 
 
 FORBIDDEN_OBSERVATION_KEYS = {
+    'answer',
+    'benchmark',
+    'benchmark_answer',
+    'benchmark_truth',
+    'comparison_hits',
     'domain_key',
     'domain_name',
+    'expected',
     'expected_discoveries',
     'expected_discovery',
     'falsifier',
     'falsifiers',
     'hidden_rule',
+    'label',
+    'labels',
     'truth',
     'manifest',
+    'missing_comparison_tags',
 }
 
 
@@ -40,6 +49,174 @@ DOMAIN_TRANSFER_TARGETS: dict[str, tuple[str, ...]] = {
     'dynamics_systems': ('probability_uncertainty',),
     'information_computation': ('logic_proof',),
     'higher_dimensions': ('dynamics_systems',),
+}
+
+
+PRIMITIVE_CONTRASTS: dict[str, dict[str, Any]] = {
+    'arithmetic_quantity': {
+        'contrast_kind': 'cardinality_balance',
+        'public_primitives': ['count', 'group', 'order', 'equality'],
+        'observed_examples': [
+            {'view': 'grouped', 'tokens': [['a0', 'a1'], ['b0']]},
+            {'view': 'regrouped', 'tokens': [['c0'], ['c1', 'c2']]},
+        ],
+        'heldout_probe': {'view': 'permuted', 'ask': 'same extent after relabeling'},
+        'control_question': 'Which changes alter extent, and which only rename it?',
+        'hidden_rule': 'finite extent survives relabeling and regrouping',
+        'expected_discoveries': (
+            'count invariance',
+            'conservation of total under regrouping',
+        ),
+        'falsifier': 'regrouping or relabeling changes the inferred total',
+    },
+    'algebra_equations': {
+        'contrast_kind': 'reversible_substitution',
+        'public_primitives': ['variable', 'inverse', 'composition', 'equality'],
+        'observed_examples': [
+            {'slot': 2, 'route': ['double', 'shift'], 'reading': 7},
+            {'slot': 3, 'route': ['double', 'shift'], 'reading': 9},
+        ],
+        'heldout_probe': {'reading': 11, 'ask': 'recover slot without trying every value'},
+        'control_question': 'Which operation sequence can be undone?',
+        'hidden_rule': 'inverse operations recover a hidden slot from a balanced relation',
+        'expected_discoveries': ('symbolic substitution', 'equation balance'),
+        'falsifier': 'inverse replay returns a slot that fails direct substitution',
+    },
+    'geometry_space': {
+        'contrast_kind': 'coordinate_measurement',
+        'public_primitives': ['point', 'distance', 'angle', 'frame'],
+        'observed_examples': [
+            {'frame': 'a', 'marks': [(0, 0), (3, 4)], 'reading': 5.0},
+            {'frame': 'shifted', 'marks': [(2, -1), (5, 3)], 'reading': 5.0},
+        ],
+        'heldout_probe': {'transform': 'rotate_or_shift', 'ask': 'which readings survive'},
+        'control_question': 'What stays fixed when coordinates change?',
+        'hidden_rule': 'metric readings can be frame-independent',
+        'expected_discoveries': ('metric distance', 'coordinate transform'),
+        'falsifier': 'a shared frame change alters the claimed metric',
+    },
+    'calculus_change': {
+        'contrast_kind': 'finite_difference_accumulation',
+        'public_primitives': ['rate', 'difference', 'accumulation', 'limit'],
+        'observed_examples': [
+            {'t': 0, 'value': 1.0},
+            {'t': 1, 'value': 1.5},
+            {'t': 2, 'value': 2.2},
+        ],
+        'heldout_probe': {'refine_between': [1, 2], 'ask': 'sum local changes'},
+        'control_question': 'When does a local step predict total change?',
+        'hidden_rule': 'neighbor differences accumulate into endpoint change',
+        'expected_discoveries': (
+            'derivative-like rate',
+            'integral-like accumulation',
+        ),
+        'falsifier': 'refining the interval changes the accumulated endpoint',
+    },
+    'probability_uncertainty': {
+        'contrast_kind': 'sample_noise_split',
+        'public_primitives': ['sample', 'frequency', 'condition', 'expectation'],
+        'observed_examples': [
+            {'window': 0, 'draws': ['a', 'b', 'b', 'c']},
+            {'window': 1, 'draws': ['b', 'a', 'b', 'c']},
+        ],
+        'heldout_probe': {'condition': 'flagged', 'ask': 'does the candidate set narrow'},
+        'control_question': 'Which variation is stable signal rather than sample noise?',
+        'hidden_rule': 'conditioning and repeated samples separate signal from noise',
+        'expected_discoveries': ('frequency convergence', 'conditional split'),
+        'falsifier': 'conditioning fails to change the best prediction',
+    },
+    'logic_proof': {
+        'contrast_kind': 'counterexample_search',
+        'public_primitives': ['predicate', 'implication', 'counterexample', 'proof'],
+        'observed_examples': [
+            {'case': 2, 'p': True, 'q': True},
+            {'case': 3, 'p': False, 'q': False},
+        ],
+        'heldout_probe': {'ask': 'smallest case that breaks the implication'},
+        'control_question': 'What would make this rule false?',
+        'hidden_rule': 'proof pressure requires domains and counterexamples',
+        'expected_discoveries': ('falsification', 'domain restriction'),
+        'falsifier': 'the claim cannot name a breaking case',
+    },
+    'discrete_structures': {
+        'contrast_kind': 'path_composition',
+        'public_primitives': ['set', 'relation', 'path', 'state'],
+        'observed_examples': [
+            {'links': [('a', 'b'), ('b', 'c')], 'path': ['a', 'b', 'c']},
+            {'links': [('c', 'd')], 'path': ['a', 'b', 'c', 'd']},
+        ],
+        'heldout_probe': {'ask': 'compose links or find missing relation'},
+        'control_question': 'Which local relations can be chained?',
+        'hidden_rule': 'local relations compose into finite paths or transitions',
+        'expected_discoveries': ('path composition', 'connectivity'),
+        'falsifier': 'two valid local links cannot be composed',
+    },
+    'symmetry_invariance': {
+        'contrast_kind': 'transform_invariance',
+        'public_primitives': ['transform', 'orbit', 'invariant', 'equivalence'],
+        'observed_examples': [
+            {'transform': 'shift', 'reading_changed': False},
+            {'transform': 'reflect', 'reading_changed': False},
+        ],
+        'heldout_probe': {'transform': 'compose_two', 'ask': 'same invariant'},
+        'control_question': 'Which quantities survive allowed transforms?',
+        'hidden_rule': 'some readings are coordinate-free under transformations',
+        'expected_discoveries': ('invariant quantity', 'coordinate-free law'),
+        'falsifier': 'the invariant only works in the first view',
+    },
+    'optimization_extrema': {
+        'contrast_kind': 'objective_comparison',
+        'public_primitives': ['objective', 'constraint', 'minimum', 'gradient'],
+        'observed_examples': [
+            {'choice': -1, 'cost': 4.0},
+            {'choice': 0, 'cost': 1.0},
+            {'choice': 1, 'cost': 2.0},
+        ],
+        'heldout_probe': {'direction': 'toward_lower_cost', 'ask': 'does cost improve'},
+        'control_question': 'When does a local move improve the objective?',
+        'hidden_rule': 'nearby comparisons reveal extrema and active constraints',
+        'expected_discoveries': ('least-error fit', 'tradeoff curve'),
+        'falsifier': 'following the predicted improving direction raises cost',
+    },
+    'dynamics_systems': {
+        'contrast_kind': 'transition_rollout',
+        'public_primitives': ['state', 'transition', 'field', 'conservation'],
+        'observed_examples': [
+            {'step': 0, 'state': {'x': 0.0, 'v': 1.0}},
+            {'step': 1, 'state': {'x': 1.2, 'v': 1.2}},
+        ],
+        'heldout_probe': {'horizon': 4, 'ask': 'roll out same transition'},
+        'control_question': 'Does a one-step residual become a reusable update?',
+        'hidden_rule': 'state transitions compose across longer horizons',
+        'expected_discoveries': ('state update law', 'residual field'),
+        'falsifier': 'a one-step update fails a longer trajectory',
+    },
+    'information_computation': {
+        'contrast_kind': 'compression_holdout',
+        'public_primitives': ['encoding', 'description', 'algorithm', 'memory'],
+        'observed_examples': [
+            {'method': 'literal', 'units': 8},
+            {'method': 'repeat_rule', 'units': 4},
+        ],
+        'heldout_probe': {'length': 'longer', 'ask': 'decode and replay'},
+        'control_question': 'Which shorter description still predicts?',
+        'hidden_rule': 'compression only counts when it reconstructs holdouts',
+        'expected_discoveries': ('compression preference', 'algorithmic recurrence'),
+        'falsifier': 'the shorter description cannot replay the held-out sequence',
+    },
+    'higher_dimensions': {
+        'contrast_kind': 'projection_residual',
+        'public_primitives': ['dimension', 'projection', 'basis', 'latent coordinate'],
+        'observed_examples': [
+            {'view': 'xy', 'residual': 0.4},
+            {'view': 'xz', 'residual': 0.0},
+        ],
+        'heldout_probe': {'view': 'new_projection', 'ask': 'does latent coordinate help'},
+        'control_question': 'When should the system invent another axis?',
+        'hidden_rule': 'latent coordinates can explain projection residuals',
+        'expected_discoveries': ('latent axis', 'projection invariance'),
+        'falsifier': 'the latent coordinate helps one projection but fails another',
+    },
 }
 
 
@@ -223,6 +400,7 @@ def _arithmetic_quantity_samples(
             'one-item events produce jumps larger than one',
             DOMAIN_TRANSFER_TARGETS['arithmetic_quantity'],
         ),
+        _primitive_contrast_sample('arithmetic_quantity', 2, rng),
     ]
 
 
@@ -279,6 +457,7 @@ def _algebra_equation_samples(
             'two descriptions agree on examples but split on the held-out slot',
             DOMAIN_TRANSFER_TARGETS['algebra_equations'],
         ),
+        _primitive_contrast_sample('algebra_equations', 2, rng),
     ]
 
 
@@ -330,6 +509,7 @@ def _geometry_space_samples(
             'a boundary claim holds only in the original frame',
             DOMAIN_TRANSFER_TARGETS['geometry_space'],
         ),
+        _primitive_contrast_sample('geometry_space', 2, rng),
     ]
 
 
@@ -380,6 +560,7 @@ def _calculus_change_samples(
             'a local estimate predicts distant samples equally well',
             DOMAIN_TRANSFER_TARGETS['calculus_change'],
         ),
+        _primitive_contrast_sample('calculus_change', 2, rng),
     ]
 
 
@@ -427,6 +608,7 @@ def _probability_uncertainty_samples(
             'conditioning does not change the best next-symbol prediction',
             DOMAIN_TRANSFER_TARGETS['probability_uncertainty'],
         ),
+        _primitive_contrast_sample('probability_uncertainty', 2, rng),
     ]
 
 
@@ -482,6 +664,7 @@ def _logic_proof_samples(
             'a domain split overlaps or misses observed cases',
             DOMAIN_TRANSFER_TARGETS['logic_proof'],
         ),
+        _primitive_contrast_sample('logic_proof', 2, rng),
     ]
 
 
@@ -530,6 +713,7 @@ def _discrete_structure_samples(
             'a composed move reaches a different state than its pieces',
             DOMAIN_TRANSFER_TARGETS['discrete_structures'],
         ),
+        _primitive_contrast_sample('discrete_structures', 2, rng),
     ]
 
 
@@ -579,6 +763,7 @@ def _symmetry_invariance_samples(
             'order-sensitive transforms are treated as interchangeable',
             DOMAIN_TRANSFER_TARGETS['symmetry_invariance'],
         ),
+        _primitive_contrast_sample('symmetry_invariance', 2, rng),
     ]
 
 
@@ -630,6 +815,7 @@ def _optimization_extrema_samples(
             'an unconstrained best remains valid when it violates the boundary',
             DOMAIN_TRANSFER_TARGETS['optimization_extrema'],
         ),
+        _primitive_contrast_sample('optimization_extrema', 2, rng),
     ]
 
 
@@ -681,6 +867,7 @@ def _dynamics_system_samples(
             'the phase repeat fails on a held-out cycle',
             DOMAIN_TRANSFER_TARGETS['dynamics_systems'],
         ),
+        _primitive_contrast_sample('dynamics_systems', 2, rng),
     ]
 
 
@@ -725,6 +912,7 @@ def _information_computation_samples(
             'the inferred state predicts seen cycles but not a longer one',
             DOMAIN_TRANSFER_TARGETS['information_computation'],
         ),
+        _primitive_contrast_sample('information_computation', 2, rng),
     ]
 
 
@@ -776,6 +964,7 @@ def _higher_dimension_samples(
             'a rule tied to one axis count is promoted as dimension-independent',
             DOMAIN_TRANSFER_TARGETS['higher_dimensions'],
         ),
+        _primitive_contrast_sample('higher_dimensions', 2, rng),
     ]
 
 
@@ -816,6 +1005,32 @@ def _sample(
         expected_discoveries=expected_discoveries,
         falsifier=falsifier,
         transfer_targets=transfer_targets,
+    )
+
+
+def _primitive_contrast_sample(
+    domain_key: str,
+    index: int,
+    rng: random.Random,
+) -> MathDomainSample:
+    config = PRIMITIVE_CONTRASTS[domain_key]
+    public = {
+        'contrast_kind': config['contrast_kind'],
+        'public_primitives': list(config['public_primitives']),
+        'observed_examples': _json_copy(config['observed_examples']),
+        'heldout_probe': _json_copy(config['heldout_probe']),
+        'control_question': config['control_question'],
+        'contrast_id': rng.randint(1000, 9999),
+    }
+    return _sample(
+        domain_key,
+        index,
+        'primitive_contrast',
+        public,
+        config['hidden_rule'],
+        tuple(config['expected_discoveries']),
+        config['falsifier'],
+        DOMAIN_TRANSFER_TARGETS[domain_key],
     )
 
 

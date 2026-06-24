@@ -55,6 +55,36 @@ RELATION_TO_COMPARISON_TAGS: dict[str, tuple[str, ...]] = {
         'dimension-independent law',
         'projection invariance',
     ),
+    'primitive_cardinality_balance': (
+        'count invariance',
+        'conservation of total under regrouping',
+    ),
+    'primitive_reversible_substitution': (
+        'symbolic substitution',
+        'equation balance',
+    ),
+    'primitive_coordinate_measurement': ('metric distance', 'coordinate transform'),
+    'primitive_finite_difference_accumulation': (
+        'derivative-like rate',
+        'integral-like accumulation',
+    ),
+    'primitive_sample_noise_split': (
+        'frequency convergence',
+        'conditional split',
+    ),
+    'primitive_counterexample_search': ('falsification', 'domain restriction'),
+    'primitive_path_composition': ('path composition', 'connectivity'),
+    'primitive_transform_invariance': (
+        'invariant quantity',
+        'coordinate-free law',
+    ),
+    'primitive_objective_comparison': ('least-error fit', 'tradeoff curve'),
+    'primitive_transition_rollout': ('state update law', 'residual field'),
+    'primitive_compression_holdout': (
+        'compression preference',
+        'algorithmic recurrence',
+    ),
+    'primitive_projection_residual': ('latent axis', 'projection invariance'),
 }
 
 
@@ -106,6 +136,70 @@ BRIDGE_BASIS_REQUIREMENTS: dict[str, dict[str, tuple[str, ...]]] = {
     'higher_dimensions_to_all_domains': {
         'source_any': ('dimension_lift', 'projection'),
         'target_any': ('residual', 'state_update'),
+    },
+}
+
+
+PRIMITIVE_CONTRAST_RELATIONS: dict[str, dict[str, Any]] = {
+    'cardinality_balance': {
+        'relation_kind': 'primitive_cardinality_balance',
+        'expression': 'extent is preserved by regrouping, relabeling, and order changes',
+        'basis': ('extent', 'composition', 'invariance', 'falsifier'),
+    },
+    'reversible_substitution': {
+        'relation_kind': 'primitive_reversible_substitution',
+        'expression': 'hidden slot can be recovered by reversing the observed transformation chain',
+        'basis': ('composition', 'inverse', 'relation', 'falsifier'),
+    },
+    'coordinate_measurement': {
+        'relation_kind': 'primitive_coordinate_measurement',
+        'expression': 'metric readings should remain stable under equivalent coordinate views',
+        'basis': ('invariance', 'metric', 'projection', 'falsifier'),
+    },
+    'finite_difference_accumulation': {
+        'relation_kind': 'primitive_finite_difference_accumulation',
+        'expression': 'local differences should sum to the observed endpoint change',
+        'basis': ('accumulation', 'local_change', 'state_update', 'falsifier'),
+    },
+    'sample_noise_split': {
+        'relation_kind': 'primitive_sample_noise_split',
+        'expression': 'repeated samples and conditions separate stable signal from noise',
+        'basis': ('frequency', 'uncertainty', 'conditional', 'falsifier'),
+    },
+    'counterexample_search': {
+        'relation_kind': 'primitive_counterexample_search',
+        'expression': 'candidate rule must name a domain and a smallest breaking observation',
+        'basis': ('implication', 'falsifier', 'partition'),
+    },
+    'path_composition': {
+        'relation_kind': 'primitive_path_composition',
+        'expression': 'local relations can compose into longer paths only when endpoints match',
+        'basis': ('relation', 'composition', 'path', 'falsifier'),
+    },
+    'transform_invariance': {
+        'relation_kind': 'primitive_transform_invariance',
+        'expression': 'allowed transforms preserve invariant readings while changing presentation',
+        'basis': ('invariance', 'transform', 'equivalence', 'falsifier'),
+    },
+    'objective_comparison': {
+        'relation_kind': 'primitive_objective_comparison',
+        'expression': 'local objective comparisons identify better choices under constraints',
+        'basis': ('local_change', 'extremum', 'optimization', 'falsifier'),
+    },
+    'transition_rollout': {
+        'relation_kind': 'primitive_transition_rollout',
+        'expression': 'state residuals become reusable transition rules only if rollout survives',
+        'basis': ('state_update', 'residual', 'recurrence', 'falsifier'),
+    },
+    'compression_holdout': {
+        'relation_kind': 'primitive_compression_holdout',
+        'expression': 'shorter descriptions are promoted only when they replay held-out data',
+        'basis': ('compression', 'recurrence', 'uncertainty', 'falsifier'),
+    },
+    'projection_residual': {
+        'relation_kind': 'primitive_projection_residual',
+        'expression': 'latent coordinates are useful only when they explain projection residuals',
+        'basis': ('projection', 'dimension_lift', 'invariance', 'falsifier'),
     },
 }
 
@@ -363,6 +457,8 @@ def _infer_candidates(observation: dict[str, Any]) -> list[DomainDiscoveryCandid
         return [_candidate_from_projection_pairs(observation)]
     if kind == 'dimension_change':
         return [_candidate_from_dimension_change(observation)]
+    if kind == 'primitive_contrast':
+        return [_candidate_from_primitive_contrast(observation)]
     return []
 
 
@@ -690,6 +786,40 @@ def _candidate_from_dimension_change(observation: dict[str, Any]) -> DomainDisco
         {'family_count': len(observation.get('families') or [])},
         ('test the same rule on a held-out axis count',),
         ('dimension_lift', 'invariance', 'generalization', 'falsifier'),
+    )
+
+
+def _candidate_from_primitive_contrast(observation: dict[str, Any]) -> DomainDiscoveryCandidate:
+    contrast_kind = str(observation.get('contrast_kind') or 'unknown')
+    config = PRIMITIVE_CONTRAST_RELATIONS.get(contrast_kind)
+    if not config:
+        return _candidate(
+            observation,
+            'primitive_unknown_contrast',
+            'public primitive contrast needs a candidate relation',
+            {'contrast_kind': contrast_kind},
+            ('design a held-out contrast that separates the primitive relation',),
+            ('falsifier',),
+            confidence=0.35,
+        )
+    heldout = dict(observation.get('heldout_probe') or {})
+    falsifier = heldout.get('ask') or 'run the public held-out contrast'
+    evidence = {
+        'contrast_kind': contrast_kind,
+        'primitive_count': len(observation.get('public_primitives') or []),
+        'example_count': len(observation.get('observed_examples') or []),
+        'has_heldout_probe': bool(heldout),
+        'control_question': observation.get('control_question'),
+    }
+    confidence = 0.92 if evidence['has_heldout_probe'] else 0.55
+    return _candidate(
+        observation,
+        str(config['relation_kind']),
+        str(config['expression']),
+        evidence,
+        (str(falsifier),),
+        tuple(config['basis']),
+        confidence=confidence,
     )
 
 

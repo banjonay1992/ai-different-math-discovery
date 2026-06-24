@@ -31,6 +31,7 @@ from main import (
 )
 from world.math_domain_worlds import (
     DOMAIN_WORLD_GENERATORS,
+    FORBIDDEN_OBSERVATION_KEYS,
     generate_all_math_domain_world_manifests,
     generate_math_domain_world_manifest,
     math_domain_manifest_from_observation,
@@ -45,11 +46,18 @@ class MathDomainWorldTests(unittest.TestCase):
 
         for manifest in generate_all_math_domain_world_manifests(seed=3, variant=1):
             with self.subTest(domain=manifest.domain_key):
-                self.assertGreater(len(manifest.samples), 0)
+                self.assertGreaterEqual(len(manifest.samples), 3)
                 self.assertTrue(manifest.expected_discoveries)
                 self.assertTrue(manifest.falsifiers)
                 self.assertTrue(manifest.transfer_targets)
                 self.assertEqual(len(manifest.samples), len(manifest.observations()))
+                self.assertIn(
+                    'primitive_contrast',
+                    {
+                        observation['observation_kind']
+                        for observation in manifest.observations()
+                    },
+                )
 
                 for observation in manifest.observations():
                     self.assertFalse(math_domain_manifest_from_observation(observation))
@@ -58,6 +66,9 @@ class MathDomainWorldTests(unittest.TestCase):
                     self.assertNotIn('domain_key', observation)
                     self.assertNotIn('expected_discoveries', observation)
                     self.assertNotIn('falsifiers', observation)
+                    self.assertTrue(
+                        FORBIDDEN_OBSERVATION_KEYS.isdisjoint(observation.keys())
+                    )
 
                 manifest_dict = manifest.to_dict()
                 self.assertIn('domain_key', manifest_dict)
@@ -91,6 +102,7 @@ class MathDomainWorldTests(unittest.TestCase):
         blueprints = memory.domain_world_blueprints(limit=20)
         discoveries = memory.domain_world_discovery_reports(limit=20)
         transfer_evidence = memory.domain_world_transfer_evidence(limit=20)
+        rediscovery_experiments = memory.domain_rediscovery_experiments(limit=20)
         readiness = memory.discovery_readiness_report()
         packed = memory.to_dict()
         summary = memory.summary()
@@ -98,11 +110,29 @@ class MathDomainWorldTests(unittest.TestCase):
         required = {domain['key'] for domain in MATH_DOMAIN_CURRICULUM}
         self.assertEqual(required, {item['domain_key'] for item in blueprints})
         self.assertTrue(all(item['sample_count'] > 0 for item in blueprints))
+        self.assertTrue(all(item['sample_count'] >= 3 for item in blueprints))
         self.assertTrue(all(item['falsifier_count'] > 0 for item in blueprints))
         self.assertTrue(all(not item['leaks_benchmark_truth'] for item in blueprints))
+        self.assertTrue(all(
+            item['blind_observation_policy']['withhold_benchmark_truth']
+            and item['blind_observation_policy']['score_after_candidate_generation']
+            and item['public_sample_preview']
+            for item in blueprints
+        ))
+        for item in blueprints:
+            with self.subTest(policy=item['domain_key']):
+                for observation in item['public_sample_preview']:
+                    self.assertFalse(math_domain_manifest_from_observation(observation))
         self.assertEqual(required, {item['domain_key'] for item in discoveries})
         self.assertTrue(all(item['candidate_count'] > 0 for item in discoveries))
         self.assertTrue(all(item['self_authored_equations'] for item in discoveries))
+        self.assertTrue(all(
+            any(
+                candidate['observation_kind'] == 'primitive_contrast'
+                for candidate in item['candidates']
+            )
+            for item in discoveries
+        ))
         self.assertTrue(all(
             item['benchmark_coverage'] >= 1.0
             and item['falsification_test_count'] > 0
@@ -113,6 +143,18 @@ class MathDomainWorldTests(unittest.TestCase):
             {bridge['key'] for bridge in MATH_DOMAIN_TRANSFER_BRIDGES},
             {item['bridge_key'] for item in transfer_evidence},
         )
+        self.assertEqual(required, {item['domain_key'] for item in rediscovery_experiments})
+        for item in rediscovery_experiments:
+            with self.subTest(rediscovery=item['domain_key']):
+                self.assertNotIn('expected_discoveries', item)
+                self.assertNotIn('comparison_hits', item)
+                self.assertNotIn('missing_comparison_tags', item)
+                self.assertTrue(item['experiment_templates'])
+                self.assertTrue(
+                    item['blind_observation_policy']['withhold_benchmark_truth']
+                )
+                for observation in item['public_sample_preview']:
+                    self.assertFalse(math_domain_manifest_from_observation(observation))
         self.assertTrue(all(
             item['status'] == 'transfer_link_ready'
             and item['source_matches']
@@ -128,12 +170,17 @@ class MathDomainWorldTests(unittest.TestCase):
         self.assertTrue(
             readiness['gates']['domain_world_transfer_evidence']['passed']
         )
+        self.assertTrue(
+            readiness['gates']['baseline_experiment_templates']['passed']
+        )
         self.assertIn('domain_world_blueprints', readiness)
         self.assertIn('domain_world_discoveries', readiness)
         self.assertIn('domain_world_transfer_evidence', readiness)
+        self.assertIn('baseline_experiment_templates', readiness)
         self.assertIn('domain_world_blueprints', packed)
         self.assertIn('domain_world_discoveries', packed)
         self.assertIn('domain_world_transfer_evidence', packed)
+        self.assertIn('baseline_experiment_templates', packed)
         self.assertIn(
             'domain_world_blueprints',
             packed['discovery_evidence_dossier'],
@@ -149,6 +196,7 @@ class MathDomainWorldTests(unittest.TestCase):
         self.assertIn('Domain world blueprints:', summary)
         self.assertIn('Domain world discoveries:', summary)
         self.assertIn('Domain world transfer evidence:', summary)
+        self.assertIn('Baseline experiment templates:', summary)
 
     def test_domain_discovery_infers_candidates_before_manifest_scoring(self):
         reports = discover_all_domain_worlds(seed=5, variant=0)
@@ -162,6 +210,11 @@ class MathDomainWorldTests(unittest.TestCase):
                 packed = report.to_dict()
                 self.assertGreater(packed['candidate_count'], 0)
                 self.assertTrue(packed['self_authored_equations'])
+                self.assertTrue(any(
+                    candidate['observation_kind'] == 'primitive_contrast'
+                    and candidate['falsification_tests']
+                    for candidate in packed['candidates']
+                ))
                 self.assertGreater(packed['falsification_test_count'], 0)
                 self.assertEqual(1.0, packed['benchmark_coverage'])
                 self.assertEqual([], packed['missing_comparison_tags'])

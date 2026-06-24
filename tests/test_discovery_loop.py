@@ -3785,6 +3785,9 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertTrue(
             readiness['gates']['algebraic_foundation_baseline']['passed']
         )
+        self.assertTrue(
+            readiness['gates']['baseline_experiment_templates']['passed']
+        )
         self.assertGreaterEqual(
             readiness['gates']['algebraic_foundation_baseline']['evidence'][
                 'expression_family_count'
@@ -3852,6 +3855,7 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertIn('discovery_evidence_dossier', packed)
         self.assertIn('self_authored_equations', packed)
         self.assertIn('first_principles_basis', packed)
+        self.assertIn('baseline_experiment_templates', packed)
         self.assertIn('adaptive_dimension_agenda', packed)
         self.assertIn('algebraic_foundation_baseline', packed)
         self.assertIn('algebraic_expression_agenda', packed)
@@ -3862,7 +3866,28 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertIn('Self-authored equations:', memory.summary())
         self.assertIn('Adaptive dimensions:', memory.summary())
         self.assertIn('Algebraic foundation:', memory.summary())
+        self.assertIn('Baseline experiment templates:', memory.summary())
         self.assertIn('Autonomous scientist loop:', memory.summary())
+        primitive_keys = {
+            item['key']
+            for item in packed['first_principles_basis']
+        }
+        self.assertTrue({
+            'cardinality_grouping',
+            'rate_change',
+            'uncertainty_sampling',
+            'falsification_probe',
+        } <= primitive_keys)
+        template_kinds = {
+            item['template_kind']
+            for item in packed['baseline_experiment_templates']
+        }
+        self.assertTrue({
+            'residual_perturbation',
+            'equation_race',
+            'dimension_lift',
+            'compression_replay',
+        } <= template_kinds)
 
         empty_readiness = CumulativeTheoryMemory().discovery_readiness_report()
         self.assertEqual('early', empty_readiness['status'])
@@ -3871,6 +3896,9 @@ class DiscoveryLoopTests(unittest.TestCase):
         )
         self.assertTrue(
             empty_readiness['gates']['algebraic_foundation_baseline']['passed']
+        )
+        self.assertTrue(
+            empty_readiness['gates']['baseline_experiment_templates']['passed']
         )
         self.assertEqual([], empty_readiness['evidence_dossier']['chains'])
         self.assertEqual([], empty_readiness['evidence_dossier']['planned_tests'])

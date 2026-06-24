@@ -132,12 +132,30 @@ class AutonomousExplorationTests(unittest.TestCase):
                     variant=variant,
                 ).components
             )
-            for variant in range(15)
+            for variant in range(25)
         }
 
-        self.assertGreaterEqual(len(component_signatures), 12)
+        self.assertGreaterEqual(len(component_signatures), 20)
         self.assertIn(('zero_gravity', 'uniform_push'), component_signatures)
         self.assertIn(('soft_drag', 'uniform_push'), component_signatures)
+        self.assertIn(('localized_push', 'uniform_push'), component_signatures)
+
+    def test_localized_push_hidden_component_uses_repulsion_zone_without_leaking(self):
+        manifest = generate_hidden_world_manifest(seed=11, variant=15)
+        env = Environment(
+            num_initial_objects=2,
+            seed=11,
+            world_type='hidden_procedural',
+            hidden_manifest=manifest,
+        )
+        observation = env.observe()
+
+        self.assertEqual(
+            ['localized_push', 'uniform_push'],
+            [component.component_type for component in manifest.components],
+        )
+        self.assertTrue(env.world.repulsion_zones)
+        self.assertFalse(hidden_manifest_from_observation(observation))
 
     def test_self_authored_hidden_world_manifest_stays_blind(self):
         design = {

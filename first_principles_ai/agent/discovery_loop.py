@@ -39,6 +39,13 @@ FIRST_PRINCIPLES_BASIS: list[dict[str, Any]] = [
         'unlocks': ['operator_chains', 'derived_variables', 'nested_transforms'],
     },
     {
+        'key': 'cardinality_grouping',
+        'name': 'cardinality and grouping',
+        'primitive_kind': 'quantity',
+        'expression': 'count(A union B) = count(A) + count(B) when groups do not overlap',
+        'unlocks': ['counting', 'finite_collections', 'conservation_under_regrouping'],
+    },
+    {
         'key': 'inverse_operation',
         'name': 'inverse operation',
         'primitive_kind': 'algebra',
@@ -67,6 +74,13 @@ FIRST_PRINCIPLES_BASIS: list[dict[str, Any]] = [
         'unlocks': ['phase', 'induction', 'long_horizon_pattern'],
     },
     {
+        'key': 'rate_change',
+        'name': 'rate and change',
+        'primitive_kind': 'process',
+        'expression': 'delta(x) over delta(t) reveals local trend before global law',
+        'unlocks': ['finite_difference', 'accumulation', 'local_linearization'],
+    },
+    {
         'key': 'conservation_balance',
         'name': 'conservation and balance',
         'primitive_kind': 'invariant',
@@ -86,6 +100,20 @@ FIRST_PRINCIPLES_BASIS: list[dict[str, Any]] = [
         'primitive_kind': 'representation',
         'expression': 'invent a coordinate z = phi(observations, residuals) when current axes fail',
         'unlocks': ['latent_dimensions', 'projection_axes', 'new_operator_inputs'],
+    },
+    {
+        'key': 'uncertainty_sampling',
+        'name': 'uncertainty and sampling',
+        'primitive_kind': 'measurement',
+        'expression': 'separate stable signal from sampled noise by repeated observations',
+        'unlocks': ['noise_models', 'frequency_estimates', 'calibration_checks'],
+    },
+    {
+        'key': 'falsification_probe',
+        'name': 'falsification probe',
+        'primitive_kind': 'logic',
+        'expression': 'a candidate law must name the smallest observation that would break it',
+        'unlocks': ['counterexample_search', 'rival_law_races', 'proof_pressure'],
     },
 ]
 
@@ -481,6 +509,59 @@ ALGEBRAIC_SEARCH_CONTROLS: dict[str, Any] = {
         'structure checks when an operator is reused across contexts'
     ),
 }
+
+
+DISCOVERY_EXPERIMENT_TEMPLATES: list[dict[str, Any]] = [
+    {
+        'template_kind': 'residual_perturbation',
+        'question': 'What variable explains the largest structured residual?',
+        'public_action': 'perturb one candidate input while holding easier baselines fixed',
+        'falsifies_if': 'the residual pattern stays unchanged or moves to a rival variable',
+        'use_when': ['residual_field', 'localized_failure', 'operator_anomaly'],
+    },
+    {
+        'template_kind': 'transform_invariance',
+        'question': 'Does the candidate relation survive a translation, rotation, reflection, or relabeling?',
+        'public_action': 'generate an equivalent view and score the same relation there',
+        'falsifies_if': 'the law works only in the original coordinate or label frame',
+        'use_when': ['symmetry_transform', 'geometry_space', 'coordinate_artifact'],
+    },
+    {
+        'template_kind': 'local_global_scope',
+        'question': 'Is the law local, global, boundary-limited, or piecewise?',
+        'public_action': 'sample inside, near-boundary, and outside cases without naming the region',
+        'falsifies_if': 'a promoted global law fails in a held-out local band',
+        'use_when': ['domain_partition', 'localized_force', 'cutoff_radius'],
+    },
+    {
+        'template_kind': 'equation_race',
+        'question': 'Which rival equation keeps the lowest held-out residual under the same evidence?',
+        'public_action': 'race same-complexity candidates on fresh seeds and adversarial contrasts',
+        'falsifies_if': 'a simpler or rival basis wins after controls are matched',
+        'use_when': ['model_disagreement', 'exponent_conflict', 'basis_conflict'],
+    },
+    {
+        'template_kind': 'dimension_lift',
+        'question': 'Would an invented coordinate compress or explain what visible axes cannot?',
+        'public_action': 'construct a latent feature from residuals and test projection changes',
+        'falsifies_if': 'the new coordinate improves one view but fails an equivalent projection',
+        'use_when': ['dimension_lift', 'projection_residual', 'higher_dimensions'],
+    },
+    {
+        'template_kind': 'stochastic_noise_split',
+        'question': 'Is unexplained variation noise, hidden state, or deterministic structure?',
+        'public_action': 'repeat samples, compare conditional slices, and test residual calibration',
+        'falsifies_if': 'a hidden condition predicts residuals better than the noise model',
+        'use_when': ['uncertainty_sampling', 'probability_uncertainty', 'calibration'],
+    },
+    {
+        'template_kind': 'compression_replay',
+        'question': 'Can the shorter rule replay earlier observations and predict a longer holdout?',
+        'public_action': 'compress the rule, replay from the start, then extend the horizon',
+        'falsifies_if': 'the compact rule loses required cases or fails the longer replay',
+        'use_when': ['canonical_law_compression', 'recurrence_iteration', 'long_run_memory'],
+    },
+]
 
 
 MATH_DOMAIN_CURRICULUM: list[dict[str, Any]] = [
@@ -2515,6 +2596,7 @@ class CumulativeTheoryMemory:
         proof_certificates = self.proof_certificates(limit=5)
         self_authored_equations = self.self_authored_equations(limit=5)
         first_principles = self.first_principles_basis()
+        experiment_templates = self.baseline_experiment_templates()
         adaptive_dimensions = self.adaptive_dimension_agenda(limit=5)
         algebraic_foundation = self.algebraic_foundation_baseline()
         algebraic_agenda = self.algebraic_expression_agenda(limit=5)
@@ -2683,6 +2765,29 @@ class CumulativeTheoryMemory:
                     'agenda_count': len(algebraic_agenda),
                 },
                 'seed broad algebraic expression families, structures, proof obligations, and search controls',
+            ),
+            (
+                'baseline_experiment_templates',
+                'the system has reusable experiment templates for discovery rather than answer recall',
+                (
+                    len(experiment_templates) >= 7
+                    and all(
+                        item.get('question')
+                        and item.get('public_action')
+                        and item.get('falsifies_if')
+                        and item.get('use_when')
+                        for item in experiment_templates
+                    )
+                ),
+                1.0,
+                {
+                    'template_count': len(experiment_templates),
+                    'template_kinds': [
+                        item.get('template_kind')
+                        for item in experiment_templates
+                    ],
+                },
+                'seed residual, transform, local/global, equation-race, dimension, noise, and compression templates',
             ),
             (
                 'broad_domain_curriculum',
@@ -2985,6 +3090,7 @@ class CumulativeTheoryMemory:
                 autonomous_scientist=self.latest_autonomous_scientist_report(),
             ),
             'first_principles_basis': first_principles,
+            'baseline_experiment_templates': experiment_templates,
             'adaptive_dimension_agenda': adaptive_dimensions,
             'algebraic_foundation_baseline': algebraic_foundation,
             'algebraic_expression_agenda': algebraic_agenda,
@@ -3742,6 +3848,16 @@ class CumulativeTheoryMemory:
             for item in FIRST_PRINCIPLES_BASIS
         ]
 
+    def baseline_experiment_templates(self) -> list[dict[str, Any]]:
+        """Return reusable lab moves that guide discovery without exposing answers."""
+        return [
+            {
+                **item,
+                'use_when': list(item.get('use_when') or []),
+            }
+            for item in DISCOVERY_EXPERIMENT_TEMPLATES
+        ]
+
     def adaptive_dimension_agenda(self, limit: int = 8) -> list[dict[str, Any]]:
         """
         Propose new coordinates from residual pressure.
@@ -3979,6 +4095,7 @@ class CumulativeTheoryMemory:
                 limit=len(MATH_DOMAIN_CURRICULUM),
             )
         }
+        templates = self.baseline_experiment_templates()
         experiments = []
         for agenda_item in self.domain_curriculum_agenda(
             limit=len(MATH_DOMAIN_CURRICULUM),
@@ -4000,6 +4117,21 @@ class CumulativeTheoryMemory:
                 'world_seed': blueprint.get('seed') or self._domain_by_key(domain_key).get('world_seed'),
                 'variant': blueprint.get('variant', 0),
                 'observation_schema': blueprint.get('observation_schema', {}),
+                'public_sample_preview': list(blueprint.get('public_sample_preview') or []),
+                'blind_observation_policy': dict(
+                    blueprint.get('blind_observation_policy') or {}
+                ),
+                'experiment_templates': [
+                    template for template in templates
+                    if (
+                        set(template.get('use_when') or [])
+                        & set(agenda_item.get('target_primitives') or [])
+                    )
+                    or (
+                        set(template.get('use_when') or [])
+                        & set(agenda_item.get('equation_families') or [])
+                    )
+                ][:3] or templates[:2],
                 'target_primitives': list(agenda_item.get('target_primitives') or []),
                 'equation_families': list(agenda_item.get('equation_families') or []),
                 'proof_pressure': list(agenda_item.get('proof_pressure') or []),
@@ -5558,11 +5690,13 @@ class CumulativeTheoryMemory:
         """Summarize executable observation worlds for the broad math curriculum."""
         try:
             from world.math_domain_worlds import (
+                FORBIDDEN_OBSERVATION_KEYS,
                 generate_math_domain_world_manifest,
                 math_domain_manifest_from_observation,
             )
         except ImportError:  # pragma: no cover - package import fallback
             from first_principles_ai.world.math_domain_worlds import (
+                FORBIDDEN_OBSERVATION_KEYS,
                 generate_math_domain_world_manifest,
                 math_domain_manifest_from_observation,
             )
@@ -5585,6 +5719,7 @@ class CumulativeTheoryMemory:
                 1 for observation in observations
                 if math_domain_manifest_from_observation(observation)
             )
+            public_preview = observations[:2]
             blueprints.append({
                 'domain_key': key,
                 'name': domain.get('name'),
@@ -5599,6 +5734,13 @@ class CumulativeTheoryMemory:
                     for observation in observations
                 }),
                 'observation_schema': manifest.observation_schema(),
+                'public_sample_preview': public_preview,
+                'blind_observation_policy': {
+                    'learner_receives': 'public_observations_only',
+                    'withhold_benchmark_truth': True,
+                    'forbidden_observation_keys': sorted(FORBIDDEN_OBSERVATION_KEYS),
+                    'score_after_candidate_generation': True,
+                },
                 'expected_discoveries': list(manifest.expected_discoveries),
                 'falsifier_count': len(manifest.falsifiers),
                 'falsifiers': list(manifest.falsifiers),
@@ -8350,6 +8492,7 @@ class CumulativeTheoryMemory:
             'rediscovery_goal_progress': self.rediscovery_goal_progress_report(),
             'discovery_evidence_dossier': self.discovery_evidence_dossier(),
             'first_principles_basis': self.first_principles_basis(),
+            'baseline_experiment_templates': self.baseline_experiment_templates(),
             'adaptive_dimension_agenda': self.adaptive_dimension_agenda(),
             'algebraic_foundation_baseline': self.algebraic_foundation_baseline(),
             'algebraic_expression_agenda': self.algebraic_expression_agenda(),
@@ -9254,6 +9397,14 @@ class CumulativeTheoryMemory:
             f"structures={algebraic_foundation['structure_count']}, "
             f"proof_obligations={algebraic_foundation['proof_obligation_count']}"
         )
+        experiment_templates = self.baseline_experiment_templates()
+        if experiment_templates:
+            lines.append("  Baseline experiment templates:")
+            for item in experiment_templates[:limit]:
+                lines.append(
+                    f"    {item['template_kind']}: "
+                    f"falsifies_if={item['falsifies_if']}"
+                )
         algebraic_agenda = self.algebraic_expression_agenda(limit=limit)
         if algebraic_agenda:
             lines.append("  Algebraic expression agenda:")
