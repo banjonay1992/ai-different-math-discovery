@@ -123,6 +123,40 @@ class AutonomousExplorationTests(unittest.TestCase):
         self.assertNotIn('components', observation)
         self.assertNotIn('expected_discoveries', observation)
 
+    def test_environment_supports_direct_causal_interventions(self):
+        env = Environment(
+            num_initial_objects=1,
+            seed=5,
+            world_type='zero_gravity',
+        )
+        object_id = env.get_object_ids()[0]
+
+        moved = env.step({
+            'type': 'move',
+            'object_id': object_id,
+            'x': 6.0,
+            'y': 7.0,
+            'vx': 0.0,
+            'vy': 0.0,
+        })
+        moved_object = next(
+            item for item in moved['objects']
+            if item['id'] == object_id
+        )
+        self.assertEqual((6.0, 7.0), moved_object['position'])
+
+        env.step({'type': 'push', 'object_id': object_id, 'fx': 3.0, 'fy': 0.0})
+        frozen = env.step({'type': 'freeze', 'object_id': object_id})
+        frozen_object = next(
+            item for item in frozen['objects']
+            if item['id'] == object_id
+        )
+        self.assertEqual((0.0, 0.0), frozen_object['velocity'])
+
+        before_count = len(env.get_object_ids())
+        duplicated = env.step({'type': 'duplicate', 'object_id': object_id})
+        self.assertEqual(before_count + 1, len(duplicated['objects']))
+
     def test_hidden_world_generator_covers_more_component_recipes(self):
         component_signatures = {
             tuple(

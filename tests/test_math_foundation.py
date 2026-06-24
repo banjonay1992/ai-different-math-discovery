@@ -18,6 +18,7 @@ from agent.math_foundation import MathFoundationWorkbench
 from agent.representation import KnowledgeBase
 from main import (
     _checkpoint_theory_memory,
+    _experiment_design_cockpit,
     _foundation_metrics_from_knowledge,
     _math_final_artifact_summary,
     _persist_math_final_artifact,
@@ -28,6 +29,7 @@ from main import (
     _section_parameter_consolidation,
     _select_interesting_equation,
     _should_force_residual_first,
+    parse_live_progress_line,
     run_discovery_readiness_audit,
     run_experiment,
     run_math_final_discovery,
@@ -811,6 +813,64 @@ class MathFoundationTests(unittest.TestCase):
         self.assertIn('tangential_component', components)
         self.assertEqual(1, decomposition['benchmark_manifest_components']['time_wave'])
 
+    def test_experiment_design_cockpit_exposes_beliefs_and_intervention(self):
+        class DesignMemory(CumulativeTheoryMemory):
+            def planned_experiments(self, world_types, object_counts, steps, limit):
+                return [{
+                    'theory_kind': 'distance_scaled_direction_residual',
+                    'experiment_kind': 'model_disagreement_probe',
+                    'priority': 0.91,
+                    'world_type': 'vortex',
+                    'seed': 12,
+                    'object_count': object_counts[0],
+                    'steps': steps,
+                    'reason': 'current distance and direction theories disagree',
+                    'expected_result': 'near and far probes separate the exponent',
+                    'falsifies_if': 'the rival has lower residual error on both probes',
+                    'disagreement_signature': {
+                        'question': 'Which exponent survives near/far intervention?',
+                        'rival_predictions': [
+                            {
+                                'theory_key': 'inverse_square',
+                                'score': 0.63,
+                                'prediction': 'near probe has much larger residual',
+                                'falsified_if': 'near/far ratio is weak',
+                            },
+                            {
+                                'theory_key': 'inverse_linear',
+                                'score': 0.27,
+                                'prediction': 'near/far ratio is milder',
+                                'falsified_if': 'near/far ratio is steep',
+                            },
+                        ],
+                    },
+                    'probe_action': {
+                        'type': 'move',
+                        'object_id': 1,
+                        'x': 15.0,
+                        'y': 10.0,
+                    },
+                }]
+
+        designs = _experiment_design_cockpit(
+            DesignMemory(),
+            world_types=['vortex'],
+            object_counts=[5],
+            steps=240,
+            limit=1,
+        )
+
+        self.assertEqual(1, len(designs))
+        design = designs[0]
+        self.assertIn('Which exponent survives', design['question'])
+        self.assertIn('move object 1', design['intervention_text'])
+        self.assertEqual('high', design['counterexample_reward'])
+        self.assertAlmostEqual(
+            1.0,
+            sum(item['belief'] for item in design['beliefs']),
+            places=3,
+        )
+
     def test_math_final_artifact_writes_summary_with_diagnostics(self):
         theory_memory = CumulativeTheoryMemory()
         result = {
@@ -883,6 +943,64 @@ class MathFoundationTests(unittest.TestCase):
         self.assertEqual('skipped', persisted['hf_upload']['status'])
         self.assertEqual('demo-run', saved['run_id'])
         self.assertIn('artifact_path', saved)
+
+    def test_math_final_artifact_prints_compact_upload_failure_summary(self):
+        theory_memory = CumulativeTheoryMemory()
+        result = {
+            'context': 'standard',
+            'seed': 0,
+            'objects': 5,
+            'steps': 40,
+            'passed': True,
+            'ready_for_final': True,
+            'equation_passed': True,
+            'label_leaks': [],
+            'probe_suggestions': [],
+            'interesting_score': 0.97,
+            'interesting_equation': {
+                'role': 'position_update_equation',
+                'target': 'next_x',
+                'expression': 'x + vx * dt',
+                'score': 0.97,
+                'parameters': {},
+            },
+        }
+        starting = CumulativeTheoryMemory().memory_checkpoint_summary()
+        upload_failure = {
+            'status': 'failed',
+            'repo_id': 'demo/artifacts',
+            'path_in_repo': 'runs/demo-run/summary.json',
+            'reason': 'upload_failed',
+            'error': '403 Forbidden',
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'final.json')
+            output = io.StringIO()
+            with (
+                mock.patch('main._upload_math_final_artifact', return_value=upload_failure),
+                contextlib.redirect_stdout(output),
+            ):
+                persisted = _persist_math_final_artifact(
+                    [result],
+                    theory_memory,
+                    artifact_output_file=output_file,
+                    hf_output_repo='demo/artifacts',
+                    run_id='demo-run',
+                    run_config={'seeds': 1, 'world_types': ['standard']},
+                    starting_memory_summary=starting,
+                )
+
+        summary_line = next(
+            line for line in output.getvalue().splitlines()
+            if line.startswith('HF_ARTIFACT_SUMMARY ')
+        )
+        parsed = parse_live_progress_line(summary_line)
+        self.assertEqual('failed', persisted['hf_upload']['status'])
+        self.assertEqual('failed', parsed['hf_upload']['status'])
+        self.assertEqual('upload_failed', parsed['hf_upload']['reason'])
+        self.assertEqual(1, parsed['result_count'])
+        self.assertIn('experiment_design_cockpit', parsed)
 
     def test_section_study_summary_filters_cross_section_followups(self):
         class FakeMemory:

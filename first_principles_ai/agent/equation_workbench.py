@@ -143,6 +143,9 @@ class EquationWorkbench:
             'action_spawn': 1.0 if action_type == 'spawn' else 0.0,
             'action_remove': 1.0 if action_type == 'remove' else 0.0,
             'action_push': 1.0 if action_type == 'push' else 0.0,
+            'action_move': 1.0 if action_type == 'move' else 0.0,
+            'action_freeze': 1.0 if action_type == 'freeze' else 0.0,
+            'action_duplicate': 1.0 if action_type == 'duplicate' else 0.0,
             'action_wait': 1.0 if action_type == 'wait' else 0.0,
         })
 

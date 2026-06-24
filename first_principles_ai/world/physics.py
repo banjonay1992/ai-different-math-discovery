@@ -130,6 +130,48 @@ class PhysicsWorld:
     def remove_object(self, obj_id: int):
         self.objects = [o for o in self.objects if o.id != obj_id]
 
+    def get_object(self, obj_id: int) -> Optional[PhysicsObject]:
+        for obj in self.objects:
+            if obj.id == obj_id:
+                return obj
+        return None
+
+    def move_object(
+        self,
+        obj_id: int,
+        x: float,
+        y: float,
+        vx: float | None = None,
+        vy: float | None = None,
+    ):
+        obj = self.get_object(obj_id)
+        if obj is None:
+            return
+        obj.position = Vec2(x, y)
+        if vx is not None:
+            obj.velocity.x = float(vx)
+        if vy is not None:
+            obj.velocity.y = float(vy)
+
+    def freeze_object(self, obj_id: int):
+        obj = self.get_object(obj_id)
+        if obj is None:
+            return
+        obj.velocity = Vec2(0.0, 0.0)
+
+    def duplicate_object(self, obj_id: int) -> Optional[PhysicsObject]:
+        obj = self.get_object(obj_id)
+        if obj is None:
+            return None
+        return self.spawn_object(
+            obj.position.x,
+            obj.position.y,
+            obj.velocity.x,
+            obj.velocity.y,
+            mass=obj.mass,
+            radius=obj.radius,
+        )
+
     def apply_impulse(self, obj_id: int, fx: float, fy: float):
         """Apply an instantaneous impulse to an object. The agent uses this to interact."""
         for obj in self.objects:

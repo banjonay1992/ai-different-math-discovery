@@ -8,6 +8,7 @@ The agent can:
   - PUSH: Apply an impulse to an object
   - SPAWN: Create a new object
   - REMOVE: Remove an object
+  - MOVE/FREEZE/DUPLICATE: Controlled causal interventions for theory tests
   - WAIT: Let the world evolve without intervention
 
 The agent is NOT told what actions exist. It discovers them through exploration.
@@ -121,6 +122,9 @@ class Environment:
             {'type': 'push', 'object_id': int, 'fx': float, 'fy': float}
             {'type': 'spawn', 'x': float, 'y': float, 'vx': float, 'vy': float}
             {'type': 'remove', 'object_id': int}
+            {'type': 'move', 'object_id': int, 'x': float, 'y': float, 'vx': float, 'vy': float}
+            {'type': 'freeze', 'object_id': int}
+            {'type': 'duplicate', 'object_id': int}
         """
         if action is None or action.get('type') == 'wait':
             pass
@@ -133,6 +137,18 @@ class Environment:
             )
         elif action['type'] == 'remove':
             self.world.remove_object(action['object_id'])
+        elif action['type'] == 'move':
+            self.world.move_object(
+                action['object_id'],
+                action['x'],
+                action['y'],
+                action.get('vx'),
+                action.get('vy'),
+            )
+        elif action['type'] == 'freeze':
+            self.world.freeze_object(action['object_id'])
+        elif action['type'] == 'duplicate':
+            self.world.duplicate_object(action['object_id'])
 
         self.world.step()
         self.step_count += 1

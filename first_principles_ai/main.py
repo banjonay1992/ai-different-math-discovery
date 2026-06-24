@@ -4248,6 +4248,154 @@ def _math_final_rows_for_artifact(results: list[dict]) -> list[dict]:
     return rows
 
 
+def _theory_beliefs_from_plan(plan: dict) -> list[dict]:
+    signature = dict(plan.get('disagreement_signature') or {})
+    predictions = [
+        dict(prediction)
+        for prediction in list(signature.get('rival_predictions') or [])
+    ]
+    if not predictions:
+        label = (
+            plan.get('primary_theory_label')
+            or plan.get('theory_kind')
+            or 'candidate_theory'
+        )
+        return [{
+            'theory': str(label),
+            'belief': 1.0,
+            'score': round(float(plan.get('priority', 1.0) or 1.0), 3),
+            'prediction': plan.get('expected_result'),
+            'falsified_if': plan.get('falsifies_if'),
+        }]
+    raw_scores = [
+        max(0.0, float(prediction.get('score', 0.0) or 0.0))
+        for prediction in predictions
+    ]
+    score_total = sum(raw_scores)
+    equal_belief = 1.0 / max(1, len(predictions))
+    beliefs = []
+    for prediction, raw_score in zip(predictions, raw_scores):
+        belief = raw_score / score_total if score_total > 0 else equal_belief
+        beliefs.append({
+            'theory': str(
+                prediction.get('theory_key')
+                or prediction.get('theory_kind')
+                or 'candidate_theory'
+            ),
+            'belief': round(belief, 3),
+            'score': round(raw_score, 3),
+            'prediction': prediction.get('prediction'),
+            'falsified_if': prediction.get('falsified_if'),
+        })
+    return beliefs
+
+
+def _format_intervention_action(action: dict) -> str:
+    if not action:
+        return 'observe/wait for the next natural transition'
+    action_type = str(action.get('type') or 'wait')
+    if action_type == 'spawn':
+        return (
+            f"spawn probe at x={float(action.get('x', 0.0)):.2f}, "
+            f"y={float(action.get('y', 0.0)):.2f}"
+        )
+    if action_type == 'move':
+        return (
+            f"move object {action.get('object_id', '?')} to "
+            f"x={float(action.get('x', 0.0)):.2f}, "
+            f"y={float(action.get('y', 0.0)):.2f}"
+        )
+    if action_type == 'push':
+        return (
+            f"push object {action.get('object_id', '?')} with "
+            f"fx={float(action.get('fx', 0.0)):.2f}, "
+            f"fy={float(action.get('fy', 0.0)):.2f}"
+        )
+    if action_type in {'remove', 'freeze', 'duplicate'}:
+        return f"{action_type} object {action.get('object_id', '?')}"
+    return action_type
+
+
+def _experiment_design_from_plan(plan: dict) -> dict:
+    planned_actions = _planned_probe_actions(plan)
+    action = (
+        dict(plan.get('probe_action') or {})
+        if plan.get('probe_action')
+        else (planned_actions[0] if planned_actions else {'type': 'wait'})
+    )
+    signature = dict(plan.get('disagreement_signature') or {})
+    question = (
+        signature.get('question')
+        or plan.get('reason')
+        or 'Which theory loses predictive power under the next probe?'
+    )
+    return {
+        'experiment_kind': plan.get('experiment_kind'),
+        'priority': round(float(plan.get('priority', 0.0) or 0.0), 3),
+        'world_type': plan.get('world_type'),
+        'seed': plan.get('seed'),
+        'object_count': plan.get('object_count'),
+        'steps': plan.get('steps'),
+        'question': question,
+        'beliefs': _theory_beliefs_from_plan(plan),
+        'intervention': action,
+        'intervention_text': _format_intervention_action(action),
+        'expected_result': plan.get('expected_result'),
+        'falsifies_if': plan.get('falsifies_if'),
+        'counterexample_reward': (
+            'high'
+            if 'counterexample' in str(plan.get('experiment_kind', ''))
+            or plan.get('falsifies_if')
+            else 'normal'
+        ),
+    }
+
+
+def _experiment_design_cockpit(
+    theory_memory: CumulativeTheoryMemory,
+    *,
+    world_types: list[str] | None = None,
+    object_counts: list[int] | None = None,
+    steps: int = 240,
+    limit: int = 5,
+) -> list[dict]:
+    plans = theory_memory.planned_experiments(
+        world_types=world_types or WORLD_TYPES,
+        object_counts=object_counts or [5],
+        steps=steps,
+        limit=limit,
+    )
+    return [_experiment_design_from_plan(plan) for plan in plans]
+
+
+def _compact_artifact_summary_for_log(artifact: dict) -> dict:
+    upload = dict(artifact.get('hf_upload') or {})
+    return {
+        'run_kind': artifact.get('run_kind'),
+        'runs_final': bool(artifact.get('runs_final')),
+        'run_id': artifact.get('run_id'),
+        'result_count': artifact.get('result_count'),
+        'passed_count': artifact.get('passed_count'),
+        'ready_count': artifact.get('ready_count'),
+        'equation_clean_count': artifact.get('equation_clean_count'),
+        'section_count': artifact.get('section_count'),
+        'readiness': artifact.get('readiness'),
+        'memory_delta': artifact.get('memory_delta'),
+        'artifact_path': artifact.get('artifact_path'),
+        'hf_upload': {
+            'status': upload.get('status'),
+            'repo_id': upload.get('repo_id'),
+            'path_in_repo': upload.get('path_in_repo'),
+            'reason': upload.get('reason'),
+            'error': upload.get('error'),
+            'create_repo_error': upload.get('create_repo_error'),
+        },
+        'experiment_design_cockpit': list(
+            artifact.get('experiment_design_cockpit') or []
+        )[:3],
+    }
+
+
 def _math_final_artifact_summary(
     results: list[dict],
     theory_memory: CumulativeTheoryMemory,
@@ -4297,6 +4445,13 @@ def _math_final_artifact_summary(
         'composite_decompositions': composite_decompositions,
         'readiness': theory_memory.discovery_readiness_report(),
         'memory_delta': theory_memory.memory_delta_since(starting_memory_summary),
+        'experiment_design_cockpit': _experiment_design_cockpit(
+            theory_memory,
+            world_types=list(run_config.get('world_types') or WORLD_TYPES),
+            object_counts=list(run_config.get('object_counts') or [5]),
+            steps=int(run_config.get('steps', 240) or 240),
+            limit=5,
+        ),
         'theory_memory': theory_memory.to_dict(),
     }
 
@@ -4374,6 +4529,7 @@ def _upload_math_final_artifact(
             'repo_id': repo_id,
             'repo_type': 'dataset',
             'path_in_repo': path_in_repo,
+            'reason': 'upload_failed',
             'create_repo_error': create_error,
             'error': str(error),
         }
@@ -4430,7 +4586,16 @@ def _persist_math_final_artifact(
                 or os.environ.get('HF_RUN_REPO')
             ),
             'upload_status': artifact['hf_upload'].get('status'),
+            'path_in_repo': artifact['hf_upload'].get('path_in_repo'),
+            'reason': artifact['hf_upload'].get('reason'),
+            'error': artifact['hf_upload'].get('error'),
+            'create_repo_error': artifact['hf_upload'].get('create_repo_error'),
         }, sort_keys=True),
+        flush=True,
+    )
+    print(
+        "HF_ARTIFACT_SUMMARY "
+        + json.dumps(_compact_artifact_summary_for_log(artifact), sort_keys=True),
         flush=True,
     )
     return artifact
@@ -4612,6 +4777,20 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
     operator_prior_claim_experiments = theory_memory.operator_prior_claim_experiments(limit=3)
     operator_prior_repairs = theory_memory.operator_prior_repair_experiments(limit=3)
     next_experiments = theory_memory.next_experiments(limit=3)
+    experiment_design_cockpit = _experiment_design_cockpit(
+        theory_memory,
+        world_types=[
+            'standard',
+            'sideways_wind',
+            'vortex',
+            'inverse_square_repulsion',
+            'localized_gravity',
+            'time_varying',
+        ],
+        object_counts=[5],
+        steps=240,
+        limit=3,
+    )
     planned = theory_memory.planned_experiments(
         world_types=[
             'standard',
@@ -4668,6 +4847,7 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
         operator_prior_claim_experiments,
         operator_prior_repairs,
         next_experiments,
+        experiment_design_cockpit,
         planned,
     ]):
         return
@@ -5007,6 +5187,21 @@ def _print_cumulative_theory_review(theory_memory: CumulativeTheoryMemory):
                 f"priority={item['priority']:.2f}"
             )
             print(f"    falsifier: {item['falsifies_if']}")
+    if experiment_design_cockpit:
+        print("Theory experiment design cockpit:")
+        for design in experiment_design_cockpit:
+            print(
+                f"  Current theories disagree: {design['question']} "
+                f"(priority={design['priority']:.2f})"
+            )
+            belief_text = ', '.join(
+                f"{belief['theory']}={belief['belief']:.0%}"
+                for belief in design.get('beliefs', [])[:3]
+            )
+            print(f"    beliefs: {belief_text or 'none'}")
+            print(f"    proposed intervention: {design['intervention_text']}")
+            print(f"    expected: {design.get('expected_result')}")
+            print(f"    falsifier: {design.get('falsifies_if')}")
     if blind_holdout_benchmark.get('plan'):
         print(
             "Theory blind holdout benchmark: "

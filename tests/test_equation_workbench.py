@@ -34,6 +34,20 @@ def obj(object_id, x, y, vx, vy, mass=1.0, radius=0.5):
 
 
 class EquationWorkbenchTests(unittest.TestCase):
+    def test_records_direct_intervention_action_channels(self):
+        workbench = EquationWorkbench(min_samples=2)
+        for index, action_type in enumerate(('move', 'freeze', 'duplicate'), start=1):
+            workbench.observe_transition(
+                state(index, index * 0.016, [obj(1, 1.0, 1.0, 0.0, 0.0)]),
+                state(index + 1, (index + 1) * 0.016, [obj(1, 1.0, 1.0, 0.0, 0.0)]),
+                {'type': action_type},
+                index,
+            )
+
+        self.assertEqual(1.0, workbench.aggregate_rows[0]['action_move'])
+        self.assertEqual(1.0, workbench.aggregate_rows[1]['action_freeze'])
+        self.assertEqual(1.0, workbench.aggregate_rows[2]['action_duplicate'])
+
     def test_discovers_count_and_position_equations_from_starter_kit(self):
         kb = KnowledgeBase()
         workbench = EquationWorkbench(
