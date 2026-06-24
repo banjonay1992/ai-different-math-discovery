@@ -42,13 +42,14 @@ class Environment:
     def __init__(self, width: float = 20.0, height: float = 20.0,
                  num_initial_objects: int = 5, seed: int = None,
                  world_type: str = 'standard',
-                 hidden_manifest: HiddenWorldManifest | None = None):
+                 hidden_manifest: HiddenWorldManifest | None = None,
+                 force_backend: str = 'python'):
         self.rng = random.Random(seed)
         self._benchmark_world_type = (
             'hidden_procedural' if hidden_manifest is not None else world_type
         )
         self._hidden_id = hidden_manifest.hidden_id if hidden_manifest is not None else None
-        self.world = PhysicsWorld(width, height, rng=self.rng)
+        self.world = PhysicsWorld(width, height, rng=self.rng, force_backend=force_backend)
         self.world.world_type = self._benchmark_world_type
         self.step_count = 0
 

@@ -33,6 +33,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from world.environment import Environment
 from world.physics import PhysicsObject
+from world.tensor_backend import (
+    available_force_backends,
+    compute_external_force_deltas,
+    resolve_force_backend,
+)
 from world.hidden_worlds import (
     HiddenWorldManifest,
     generate_hidden_world_manifest,
@@ -159,6 +164,7 @@ def run_experiment(
     equation_operator_priors: list[dict] | None = None,
     equation_max_operator_feedback_rows: int = 384,
     equation_max_operator_feedback_operators: int = 5,
+    force_backend: str = 'python',
 ):
     """
     Run the first-principles discovery experiment.
@@ -184,6 +190,7 @@ def run_experiment(
     print(f"  Seed: {seed}")
     print(f"  World type: {world_type if hidden_manifest is None else 'hidden_procedural'}")
     print(f"  Agents: {num_agents}")
+    print(f"  Force backend: {force_backend}")
     print()
     print("-" * 70)
     print("EXPERIMENT STARTING...")
@@ -196,6 +203,7 @@ def run_experiment(
         seed=seed,
         world_type=world_type,
         hidden_manifest=hidden_manifest,
+        force_backend=force_backend,
     )
     kb = KnowledgeBase()
     law_priors = law_memory.suggest_priors() if law_memory is not None else []
@@ -600,6 +608,7 @@ def run_benchmark(
     world_types: list[str] = None,
     num_agents: int = 2,
     law_memory: LawMemory = None,
+    force_backend: str = 'python',
 ) -> list[dict]:
     """Run a seed/object-count sweep over all configured worlds."""
     object_counts = object_counts or [5]
@@ -632,6 +641,7 @@ def run_benchmark(
                         world_type=world_type,
                         num_agents=num_agents,
                         law_memory=law_memory,
+                        force_backend=force_backend,
                     )
 
                 learned_laws = (
@@ -687,6 +697,7 @@ def run_transfer_benchmark(
     world_types: list[str] = None,
     num_agents: int = 2,
     law_memory: LawMemory = None,
+    force_backend: str = 'python',
 ) -> list[dict]:
     """Compare cold runs against warm runs that can use law memory priors."""
     object_counts = object_counts or [5]
@@ -712,10 +723,12 @@ def run_transfer_benchmark(
         for object_count in object_counts:
             for seed in range(seeds):
                 cold = _run_experiment_metrics(
-                    world_type, seed, object_count, steps, num_agents, law_memory=None
+                    world_type, seed, object_count, steps, num_agents,
+                    law_memory=None, force_backend=force_backend,
                 )
                 warm = _run_experiment_metrics(
-                    world_type, seed, object_count, steps, num_agents, law_memory=warm_memory
+                    world_type, seed, object_count, steps, num_agents,
+                    law_memory=warm_memory, force_backend=force_backend,
                 )
                 cold_step = cold['first_learned_step']
                 warm_step = warm['first_learned_step']
@@ -765,6 +778,7 @@ def run_autonomous_exploration(
     law_memory: LawMemory = None,
     seed_start: int = 0,
     seed_span: int = 20,
+    force_backend: str = 'python',
 ) -> list[dict]:
     """Let the agent choose a sequence of experiments from a large candidate pool."""
     object_counts = object_counts or [5]
@@ -809,6 +823,7 @@ def run_autonomous_exploration(
             steps=candidate.steps,
             num_agents=num_agents,
             law_memory=law_memory,
+            force_backend=force_backend,
         )
         metrics['steps'] = candidate.steps
         value = score_exploration_outcome(metrics)
@@ -853,6 +868,7 @@ def run_hidden_holdout_benchmark(
     num_agents: int = 2,
     law_memory: LawMemory = None,
     seed_start: int = 0,
+    force_backend: str = 'python',
 ) -> list[dict]:
     """Train memory on hidden worlds, then compare cold/warm holdout discovery."""
     law_memory = law_memory or LawMemory()
@@ -877,6 +893,7 @@ def run_hidden_holdout_benchmark(
             num_agents=num_agents,
             law_memory=law_memory,
             allow_memory_probes=True,
+            force_backend=force_backend,
         )
         results.append({
             'phase': 'train',
@@ -901,6 +918,7 @@ def run_hidden_holdout_benchmark(
             num_agents=num_agents,
             law_memory=None,
             allow_memory_probes=False,
+            force_backend=force_backend,
         )
         warm = _run_hidden_experiment_metrics(
             manifest=manifest,
@@ -910,6 +928,7 @@ def run_hidden_holdout_benchmark(
             num_agents=num_agents,
             law_memory=law_memory,
             allow_memory_probes=False,
+            force_backend=force_backend,
         )
         helped_or_matched = (
             warm['score'] >= cold['score']
@@ -947,6 +966,7 @@ def run_hidden_autonomous_exploration(
     num_agents: int = 2,
     law_memory: LawMemory = None,
     seed_start: int = 0,
+    force_backend: str = 'python',
 ) -> list[dict]:
     """Run a budgeted campaign over generated hidden worlds."""
     law_memory = law_memory or LawMemory()
@@ -975,6 +995,7 @@ def run_hidden_autonomous_exploration(
             num_agents=num_agents,
             law_memory=law_memory,
             allow_memory_probes=True,
+            force_backend=force_backend,
         )
         result = {
             'iteration': iteration,
@@ -1007,6 +1028,7 @@ def run_equation_campaign(
     followup_budget: int = 0,
     theory_memory: CumulativeTheoryMemory | None = None,
     emit_hf_artifact_summary: bool = False,
+    force_backend: str = 'python',
 ) -> list[dict]:
     """Run worlds and collect equation-review packs for manual inspection."""
     object_counts = object_counts or [5]
@@ -1045,6 +1067,7 @@ def run_equation_campaign(
                     equation_operator_priors=theory_memory.generated_operator_priors(
                         context=world_type,
                     ),
+                    force_backend=force_backend,
                 )
                 results.append(result)
                 theory_memory.record_result(
@@ -1079,6 +1102,7 @@ def run_equation_campaign(
             equation_operator_priors=theory_memory.generated_operator_priors(
                 context=manifest.hidden_id,
             ),
+            force_backend=force_backend,
         )
         result['manifest'] = manifest.to_dict()
         results.append(result)
@@ -1108,6 +1132,7 @@ def run_equation_campaign(
         num_agents=num_agents,
         limit=followup_budget,
         enable_equation_probes=enable_equation_probes,
+        force_backend=force_backend,
         progress_fn=_print_equation_followup_progress,
     )
     if followups:
@@ -1300,6 +1325,7 @@ def _run_equation_followup_cases(
     num_agents: int,
     limit: int,
     enable_equation_probes: bool = True,
+    force_backend: str = 'python',
     run_case_fn=None,
     progress_fn=None,
 ) -> list[dict]:
@@ -1350,6 +1376,7 @@ def _run_equation_followup_cases(
                 context=context,
             ),
             residual_first=bool(plan.get('residual_first')),
+            force_backend=force_backend,
         )
         result['phase'] = 'autonomous_followup'
         result['followup_iteration'] = iteration + 1
@@ -1434,6 +1461,7 @@ def run_math_foundation_prep(
     hidden_worlds: int = 1,
     num_agents: int = 2,
     theory_memory: CumulativeTheoryMemory | None = None,
+    force_backend: str = 'python',
 ) -> list[dict]:
     """
     Check readiness gates before the user-watched final discovery run.
@@ -1474,6 +1502,7 @@ def run_math_foundation_prep(
                     equation_operator_priors=theory_memory.generated_operator_priors(
                         context=world_type,
                     ),
+                    force_backend=force_backend,
                 )
                 results.append(result)
                 theory_memory.record_result(
@@ -1507,6 +1536,7 @@ def run_math_foundation_prep(
             equation_operator_priors=theory_memory.generated_operator_priors(
                 context=manifest.hidden_id,
             ),
+            force_backend=force_backend,
         )
         result['manifest'] = manifest.to_dict()
         results.append(result)
@@ -1882,6 +1912,7 @@ def run_hf_non_final_campaign(
     max_adaptive_steps: int | None = None,
     max_adaptive_seeds: int | None = None,
     max_adaptive_hidden_worlds: int | None = None,
+    force_backend: str = 'python',
     prep_runner=None,
 ) -> dict:
     """
@@ -1911,6 +1942,7 @@ def run_hf_non_final_campaign(
         'scientist_variants': scientist_variants,
         'auto_compact': auto_compact,
         'adaptive_compute': adaptive_compute,
+        'force_backend': force_backend,
     })
     domain_records = []
     for variant in domain_variants:
@@ -2071,6 +2103,7 @@ def run_hf_non_final_campaign(
             hidden_worlds=effective_hidden_worlds,
             num_agents=num_agents,
             theory_memory=theory_memory,
+            force_backend=force_backend,
         )
         _emit_hf_progress('foundation_prep_finish', {
             'result_count': len(prep_results),
@@ -2151,6 +2184,7 @@ def run_hf_adaptive_comparison(
     max_adaptive_steps: int | None = None,
     max_adaptive_seeds: int | None = None,
     max_adaptive_hidden_worlds: int | None = None,
+    force_backend: str = 'python',
     prep_runner=None,
 ) -> dict:
     """Run fixed and adaptive non-final campaigns from the same memory snapshot."""
@@ -2171,6 +2205,7 @@ def run_hf_adaptive_comparison(
         'domain_variants': domain_variants,
         'scientist_seed_count': scientist_seed_count,
         'scientist_variants': scientist_variants,
+        'force_backend': force_backend,
     })
     variants = []
     for name, adaptive_enabled in (
@@ -2207,6 +2242,7 @@ def run_hf_adaptive_comparison(
             max_adaptive_steps=max_adaptive_steps,
             max_adaptive_seeds=max_adaptive_seeds,
             max_adaptive_hidden_worlds=max_adaptive_hidden_worlds,
+            force_backend=force_backend,
             prep_runner=prep_runner,
         )
         elapsed_seconds = time.perf_counter() - started
@@ -2729,6 +2765,7 @@ def run_math_final_discovery(
     run_id: str | None = None,
     parallel_cases: int = 1,
     profile_final_run: bool = False,
+    force_backend: str = 'python',
 ) -> list[dict]:
     """Run the watched discovery campaign and report live performance metrics."""
     final_started = time.perf_counter()
@@ -2760,6 +2797,7 @@ def run_math_final_discovery(
     print(f"Steps per run: {steps}", flush=True)
     print(f"Section study cycles: {section_study_cycles}", flush=True)
     print(f"Parallel case workers: {parallel_cases}", flush=True)
+    print(f"Force backend: {force_backend}", flush=True)
     print(flush=True)
     print(
         f"{'Context':24s} {'Seed':>4s} {'Obj':>3s} "
@@ -2790,6 +2828,7 @@ def run_math_final_discovery(
                 world_type=world_type,
                 parallel_cases=parallel_cases,
                 runtime_profile_events=runtime_profile_events,
+                force_backend=force_backend,
             )
             results.extend(cycle_results)
             section_results.extend(cycle_results)
@@ -2825,6 +2864,7 @@ def run_math_final_discovery(
             theory_memory_checkpoint_file=theory_memory_checkpoint_file,
             parallel_cases=parallel_cases,
             runtime_profile_events=runtime_profile_events,
+            force_backend=force_backend,
         )
 
     if self_authored_worlds:
@@ -2881,6 +2921,7 @@ def run_math_final_discovery(
                 theory_memory_checkpoint_file=theory_memory_checkpoint_file,
                 parallel_cases=parallel_cases,
                 runtime_profile_events=runtime_profile_events,
+                force_backend=force_backend,
             )
 
     print("-" * 132, flush=True)
@@ -2966,6 +3007,7 @@ def _run_hidden_manifest_final_section(
     theory_memory_checkpoint_file: str | Path | None = None,
     parallel_cases: int = 1,
     runtime_profile_events: list[dict] | None = None,
+    force_backend: str = 'python',
 ):
     section_results = []
     for cycle in range(section_study_cycles):
@@ -2996,6 +3038,7 @@ def _run_hidden_manifest_final_section(
             },
             parallel_cases=parallel_cases,
             runtime_profile_events=runtime_profile_events,
+            force_backend=force_backend,
         )
         results.extend(cycle_results)
         section_results.extend(cycle_results)
@@ -3037,6 +3080,7 @@ def _run_math_final_section_cycle(
     result_metadata: dict | None = None,
     parallel_cases: int = 1,
     runtime_profile_events: list[dict] | None = None,
+    force_backend: str = 'python',
 ) -> list[dict]:
     cycle_started = time.perf_counter()
     descriptors = []
@@ -3079,6 +3123,7 @@ def _run_math_final_section_cycle(
                 'equation_operator_priors': theory_memory.generated_operator_priors(
                     context=context,
                 ),
+                'force_backend': force_backend,
             },
         })
 
@@ -3262,6 +3307,7 @@ def run_math_benchmark(
     world_types: list[str] = None,
     num_agents: int = 2,
     required_concepts: set[str] | None = None,
+    force_backend: str = 'python',
 ) -> list[dict]:
     """Measure emergent math comparison coverage across repeated runs."""
     object_counts = object_counts or [5]
@@ -3296,6 +3342,7 @@ def run_math_benchmark(
                         report_interval=max(steps, 1),
                         world_type=world_type,
                         num_agents=num_agents,
+                        force_backend=force_backend,
                     )
 
                 metrics = _math_metrics_from_knowledge(kb, required_concepts)
@@ -3361,6 +3408,7 @@ def _run_hidden_experiment_metrics(
     num_agents: int,
     law_memory: LawMemory | None,
     allow_memory_probes: bool = True,
+    force_backend: str = 'python',
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -3374,6 +3422,7 @@ def _run_hidden_experiment_metrics(
             law_memory=law_memory,
             hidden_manifest=manifest,
             allow_memory_probes=allow_memory_probes,
+            force_backend=force_backend,
         )
 
     observation_probe = Environment(
@@ -3381,6 +3430,7 @@ def _run_hidden_experiment_metrics(
         seed=seed,
         world_type='hidden_procedural',
         hidden_manifest=manifest,
+        force_backend=force_backend,
     ).observe()
     discovered = _blind_hidden_discoveries(kb)
     expected = set(manifest.expected_discoveries)
@@ -3400,6 +3450,7 @@ def _run_hidden_experiment_metrics(
         'score': score,
         'passed': score >= 0.5 and not hidden_manifest_from_observation(observation_probe),
         'observation_leak': hidden_manifest_from_observation(observation_probe),
+        'force_backend': force_backend,
         'learned_rule_count': len(learned_rules),
         'learned_law_types': sorted({
             rule.properties.get('law_type', 'unknown')
@@ -3428,6 +3479,7 @@ def _run_equation_campaign_case(
     planned_actions: list[dict] | None = None,
     equation_operator_priors: list[dict] | None = None,
     residual_first: bool = False,
+    force_backend: str = 'python',
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -3443,6 +3495,7 @@ def _run_equation_campaign_case(
             enable_equation_probes=enable_equation_probes,
             planned_actions=planned_actions,
             equation_operator_priors=equation_operator_priors,
+            force_backend=force_backend,
         )
     metrics = _equation_metrics_from_knowledge(kb, residual_first=residual_first)
     return {
@@ -3450,6 +3503,7 @@ def _run_equation_campaign_case(
         'seed': seed,
         'objects': object_count,
         'steps': steps,
+        'force_backend': force_backend,
         **metrics,
     }
 
@@ -3607,6 +3661,7 @@ def _run_math_foundation_prep_case(
     world_type: str,
     hidden_manifest: HiddenWorldManifest | None = None,
     equation_operator_priors: list[dict] | None = None,
+    force_backend: str = 'python',
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -3623,6 +3678,7 @@ def _run_math_foundation_prep_case(
             equation_operator_priors=equation_operator_priors,
             equation_max_operator_feedback_rows=96,
             equation_max_operator_feedback_operators=2,
+            force_backend=force_backend,
         )
     metrics = _foundation_metrics_from_knowledge(kb)
     equations = _equation_metrics_from_knowledge(kb)
@@ -3631,6 +3687,7 @@ def _run_math_foundation_prep_case(
         'seed': seed,
         'objects': object_count,
         'steps': steps,
+        'force_backend': force_backend,
         **metrics,
         'equation_count': equations['equation_count'],
         'installed_count': equations['installed_count'],
@@ -3653,6 +3710,7 @@ def _run_math_final_discovery_case(
     equation_operator_priors: list[dict] | None = None,
     planned_actions: list[dict] | None = None,
     residual_first: bool = False,
+    force_backend: str = 'python',
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -3670,6 +3728,7 @@ def _run_math_final_discovery_case(
             equation_operator_priors=equation_operator_priors,
             equation_max_operator_feedback_rows=96,
             equation_max_operator_feedback_operators=2,
+            force_backend=force_backend,
         )
     foundation = _foundation_metrics_from_knowledge(kb)
     equations = _equation_metrics_from_knowledge(
@@ -3681,6 +3740,7 @@ def _run_math_final_discovery_case(
         'seed': seed,
         'objects': object_count,
         'steps': steps,
+        'force_backend': force_backend,
         **foundation,
         **equations,
         'equation_passed': equations['passed'],
@@ -4898,11 +4958,153 @@ def run_merge_final_artifacts(
     return report
 
 
+def _physics_force_kernel_fixture(sample_count: int) -> dict:
+    positions = [
+        (
+            2.0 + (index % 113) * 0.137,
+            2.5 + (index % 109) * 0.129,
+        )
+        for index in range(sample_count)
+    ]
+    return {
+        'positions': positions,
+        'dt': 0.016,
+        'time_value': 0.016,
+        'gravity': 9.8,
+        'uniform_force': {'x': 8.0, 'y': -0.25},
+        'central_force': {'x': 10.0, 'y': 10.0, 'strength': 200.0},
+        'gravity_wells': [{
+            'x': 7.0,
+            'y': 13.0,
+            'strength': 220.0,
+            'radius': 8.5,
+        }],
+        'repulsion_zones': [{
+            'x': 13.0,
+            'y': 8.0,
+            'strength': 80.0,
+            'radius': 6.0,
+        }],
+        'inverse_square_repulsions': [{
+            'x': 5.0,
+            'y': 5.0,
+            'strength': 130.0,
+        }],
+        'vortex_fields': [{
+            'x': 10.0,
+            'y': 10.0,
+            'strength': 140.0,
+            'radius': 9.0,
+            'direction': 1.0,
+        }],
+        'time_varying_force': {
+            'axis': 'x',
+            'amplitude': 12.0,
+            'period': 1.28,
+            'phase': 0.0,
+        },
+        'force_components': [
+            {
+                'type': 'cutoff_radial',
+                'params': {
+                    'x': 11.0,
+                    'y': 6.0,
+                    'strength': 155.0,
+                    'radius': 6.0,
+                    'exponent': 2.0,
+                    'direction': -1.0,
+                },
+            },
+            {
+                'type': 'piecewise_radial',
+                'params': {
+                    'x': 9.0,
+                    'y': 12.0,
+                    'split_radius': 6.0,
+                    'inner': {
+                        'strength': 120.0,
+                        'exponent': 1.0,
+                        'direction': 1.0,
+                    },
+                    'outer': {
+                        'strength': 70.0,
+                        'exponent': 1.5,
+                        'direction': -1.0,
+                    },
+                },
+            },
+            {
+                'type': 'periodic_regime_uniform',
+                'params': {
+                    'period': 1.1,
+                    'phase': 0.0,
+                    'duty_cycle': 0.6,
+                    'on_force': {'x': 5.0, 'y': 0.0},
+                    'off_force': {'x': -2.0, 'y': 0.0},
+                },
+            },
+        ],
+    }
+
+
+def _python_force_kernel_deltas(fixture: dict) -> list[tuple[float, float]]:
+    from world.physics import PhysicsWorld, Vec2
+
+    world = PhysicsWorld(force_backend='python')
+    world.gravity = fixture['gravity']
+    world.uniform_force = fixture['uniform_force']
+    world.central_force = fixture['central_force']
+    world.gravity_wells = [dict(item) for item in fixture['gravity_wells']]
+    world.repulsion_zones = [dict(item) for item in fixture['repulsion_zones']]
+    world.inverse_square_repulsions = [
+        dict(item) for item in fixture['inverse_square_repulsions']
+    ]
+    world.vortex_fields = [dict(item) for item in fixture['vortex_fields']]
+    world.time_varying_force = fixture['time_varying_force']
+    world.force_components = [
+        {
+            'type': component['type'],
+            'params': dict(component['params']),
+        }
+        for component in fixture['force_components']
+    ]
+    world.time = fixture['time_value']
+    for index, (x, y) in enumerate(fixture['positions']):
+        world.add_object(
+            PhysicsObject(
+                position=Vec2(x, y),
+                velocity=Vec2(0.0, 0.0),
+                mass=1.0,
+                radius=0.1,
+                object_id=index,
+            )
+        )
+    world._apply_external_forces_python(fixture['dt'])
+    return [
+        (obj.velocity.x, obj.velocity.y)
+        for obj in world.objects
+    ]
+
+
+def _max_delta_error(
+    reference: list[tuple[float, float]],
+    candidate: list[tuple[float, float]],
+) -> float:
+    return max(
+        (
+            max(abs(rx - cx), abs(ry - cy))
+            for (rx, ry), (cx, cy) in zip(reference, candidate)
+        ),
+        default=0.0,
+    )
+
+
 def run_gpu_feasibility_benchmark(
     *,
     sample_count: int = 50000,
     repeats: int = 3,
     prefer_cuda: bool = True,
+    force_backend: str | None = None,
     output_file: str | Path | None = None,
 ) -> dict:
     """Tiny tensor-style benchmark for deciding whether a GPU port is worth it."""
@@ -4966,6 +5168,47 @@ def run_gpu_feasibility_benchmark(
     except Exception as error:
         torch_status = f'unavailable:{error.__class__.__name__}'
 
+    fixture = _physics_force_kernel_fixture(sample_count)
+    physics_reference = []
+    started = time.perf_counter()
+    for _ in range(repeats):
+        physics_reference = _python_force_kernel_deltas(fixture)
+    python_force_kernel_seconds = time.perf_counter() - started
+    requested_force_backend = force_backend or ('cuda' if prefer_cuda else 'numpy')
+    force_backend_status = resolve_force_backend(requested_force_backend)
+    physics_backend_result = []
+    started = time.perf_counter()
+    if force_backend_status['backend'] == 'python':
+        physics_backend_result = physics_reference
+    else:
+        for _ in range(repeats):
+            physics_backend_result = compute_external_force_deltas(
+                positions=fixture['positions'],
+                dt=fixture['dt'],
+                time_value=fixture['time_value'],
+                gravity=fixture['gravity'],
+                uniform_force=fixture['uniform_force'],
+                central_force=fixture['central_force'],
+                gravity_wells=fixture['gravity_wells'],
+                repulsion_zones=fixture['repulsion_zones'],
+                inverse_square_repulsions=fixture['inverse_square_repulsions'],
+                vortex_fields=fixture['vortex_fields'],
+                time_varying_force=fixture['time_varying_force'],
+                force_components=fixture['force_components'],
+                backend=force_backend_status['backend'],
+            )
+    physics_backend_seconds = time.perf_counter() - started
+    physics_force_speedup = (
+        python_force_kernel_seconds / physics_backend_seconds
+        if physics_backend_seconds > 0
+        else 0.0
+    )
+    physics_force_max_abs_error = _max_delta_error(
+        physics_reference,
+        physics_backend_result,
+    )
+    physics_force_parity_passed = physics_force_max_abs_error <= 1e-8
+
     reference_cpu_seconds = (
         torch_cpu_seconds
         if torch_cpu_seconds is not None
@@ -4976,8 +5219,18 @@ def run_gpu_feasibility_benchmark(
         if cuda_seconds and cuda_seconds > 0
         else 0.0
     )
-    if cuda_seconds and gpu_speedup >= 3.0:
-        recommendation = 'prototype_tensor_backend_before_full_gpu_runs'
+    if not physics_force_parity_passed:
+        recommendation = 'fix_tensor_physics_parity_before_gpu_runs'
+    elif (
+        force_backend_status['backend'] == 'cuda'
+        and physics_force_speedup >= 3.0
+    ):
+        recommendation = 'use_cuda_force_backend_for_large_force_batches'
+    elif (
+        force_backend_status['backend'] != 'python'
+        and physics_force_speedup >= 1.25
+    ):
+        recommendation = 'use_tensor_force_backend_for_force_heavy_shards'
     elif cuda_seconds:
         recommendation = 'prefer_cpu_sharding_until_gpu_kernel_is_larger'
     else:
@@ -4998,6 +5251,17 @@ def run_gpu_feasibility_benchmark(
         'cuda_seconds': round(cuda_seconds, 6) if cuda_seconds is not None else None,
         'cuda_device': device_name,
         'gpu_speedup_vs_reference_cpu': round(gpu_speedup, 3),
+        'available_force_backends': available_force_backends(),
+        'physics_force_backend_request': requested_force_backend,
+        'physics_force_backend': force_backend_status['backend'],
+        'physics_force_backend_fallback_reason': (
+            force_backend_status.get('fallback_reason')
+        ),
+        'python_force_kernel_seconds': round(python_force_kernel_seconds, 6),
+        'physics_force_backend_seconds': round(physics_backend_seconds, 6),
+        'physics_force_speedup_vs_python': round(physics_force_speedup, 3),
+        'physics_force_max_abs_error': round(physics_force_max_abs_error, 12),
+        'physics_force_parity_passed': physics_force_parity_passed,
         'recommendation': recommendation,
         'checksum': round(float(checksum), 6),
     }
@@ -5011,6 +5275,14 @@ def run_gpu_feasibility_benchmark(
         f"python_cpu={report['python_cpu_seconds']}s "
         f"torch_cpu={report['torch_cpu_seconds']} "
         f"cuda={report['cuda_seconds']}"
+    )
+    print(
+        "physics_force_kernel="
+        f"{report['physics_force_backend']} "
+        f"python={report['python_force_kernel_seconds']}s "
+        f"backend={report['physics_force_backend_seconds']}s "
+        f"speedup={report['physics_force_speedup_vs_python']} "
+        f"parity={report['physics_force_parity_passed']}"
     )
     print(f"recommendation={recommendation}")
     return report
@@ -5975,6 +6247,7 @@ def _run_experiment_metrics(
     steps: int,
     num_agents: int,
     law_memory: LawMemory | None,
+    force_backend: str = 'python',
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -5986,6 +6259,7 @@ def _run_experiment_metrics(
             world_type=world_type,
             num_agents=num_agents,
             law_memory=law_memory,
+            force_backend=force_backend,
         )
 
     learned_rules = [
@@ -6010,6 +6284,7 @@ def _run_experiment_metrics(
         }),
         'first_learned_step': min(learned_steps) if learned_steps else None,
         'min_sample_count': min(sample_counts) if sample_counts else None,
+        'force_backend': force_backend,
         'memory_transfer': (
             law_memory.episodes[-1].transfer_report
             if law_memory is not None and law_memory.episodes
@@ -6141,6 +6416,9 @@ if __name__ == '__main__':
                         help='Repeats for the tiny GPU feasibility benchmark')
     parser.add_argument('--gpu-output-file', type=str, default=None,
                         help='Optional JSON path for the GPU feasibility report')
+    parser.add_argument('--physics-force-backend', type=str, default='python',
+                        choices=['python', 'numpy', 'torch', 'cuda', 'auto'],
+                        help='Simulator force backend for physics runs (default: python)')
     parser.add_argument('--math-final-discovery', action='store_true',
                         help='Run the final math discovery campaign when the user is ready to watch')
     parser.add_argument('--section-study-cycles', type=int, default=1,
@@ -6264,6 +6542,11 @@ if __name__ == '__main__':
         run_gpu_feasibility_benchmark(
             sample_count=args.gpu_sample_count,
             repeats=args.gpu_repeats,
+            force_backend=(
+                None
+                if args.physics_force_backend == 'python'
+                else args.physics_force_backend
+            ),
             output_file=args.gpu_output_file or args.hf_output_file,
         )
         raise SystemExit(0)
@@ -6276,6 +6559,7 @@ if __name__ == '__main__':
             world_types=_parse_csv_worlds(args.world_types),
             num_agents=args.agents,
             law_memory=law_memory,
+            force_backend=args.physics_force_backend,
         )
         if args.memory_file and law_memory is not None and not args.no_save_memory:
             law_memory.save(args.memory_file)
@@ -6289,6 +6573,7 @@ if __name__ == '__main__':
             world_types=_parse_csv_worlds(args.world_types),
             num_agents=args.agents,
             law_memory=law_memory,
+            force_backend=args.physics_force_backend,
         )
         if args.memory_file and law_memory is not None and not args.no_save_memory:
             law_memory.save(args.memory_file)
@@ -6301,6 +6586,7 @@ if __name__ == '__main__':
             object_counts=_parse_csv_ints(args.object_counts),
             world_types=_parse_csv_worlds(args.world_types),
             num_agents=args.agents,
+            force_backend=args.physics_force_backend,
         )
         raise SystemExit(0)
 
@@ -6406,6 +6692,7 @@ if __name__ == '__main__':
             max_adaptive_steps=args.hf_max_adaptive_steps,
             max_adaptive_seeds=args.hf_max_adaptive_seeds,
             max_adaptive_hidden_worlds=args.hf_max_adaptive_hidden_worlds,
+            force_backend=args.physics_force_backend,
         )
         if (
             args.theory_memory_file
@@ -6451,6 +6738,7 @@ if __name__ == '__main__':
             max_adaptive_steps=args.hf_max_adaptive_steps,
             max_adaptive_seeds=args.hf_max_adaptive_seeds,
             max_adaptive_hidden_worlds=args.hf_max_adaptive_hidden_worlds,
+            force_backend=args.physics_force_backend,
         )
         if (
             args.theory_memory_file
@@ -6471,6 +6759,7 @@ if __name__ == '__main__':
             followup_budget=args.equation_followup_budget,
             theory_memory=theory_memory,
             emit_hf_artifact_summary=args.hf_log_artifact_summary,
+            force_backend=args.physics_force_backend,
         )
         if (
             args.theory_memory_file
@@ -6489,6 +6778,7 @@ if __name__ == '__main__':
             hidden_worlds=args.equation_hidden_worlds,
             num_agents=args.agents,
             theory_memory=theory_memory,
+            force_backend=args.physics_force_backend,
         )
         if (
             args.theory_memory_file
@@ -6525,6 +6815,7 @@ if __name__ == '__main__':
             run_id=args.hf_run_id,
             parallel_cases=args.parallel_cases,
             profile_final_run=args.profile_final_run,
+            force_backend=args.physics_force_backend,
         )
         if (
             args.theory_memory_file
@@ -6544,6 +6835,7 @@ if __name__ == '__main__':
             law_memory=law_memory,
             seed_start=args.exploration_seed_start,
             seed_span=args.seeds,
+            force_backend=args.physics_force_backend,
         )
         if args.memory_file and law_memory is not None and not args.no_save_memory:
             law_memory.save(args.memory_file)
@@ -6558,6 +6850,7 @@ if __name__ == '__main__':
             num_agents=args.agents,
             law_memory=law_memory,
             seed_start=args.exploration_seed_start,
+            force_backend=args.physics_force_backend,
         )
         if args.memory_file and law_memory is not None and not args.no_save_memory:
             law_memory.save(args.memory_file)
@@ -6571,6 +6864,7 @@ if __name__ == '__main__':
             num_agents=args.agents,
             law_memory=law_memory,
             seed_start=args.exploration_seed_start,
+            force_backend=args.physics_force_backend,
         )
         if args.memory_file and law_memory is not None and not args.no_save_memory:
             law_memory.save(args.memory_file)
@@ -6588,6 +6882,7 @@ if __name__ == '__main__':
         world_type=args.world_type,
         num_agents=args.agents,
         law_memory=law_memory,
+        force_backend=args.physics_force_backend,
     )
     if args.memory_file and law_memory is not None and not args.no_save_memory:
         law_memory.save(args.memory_file)

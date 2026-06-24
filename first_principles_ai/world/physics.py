@@ -14,6 +14,11 @@ import random
 
 
 from typing import Callable, Optional
+from .tensor_backend import (
+    can_vectorize_force_components,
+    compute_external_force_deltas,
+    resolve_force_backend,
+)
 
 
 ForceComponentApplier = Callable[[object, dict, float], None]
@@ -113,7 +118,8 @@ class PhysicsWorld:
     def __init__(self, width: float = 20.0, height: float = 20.0,
                  gravity: float = 9.8, friction: float = 0.999,
                  restitution: float = 0.85,
-                 rng: random.Random | None = None):
+                 rng: random.Random | None = None,
+                 force_backend: str = 'python'):
         self.width = width
         self.height = height
         self.gravity = gravity
@@ -135,6 +141,10 @@ class PhysicsWorld:
         self.time_varying_force: Optional[dict] = None  # Sinusoidal acceleration
         self.force_components: list[dict] = []  # Registry-driven hidden/adversarial forces
         self.world_type = 'standard'
+        self.force_backend_request = 'python'
+        self.force_backend = 'python'
+        self.force_backend_status = {}
+        self.set_force_backend(force_backend)
 
     def add_object(self, obj: PhysicsObject) -> PhysicsObject:
         self.objects.append(obj)
@@ -217,11 +227,51 @@ class PhysicsWorld:
                 obj.velocity.y += fy / obj.mass
                 break
 
-    def step(self, dt: float = 0.016):
-        """Advance the simulation by one timestep."""
-        self.time += dt
-        self.collision_events.clear()
+    def set_force_backend(self, force_backend: str | None):
+        """Choose the simulator-side force backend without changing observations."""
+        status = resolve_force_backend(force_backend)
+        self.force_backend_request = status['requested_backend']
+        self.force_backend = status['backend']
+        self.force_backend_status = status
 
+    def _can_use_tensor_force_backend(self) -> bool:
+        return (
+            self.force_backend != 'python'
+            and bool(self.objects)
+            and can_vectorize_force_components(self.force_components)
+        )
+
+    def _apply_external_forces(self, dt: float):
+        if self._can_use_tensor_force_backend():
+            self._apply_external_forces_tensor(dt)
+        else:
+            self._apply_external_forces_python(dt)
+
+    def _apply_external_forces_tensor(self, dt: float):
+        positions = [
+            (obj.position.x, obj.position.y)
+            for obj in self.objects
+        ]
+        deltas = compute_external_force_deltas(
+            positions=positions,
+            dt=dt,
+            time_value=self.time,
+            gravity=self.gravity,
+            uniform_force=self.uniform_force,
+            central_force=self.central_force,
+            gravity_wells=self.gravity_wells,
+            repulsion_zones=self.repulsion_zones,
+            inverse_square_repulsions=self.inverse_square_repulsions,
+            vortex_fields=self.vortex_fields,
+            time_varying_force=self.time_varying_force,
+            force_components=self.force_components,
+            backend=self.force_backend,
+        )
+        for obj, (dvx, dvy) in zip(self.objects, deltas):
+            obj.velocity.x += dvx
+            obj.velocity.y += dvy
+
+    def _apply_external_forces_python(self, dt: float):
         # Gravity — constant downward acceleration
         for obj in self.objects:
             obj.velocity.y -= self.gravity * dt
@@ -337,6 +387,12 @@ class PhysicsWorld:
             if applier is None:
                 continue
             applier(self, component.get('params', {}), dt)
+
+    def step(self, dt: float = 0.016):
+        """Advance the simulation by one timestep."""
+        self.time += dt
+        self.collision_events.clear()
+        self._apply_external_forces(dt)
 
         # Friction — multiplicative damping (breaks strict conservation, as in reality)
         for obj in self.objects:

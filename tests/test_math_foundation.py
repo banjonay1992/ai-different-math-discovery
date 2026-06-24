@@ -1175,8 +1175,17 @@ class MathFoundationTests(unittest.TestCase):
         self.assertFalse(report['runs_final'])
         self.assertEqual('gpu_feasibility_benchmark', report['run_kind'])
         self.assertIn('recommendation', report)
+        self.assertIn('physics_force_backend', report)
+        self.assertIn('python_force_kernel_seconds', report)
+        self.assertIn('physics_force_backend_seconds', report)
+        self.assertTrue(report['physics_force_parity_passed'])
         self.assertEqual(report['recommendation'], saved['recommendation'])
+        self.assertEqual(
+            report['physics_force_backend'],
+            saved['physics_force_backend'],
+        )
         self.assertIn('GPU FEASIBILITY BENCHMARK', output.getvalue())
+        self.assertIn('physics_force_kernel=', output.getvalue())
 
     def test_math_final_artifact_prints_compact_upload_failure_summary(self):
         theory_memory = CumulativeTheoryMemory()
