@@ -220,17 +220,21 @@ class MathFoundationTests(unittest.TestCase):
             if result['context'].startswith('hidden_')
         ]
 
-        self.assertEqual(3, len(results))
+        self.assertEqual(4, len(results))
         self.assertEqual([0, 1], [result['seed'] for result in standard_results])
-        self.assertEqual(1, len(hidden_results))
+        self.assertEqual([0, 1], [result['seed'] for result in hidden_results])
         self.assertIn('Section study cycles: 2', text)
         self.assertIn('Section study cycle 1/2: standard', text)
         self.assertIn('Section study cycle 2/2: standard', text)
+        self.assertIn('Section study cycle 1/2: hidden_00_0000', text)
+        self.assertIn('Section study cycle 2/2: hidden_00_0000', text)
         self.assertIn('Section study summary: standard cycle=1/2', text)
         self.assertIn('Section study summary: standard cycle=2/2', text)
+        self.assertIn('Section study summary: hidden_00_0000 cycle=1/2', text)
+        self.assertIn('Section study summary: hidden_00_0000 cycle=2/2', text)
         self.assertIn('Families:', text)
         self.assertIn('Best so far:', text)
-        self.assertEqual(3, len(theory_memory.records))
+        self.assertEqual(4, len(theory_memory.records))
 
     def test_math_final_discovery_executes_section_followup_replays(self):
         class ReplayMemory(CumulativeTheoryMemory):
@@ -300,6 +304,83 @@ class MathFoundationTests(unittest.TestCase):
             results[1]['phase'],
         )
         self.assertEqual(2, len(theory_memory.equation_case_records))
+
+    def test_hidden_math_final_discovery_executes_section_followup_replays(self):
+        class HiddenReplayMemory(CumulativeTheoryMemory):
+            def planned_experiments(self, world_types, object_counts, steps, limit):
+                if not self.equation_case_records:
+                    return []
+                return [{
+                    'theory_kind': 'hidden_residual_replay',
+                    'experiment_kind': 'post_run_replay_revision',
+                    'priority': 0.99,
+                    'world_type': 'hidden_00_0000',
+                    'seed': 0,
+                    'object_count': object_counts[0],
+                    'steps': steps,
+                    'hidden_holdout': False,
+                    'reason': 'replay hidden seed=0 residual-first',
+                    'expected_result': 'surface a hidden residual law',
+                    'falsifies_if': 'baseline transition stays dominant',
+                    'source_status': 'robust_law',
+                    'source_context': 'hidden_00_0000',
+                    'target_context': 'post_run_replay_context',
+                    'replay_key': 'post_run_replay:hidden:0:baseline',
+                    'replay_issue': 'baseline_headline_needs_residual_replay',
+                    'original_record': {
+                        'context': 'hidden_00_0000',
+                        'seed': 0,
+                        'target': 'next_x',
+                        'expression': 'x + vx * dt',
+                        'role': 'position_update_equation',
+                    },
+                    'learned_invariant': {
+                        'context': 'hidden_00_0000',
+                        'law_family': 'linear_transition',
+                    },
+                    'equation_invariant': {
+                        'context': 'hidden_00_0000',
+                        'law_family': 'linear_transition',
+                    },
+                    'residual_first': True,
+                    'replay_from_start': True,
+                }]
+
+        theory_memory = HiddenReplayMemory()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results = run_math_final_discovery(
+                seeds=1,
+                steps=40,
+                object_counts=[3],
+                world_types=['standard'],
+                hidden_worlds=1,
+                num_agents=2,
+                section_study_cycles=2,
+                theory_memory=theory_memory,
+            )
+
+        text = output.getvalue()
+        hidden_results = [
+            result for result in results
+            if result['context'] == 'hidden_00_0000'
+        ]
+        self.assertEqual([0, 0], [result['seed'] for result in hidden_results])
+        self.assertIn('Section study cycle 2/2: hidden_00_0000', text)
+        self.assertIn(
+            'Running final case: hidden_00_0000 seed=0 objects=3 steps=40 '
+            'plan=post_run_replay_revision',
+            text,
+        )
+        self.assertEqual(
+            'post_run_replay_revision',
+            hidden_results[1]['planned_experiment']['experiment_kind'],
+        )
+        self.assertTrue(hidden_results[1]['planned_experiment']['residual_first'])
+        self.assertEqual(
+            'math_final_discovery_followup',
+            hidden_results[1]['phase'],
+        )
 
     def test_residual_first_selection_prefers_residual_over_baseline_motion(self):
         baseline = {

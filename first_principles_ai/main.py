@@ -2761,16 +2761,6 @@ def run_math_final_discovery(
                     result['planned_experiment'] = dict(plan)
                 results.append(result)
                 section_results.append(result)
-                theory_memory.record_result(
-                    result['context'],
-                    result['seed'],
-                    result.get('discovery_loop', {}),
-                )
-                theory_memory.record_operator_prior_results(
-                    result['context'],
-                    result['seed'],
-                    result,
-                )
                 if plan:
                     result['planned_experiment_outcome'] = (
                         theory_memory.record_planned_result(
@@ -2780,6 +2770,17 @@ def run_math_final_discovery(
                             report=result.get('discovery_loop', {}),
                             operator_prior_result=result,
                         )
+                    )
+                else:
+                    theory_memory.record_result(
+                        result['context'],
+                        result['seed'],
+                        result.get('discovery_loop', {}),
+                    )
+                    theory_memory.record_operator_prior_results(
+                        result['context'],
+                        result['seed'],
+                        result,
                     )
                 theory_memory.record_equation_case_result(
                     result['context'],
@@ -2805,42 +2806,98 @@ def run_math_final_discovery(
 
     for index in range(hidden_worlds):
         manifest = generate_hidden_world_manifest(index, variant=index)
-        print(
-            f"Running final case: {manifest.hidden_id} seed={index} "
-            f"objects={object_counts[0]} steps={steps}",
-            flush=True,
-        )
-        result = _run_math_final_discovery_case(
-            context=manifest.hidden_id,
-            seed=index,
-            object_count=object_counts[0],
-            steps=steps,
-            num_agents=num_agents,
-            world_type='hidden_procedural',
-            hidden_manifest=manifest,
-            equation_operator_priors=theory_memory.generated_operator_priors(
-                context=manifest.hidden_id,
-            ),
-        )
-        result['manifest'] = manifest.to_dict()
-        results.append(result)
-        theory_memory.record_result(
-            result['context'],
-            result['seed'],
-            result.get('discovery_loop', {}),
-        )
-        theory_memory.record_operator_prior_results(
-            result['context'],
-            result['seed'],
-            result,
-        )
-        theory_memory.record_equation_case_result(
-            result['context'],
-            result['seed'],
-            result,
-            phase='math_final_discovery',
-        )
-        _print_math_final_discovery_row(result)
+        section_results = []
+        for cycle in range(section_study_cycles):
+            if section_study_cycles > 1:
+                print(
+                    f"Section study cycle {cycle + 1}/{section_study_cycles}: "
+                    f"{manifest.hidden_id}",
+                    flush=True,
+                )
+            for case in _section_cycle_cases(
+                theory_memory,
+                manifest.hidden_id,
+                object_counts=object_counts,
+                steps=steps,
+                seeds=seeds,
+                cycle=cycle,
+            ):
+                plan = case.get('plan')
+                actual_seed = int(case['seed'])
+                object_count = int(case['object_count'])
+                case_steps = int(case.get('steps', steps) or steps)
+                plan_text = (
+                    f" plan={plan['experiment_kind']}"
+                    if plan
+                    else ''
+                )
+                print(
+                    f"Running final case: {manifest.hidden_id} seed={actual_seed} "
+                    f"objects={object_count} steps={case_steps}{plan_text}",
+                    flush=True,
+                )
+                result = _run_math_final_discovery_case(
+                    context=manifest.hidden_id,
+                    seed=actual_seed,
+                    object_count=object_count,
+                    steps=case_steps,
+                    num_agents=num_agents,
+                    world_type='hidden_procedural',
+                    hidden_manifest=manifest,
+                    planned_actions=_planned_probe_actions(plan) if plan else None,
+                    residual_first=bool(plan and plan.get('residual_first')),
+                    equation_operator_priors=theory_memory.generated_operator_priors(
+                        context=manifest.hidden_id,
+                    ),
+                )
+                result['manifest'] = manifest.to_dict()
+                if plan:
+                    result['phase'] = 'math_final_discovery_followup'
+                    result['planned_experiment'] = dict(plan)
+                results.append(result)
+                section_results.append(result)
+                if plan:
+                    result['planned_experiment_outcome'] = (
+                        theory_memory.record_planned_result(
+                            plan,
+                            context=result['context'],
+                            seed=result['seed'],
+                            report=result.get('discovery_loop', {}),
+                            operator_prior_result=result,
+                        )
+                    )
+                else:
+                    theory_memory.record_result(
+                        result['context'],
+                        result['seed'],
+                        result.get('discovery_loop', {}),
+                    )
+                    theory_memory.record_operator_prior_results(
+                        result['context'],
+                        result['seed'],
+                        result,
+                    )
+                theory_memory.record_equation_case_result(
+                    result['context'],
+                    result['seed'],
+                    result,
+                    phase=(
+                        'math_final_discovery_followup'
+                        if plan
+                        else 'math_final_discovery'
+                    ),
+                )
+                _print_math_final_discovery_row(result)
+            if section_study_cycles > 1:
+                _print_section_study_summary(
+                    manifest.hidden_id,
+                    section_results,
+                    theory_memory,
+                    object_counts=object_counts,
+                    steps=steps,
+                    cycle=cycle + 1,
+                    total_cycles=section_study_cycles,
+                )
 
     print("-" * 132, flush=True)
     total = len(results)
