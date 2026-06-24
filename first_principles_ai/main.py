@@ -18,6 +18,7 @@ Run: python main.py
 
 import sys
 import os
+import concurrent.futures
 import contextlib
 import io
 import json
@@ -2695,6 +2696,7 @@ def run_math_final_discovery(
     artifact_output_file: str | Path | None = None,
     hf_output_repo: str | None = None,
     run_id: str | None = None,
+    parallel_cases: int = 1,
 ) -> list[dict]:
     """Run the watched discovery campaign and report live performance metrics."""
     starting_memory_summary = (
@@ -2708,6 +2710,7 @@ def run_math_final_discovery(
     hidden_world_start = max(0, int(hidden_world_start or 0))
     self_authored_worlds = max(0, int(self_authored_worlds or 0))
     section_study_cycles = max(1, int(section_study_cycles or 1))
+    parallel_cases = max(1, int(parallel_cases or 1))
     results = []
     theory_memory = theory_memory or CumulativeTheoryMemory()
 
@@ -2722,6 +2725,7 @@ def run_math_final_discovery(
     print(f"Object counts: {', '.join(str(count) for count in object_counts)}", flush=True)
     print(f"Steps per run: {steps}", flush=True)
     print(f"Section study cycles: {section_study_cycles}", flush=True)
+    print(f"Parallel case workers: {parallel_cases}", flush=True)
     print(flush=True)
     print(
         f"{'Context':24s} {'Seed':>4s} {'Obj':>3s} "
@@ -2741,81 +2745,19 @@ def run_math_final_discovery(
                     f"{world_type}",
                     flush=True,
                 )
-            for case in _section_cycle_cases(
-                theory_memory,
-                world_type,
+            cycle_results = _run_math_final_section_cycle(
+                context=world_type,
+                theory_memory=theory_memory,
                 object_counts=object_counts,
                 steps=steps,
                 seeds=seeds,
                 cycle=cycle,
-            ):
-                plan = case.get('plan')
-                actual_seed = int(case['seed'])
-                object_count = int(case['object_count'])
-                case_steps = int(case.get('steps', steps) or steps)
-                plan_text = (
-                    f" plan={plan['experiment_kind']}"
-                    if plan
-                    else ''
-                )
-                print(
-                    f"Running final case: {world_type} seed={actual_seed} "
-                    f"objects={object_count} steps={case_steps}{plan_text}",
-                    flush=True,
-                )
-                result = _run_math_final_discovery_case(
-                    context=world_type,
-                    seed=actual_seed,
-                    object_count=object_count,
-                    steps=case_steps,
-                    num_agents=num_agents,
-                    world_type=world_type,
-                    planned_actions=_planned_probe_actions(plan) if plan else None,
-                    residual_first=(
-                        bool(plan and plan.get('residual_first'))
-                        or _should_force_residual_first(theory_memory, world_type)
-                    ),
-                    equation_operator_priors=theory_memory.generated_operator_priors(
-                        context=world_type,
-                    ),
-                )
-                if plan:
-                    result['phase'] = 'math_final_discovery_followup'
-                    result['planned_experiment'] = dict(plan)
-                results.append(result)
-                section_results.append(result)
-                if plan:
-                    result['planned_experiment_outcome'] = (
-                        theory_memory.record_planned_result(
-                            plan,
-                            context=result['context'],
-                            seed=result['seed'],
-                            report=result.get('discovery_loop', {}),
-                            operator_prior_result=result,
-                        )
-                    )
-                else:
-                    theory_memory.record_result(
-                        result['context'],
-                        result['seed'],
-                        result.get('discovery_loop', {}),
-                    )
-                    theory_memory.record_operator_prior_results(
-                        result['context'],
-                        result['seed'],
-                        result,
-                    )
-                theory_memory.record_equation_case_result(
-                    result['context'],
-                    result['seed'],
-                    result,
-                    phase=(
-                        'math_final_discovery_followup'
-                        if plan
-                        else 'math_final_discovery'
-                    ),
-                )
-                _print_math_final_discovery_row(result)
+                num_agents=num_agents,
+                world_type=world_type,
+                parallel_cases=parallel_cases,
+            )
+            results.extend(cycle_results)
+            section_results.extend(cycle_results)
             if section_study_cycles > 1:
                 _print_section_study_summary(
                     world_type,
@@ -2846,6 +2788,7 @@ def run_math_final_discovery(
             section_study_cycles=section_study_cycles,
             manifest_source='generated',
             theory_memory_checkpoint_file=theory_memory_checkpoint_file,
+            parallel_cases=parallel_cases,
         )
 
     if self_authored_worlds:
@@ -2900,6 +2843,7 @@ def run_math_final_discovery(
                 manifest_source='self_authored',
                 self_authored_world_design=design,
                 theory_memory_checkpoint_file=theory_memory_checkpoint_file,
+                parallel_cases=parallel_cases,
             )
 
     print("-" * 132, flush=True)
@@ -2947,6 +2891,7 @@ def run_math_final_discovery(
                 'self_authored_worlds': self_authored_worlds,
                 'num_agents': num_agents,
                 'section_study_cycles': section_study_cycles,
+                'parallel_cases': parallel_cases,
             },
             starting_memory_summary=starting_memory_summary,
         )
@@ -2966,6 +2911,7 @@ def _run_hidden_manifest_final_section(
     manifest_source: str,
     self_authored_world_design: dict | None = None,
     theory_memory_checkpoint_file: str | Path | None = None,
+    parallel_cases: int = 1,
 ):
     section_results = []
     for cycle in range(section_study_cycles):
@@ -2975,89 +2921,29 @@ def _run_hidden_manifest_final_section(
                 f"{manifest.hidden_id}",
                 flush=True,
             )
-        for case in _section_cycle_cases(
-            theory_memory,
-            manifest.hidden_id,
+        cycle_results = _run_math_final_section_cycle(
+            context=manifest.hidden_id,
+            theory_memory=theory_memory,
             object_counts=object_counts,
             steps=steps,
             seeds=seeds,
             cycle=cycle,
-        ):
-            plan = case.get('plan')
-            actual_seed = int(case['seed'])
-            object_count = int(case['object_count'])
-            case_steps = int(case.get('steps', steps) or steps)
-            plan_text = (
-                f" plan={plan['experiment_kind']}"
-                if plan
-                else ''
-            )
-            print(
-                f"Running final case: {manifest.hidden_id} seed={actual_seed} "
-                f"objects={object_count} steps={case_steps}{plan_text}",
-                flush=True,
-            )
-            result = _run_math_final_discovery_case(
-                context=manifest.hidden_id,
-                seed=actual_seed,
-                object_count=object_count,
-                steps=case_steps,
-                num_agents=num_agents,
-                world_type='hidden_procedural',
-                hidden_manifest=manifest,
-                planned_actions=_planned_probe_actions(plan) if plan else None,
-                residual_first=(
-                    bool(plan and plan.get('residual_first'))
-                    or _should_force_residual_first(
-                        theory_memory,
-                        manifest.hidden_id,
-                    )
+            num_agents=num_agents,
+            world_type='hidden_procedural',
+            hidden_manifest=manifest,
+            result_metadata={
+                'manifest': manifest.to_dict(),
+                'manifest_source': manifest_source,
+                **(
+                    {'self_authored_world_design': dict(self_authored_world_design)}
+                    if self_authored_world_design is not None
+                    else {}
                 ),
-                equation_operator_priors=theory_memory.generated_operator_priors(
-                    context=manifest.hidden_id,
-                ),
-            )
-            result['manifest'] = manifest.to_dict()
-            result['manifest_source'] = manifest_source
-            if self_authored_world_design is not None:
-                result['self_authored_world_design'] = dict(self_authored_world_design)
-            if plan:
-                result['phase'] = 'math_final_discovery_followup'
-                result['planned_experiment'] = dict(plan)
-            results.append(result)
-            section_results.append(result)
-            if plan:
-                result['planned_experiment_outcome'] = (
-                    theory_memory.record_planned_result(
-                        plan,
-                        context=result['context'],
-                        seed=result['seed'],
-                        report=result.get('discovery_loop', {}),
-                        operator_prior_result=result,
-                    )
-                )
-            else:
-                theory_memory.record_result(
-                    result['context'],
-                    result['seed'],
-                    result.get('discovery_loop', {}),
-                )
-                theory_memory.record_operator_prior_results(
-                    result['context'],
-                    result['seed'],
-                    result,
-                )
-            theory_memory.record_equation_case_result(
-                result['context'],
-                result['seed'],
-                result,
-                phase=(
-                    'math_final_discovery_followup'
-                    if plan
-                    else 'math_final_discovery'
-                ),
-            )
-            _print_math_final_discovery_row(result)
+            },
+            parallel_cases=parallel_cases,
+        )
+        results.extend(cycle_results)
+        section_results.extend(cycle_results)
         if section_study_cycles > 1:
             _print_section_study_summary(
                 manifest.hidden_id,
@@ -3073,6 +2959,156 @@ def _run_hidden_manifest_final_section(
             theory_memory_checkpoint_file,
             label=f"{manifest.hidden_id} cycle {cycle + 1}/{section_study_cycles}",
         )
+
+
+def _execute_math_final_case_payload(payload: dict) -> dict:
+    return _run_math_final_discovery_case(**payload)
+
+
+def _run_math_final_section_cycle(
+    *,
+    context: str,
+    theory_memory: CumulativeTheoryMemory,
+    object_counts: list[int],
+    steps: int,
+    seeds: int,
+    cycle: int,
+    num_agents: int,
+    world_type: str,
+    hidden_manifest: HiddenWorldManifest | None = None,
+    result_metadata: dict | None = None,
+    parallel_cases: int = 1,
+) -> list[dict]:
+    descriptors = []
+    for index, case in enumerate(
+        _section_cycle_cases(
+            theory_memory,
+            context,
+            object_counts=object_counts,
+            steps=steps,
+            seeds=seeds,
+            cycle=cycle,
+        )
+    ):
+        plan = case.get('plan')
+        actual_seed = int(case['seed'])
+        object_count = int(case['object_count'])
+        case_steps = int(case.get('steps', steps) or steps)
+        plan_text = f" plan={plan['experiment_kind']}" if plan else ''
+        print(
+            f"Running final case: {context} seed={actual_seed} "
+            f"objects={object_count} steps={case_steps}{plan_text}",
+            flush=True,
+        )
+        descriptors.append({
+            'index': index,
+            'plan': dict(plan) if plan else None,
+            'payload': {
+                'context': context,
+                'seed': actual_seed,
+                'object_count': object_count,
+                'steps': case_steps,
+                'num_agents': num_agents,
+                'world_type': world_type,
+                'hidden_manifest': hidden_manifest,
+                'planned_actions': _planned_probe_actions(plan) if plan else None,
+                'residual_first': (
+                    bool(plan and plan.get('residual_first'))
+                    or _should_force_residual_first(theory_memory, context)
+                ),
+                'equation_operator_priors': theory_memory.generated_operator_priors(
+                    context=context,
+                ),
+            },
+        })
+
+    worker_count = min(max(1, int(parallel_cases or 1)), len(descriptors) or 1)
+    if worker_count <= 1:
+        return [
+            _finalize_math_final_case_result(
+                _execute_math_final_case_payload(descriptor['payload']),
+                descriptor,
+                theory_memory,
+                result_metadata,
+            )
+            for descriptor in descriptors
+        ]
+
+    completed = []
+    pending: dict[int, dict] = {}
+    next_index = 0
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=worker_count,
+    ) as executor:
+        futures = {
+            executor.submit(
+                _execute_math_final_case_payload,
+                descriptor['payload'],
+            ): descriptor['index']
+            for descriptor in descriptors
+        }
+        for future in concurrent.futures.as_completed(futures):
+            index = futures[future]
+            pending[index] = future.result()
+            while next_index in pending:
+                result = pending.pop(next_index)
+                completed.append(
+                    _finalize_math_final_case_result(
+                        result,
+                        descriptors[next_index],
+                        theory_memory,
+                        result_metadata,
+                    )
+                )
+                next_index += 1
+    return completed
+
+
+def _finalize_math_final_case_result(
+    result: dict,
+    descriptor: dict,
+    theory_memory: CumulativeTheoryMemory,
+    result_metadata: dict | None,
+) -> dict:
+    finalized = dict(result)
+    if result_metadata:
+        finalized.update(result_metadata)
+    plan = descriptor.get('plan')
+    if plan:
+        finalized['phase'] = 'math_final_discovery_followup'
+        finalized['planned_experiment'] = dict(plan)
+        finalized['planned_experiment_outcome'] = (
+            theory_memory.record_planned_result(
+                plan,
+                context=finalized['context'],
+                seed=finalized['seed'],
+                report=finalized.get('discovery_loop', {}),
+                operator_prior_result=finalized,
+            )
+        )
+    else:
+        theory_memory.record_result(
+            finalized['context'],
+            finalized['seed'],
+            finalized.get('discovery_loop', {}),
+        )
+        theory_memory.record_operator_prior_results(
+            finalized['context'],
+            finalized['seed'],
+            finalized,
+        )
+    theory_memory.record_equation_case_result(
+        finalized['context'],
+        finalized['seed'],
+        finalized,
+        phase=(
+            'math_final_discovery_followup'
+            if plan
+            else 'math_final_discovery'
+        ),
+    )
+    _print_math_final_discovery_row(finalized)
+    return finalized
 
 
 def _checkpoint_theory_memory(
@@ -5320,6 +5356,8 @@ if __name__ == '__main__':
                         help='Run the final math discovery campaign when the user is ready to watch')
     parser.add_argument('--section-study-cycles', type=int, default=1,
                         help='Repeat and consolidate each final world section before moving on')
+    parser.add_argument('--parallel-cases', type=int, default=1,
+                        help='Independent final cases to run concurrently inside each section cycle')
     parser.add_argument('--equation-hidden-worlds', type=int, default=0,
                         help='Generated hidden worlds to include in equation campaign')
     parser.add_argument('--equation-hidden-start', type=int, default=0,
@@ -5661,6 +5699,7 @@ if __name__ == '__main__':
             artifact_output_file=args.hf_output_file,
             hf_output_repo=args.hf_output_repo,
             run_id=args.hf_run_id,
+            parallel_cases=args.parallel_cases,
         )
         if (
             args.theory_memory_file

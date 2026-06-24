@@ -206,6 +206,95 @@ class MathFoundationTests(unittest.TestCase):
         self.assertTrue(all('equation_passed' in result for result in results))
         self.assertEqual(2, len(theory_memory.records))
 
+    def test_math_final_discovery_parallel_cases_preserve_result_order(self):
+        class ImmediateFuture:
+            def __init__(self, result):
+                self._result = result
+
+            def result(self):
+                return self._result
+
+        class FakeExecutor:
+            max_workers_seen = None
+            payloads = []
+
+            def __init__(self, max_workers):
+                FakeExecutor.max_workers_seen = max_workers
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def submit(self, fn, payload):
+                FakeExecutor.payloads.append(dict(payload))
+                return ImmediateFuture(fn(payload))
+
+        def fake_case(payload):
+            seed = payload['seed']
+            return {
+                'context': payload['context'],
+                'seed': seed,
+                'objects': payload['object_count'],
+                'steps': payload['steps'],
+                'readiness_score': 1.0,
+                'missing_gates': [],
+                'gates': {},
+                'artifact_count': 0,
+                'proof_trace_count': 0,
+                'probe_count': 0,
+                'ready_for_final': True,
+                'probes': [],
+                'equation_count': 1,
+                'installed_count': 1,
+                'label_leaks': [],
+                'probe_suggestions': [],
+                'interesting_score': 0.9,
+                'interesting_equation': {
+                    'target': 'next_x',
+                    'expression': f'seed_{seed}',
+                    'role': 'position_update_equation',
+                    'score': 0.9,
+                },
+                'discovery_loop': {},
+                'generated_operator_prior_count': 0,
+                'equation_passed': True,
+                'passed': True,
+            }
+
+        FakeExecutor.payloads = []
+        theory_memory = CumulativeTheoryMemory()
+        output = io.StringIO()
+        with (
+            mock.patch('main.concurrent.futures.ProcessPoolExecutor', FakeExecutor),
+            mock.patch(
+                'main.concurrent.futures.as_completed',
+                side_effect=lambda futures: list(reversed(list(futures))),
+            ),
+            mock.patch('main._execute_math_final_case_payload', side_effect=fake_case),
+            contextlib.redirect_stdout(output),
+        ):
+            results = run_math_final_discovery(
+                seeds=3,
+                steps=40,
+                object_counts=[3],
+                world_types=['standard'],
+                hidden_worlds=0,
+                num_agents=2,
+                theory_memory=theory_memory,
+                parallel_cases=3,
+            )
+
+        self.assertEqual(3, FakeExecutor.max_workers_seen)
+        self.assertEqual([0, 1, 2], [payload['seed'] for payload in FakeExecutor.payloads])
+        self.assertEqual([0, 1, 2], [result['seed'] for result in results])
+        self.assertEqual(
+            [0, 1, 2],
+            [record['seed'] for record in theory_memory.equation_case_records],
+        )
+        self.assertIn('Parallel case workers: 3', output.getvalue())
+
     def test_math_final_discovery_can_repeat_and_consolidate_each_section(self):
         theory_memory = CumulativeTheoryMemory()
         output = io.StringIO()
