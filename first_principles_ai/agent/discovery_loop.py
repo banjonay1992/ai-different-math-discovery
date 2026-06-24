@@ -7969,6 +7969,8 @@ class CumulativeTheoryMemory:
                 'expected_result': recommendation['expected_result'],
                 'falsifies_if': recommendation['falsifies_if'],
                 'source_status': recommendation['family_status'],
+                'source_context': recommendation.get('source_context'),
+                'target_context': recommendation.get('target_context'),
             }
             if recommendation.get('quick_probe'):
                 quick_steps = int(recommendation.get('quick_steps', steps) or steps)

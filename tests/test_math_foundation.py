@@ -15,6 +15,7 @@ from agent.math_foundation import MathFoundationWorkbench
 from agent.representation import KnowledgeBase
 from main import (
     _foundation_metrics_from_knowledge,
+    _print_section_study_summary,
     run_discovery_readiness_audit,
     run_experiment,
     run_math_final_discovery,
@@ -229,6 +230,62 @@ class MathFoundationTests(unittest.TestCase):
         self.assertIn('Families:', text)
         self.assertIn('Best so far:', text)
         self.assertEqual(3, len(theory_memory.records))
+
+    def test_section_study_summary_filters_cross_section_followups(self):
+        class FakeMemory:
+            def planned_experiments(self, world_types, object_counts, steps, limit):
+                return [
+                    {
+                        'experiment_kind': 'post_run_replay_revision',
+                        'world_type': 'central_force',
+                        'source_context': 'central_force',
+                        'seed': 0,
+                        'priority': 0.99,
+                        'reason': 'replay central_force seed=0',
+                    },
+                    {
+                        'experiment_kind': 'post_run_replay_revision',
+                        'world_type': 'repulsion',
+                        'source_context': 'repulsion',
+                        'seed': 2,
+                        'priority': 0.95,
+                        'reason': 'replay repulsion seed=2',
+                    },
+                ]
+
+        section_results = [{
+            'passed': True,
+            'label_leaks': [],
+            'interesting_score': 0.87,
+            'interesting_equation': {
+                'target': 'baseline_adjusted_delta_velocity',
+                'expression': (
+                    'k * taper(separation, 7_273) * '
+                    'unit_generated_center_vector / separation^0_5'
+                ),
+                'role': 'generated_operator_tapered_distance_direction_equation',
+                'parameters': {
+                    'operator_kind': 'localized_tapered_power',
+                    'distance_exponent': 0.5,
+                },
+            },
+        }]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            _print_section_study_summary(
+                'repulsion',
+                section_results,
+                FakeMemory(),
+                object_counts=[5],
+                steps=600,
+                cycle=1,
+                total_cycles=2,
+            )
+
+        text = output.getvalue()
+        self.assertIn('Section follow-up probes:', text)
+        self.assertIn('replay repulsion seed=2', text)
+        self.assertNotIn('replay central_force seed=0', text)
 
 
 if __name__ == '__main__':

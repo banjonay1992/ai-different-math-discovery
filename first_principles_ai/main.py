@@ -3289,6 +3289,46 @@ def _interesting_equation_family(result: dict) -> tuple[str, str]:
     return str(family), exponent_label
 
 
+def _section_contexts_for_plan(plan: dict) -> set[str]:
+    contexts = set()
+    for key in ('world_type', 'source_context'):
+        value = plan.get(key)
+        if value:
+            contexts.add(str(value))
+    for key in ('original_record', 'learned_invariant', 'equation_invariant'):
+        value = dict(plan.get(key) or {})
+        context = value.get('context')
+        if context:
+            contexts.add(str(context))
+    hypothesis = dict(plan.get('domain_split_hypothesis') or {})
+    if hypothesis.get('source_context'):
+        contexts.add(str(hypothesis['source_context']))
+    contexts.update(str(item) for item in hypothesis.get('conflict_contexts') or [])
+    return contexts
+
+
+def _section_followup_plans(
+    theory_memory: CumulativeTheoryMemory,
+    context: str,
+    *,
+    object_counts: list[int],
+    steps: int,
+    limit: int = 2,
+) -> list[dict]:
+    candidate_limit = max(12, limit * 8)
+    candidates = theory_memory.planned_experiments(
+        world_types=[context],
+        object_counts=object_counts,
+        steps=steps,
+        limit=candidate_limit,
+    )
+    followups = [
+        plan for plan in candidates
+        if context in _section_contexts_for_plan(plan)
+    ]
+    return followups[:limit]
+
+
 def _print_section_study_summary(
     context: str,
     section_results: list[dict],
@@ -3337,8 +3377,9 @@ def _print_section_study_summary(
         f"(score={float(best.get('interesting_score', 0.0) or 0.0):.2f})",
         flush=True,
     )
-    followups = theory_memory.planned_experiments(
-        world_types=[context],
+    followups = _section_followup_plans(
+        theory_memory,
+        context,
         object_counts=object_counts,
         steps=steps,
         limit=2,
@@ -3347,7 +3388,8 @@ def _print_section_study_summary(
         print("  Section follow-up probes:", flush=True)
         for plan in followups:
             print(
-                f"    {plan['experiment_kind']} seed={plan['seed']} "
+                f"    {plan['experiment_kind']} {plan['world_type']} "
+                f"seed={plan['seed']} "
                 f"priority={plan['priority']:.2f}: {plan['reason']}",
                 flush=True,
             )
