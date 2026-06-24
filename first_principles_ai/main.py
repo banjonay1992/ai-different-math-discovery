@@ -148,6 +148,51 @@ FORBIDDEN_AGENT_MATH_LABELS = {
 }
 
 
+def _record_stage_timing(profile: dict | None, stage: str, started: float):
+    if profile is None:
+        return
+    elapsed = time.perf_counter() - started
+    stages = profile.setdefault('stages', {})
+    item = stages.setdefault(stage, {'seconds': 0.0, 'count': 0})
+    item['seconds'] += elapsed
+    item['count'] += 1
+
+
+def _experiment_runtime_profile_summary(
+    profile: dict | None,
+    *,
+    elapsed_seconds: float,
+    steps: int,
+    force_backend: str,
+) -> dict:
+    if profile is None:
+        return {'enabled': False}
+    stages = []
+    for stage, item in dict(profile.get('stages') or {}).items():
+        seconds = float(item.get('seconds', 0.0) or 0.0)
+        count = int(item.get('count', 0) or 0)
+        stages.append({
+            'stage': stage,
+            'seconds': round(seconds, 6),
+            'count': count,
+            'avg_seconds': round(seconds / max(count, 1), 6),
+            'share_of_elapsed': round(seconds / max(elapsed_seconds, 1e-9), 4),
+        })
+    stages.sort(key=lambda item: item['seconds'], reverse=True)
+    return {
+        'enabled': True,
+        'steps': int(steps),
+        'force_backend': force_backend,
+        'elapsed_seconds': round(elapsed_seconds, 6),
+        'profiled_stage_seconds': round(
+            sum(float(item['seconds']) for item in stages),
+            6,
+        ),
+        'hot_stage': stages[0]['stage'] if stages else None,
+        'stages': stages,
+    }
+
+
 def run_experiment(
     num_steps: int = 2000,
     num_initial_objects: int = 5,
@@ -165,6 +210,7 @@ def run_experiment(
     equation_max_operator_feedback_rows: int = 384,
     equation_max_operator_feedback_operators: int = 5,
     force_backend: str = 'python',
+    profile_timings: bool = False,
 ):
     """
     Run the first-principles discovery experiment.
@@ -191,13 +237,17 @@ def run_experiment(
     print(f"  World type: {world_type if hidden_manifest is None else 'hidden_procedural'}")
     print(f"  Agents: {num_agents}")
     print(f"  Force backend: {force_backend}")
+    print(f"  Timing profile: {profile_timings}")
     print()
     print("-" * 70)
     print("EXPERIMENT STARTING...")
     print("-" * 70)
 
     # Initialize
+    run_started = time.perf_counter()
+    runtime_profile = {'stages': {}} if profile_timings else None
     PhysicsObject._next_id = 0
+    started = time.perf_counter()
     env = Environment(
         num_initial_objects=num_initial_objects,
         seed=seed,
@@ -205,6 +255,8 @@ def run_experiment(
         hidden_manifest=hidden_manifest,
         force_backend=force_backend,
     )
+    _record_stage_timing(runtime_profile, 'environment_init', started)
+    started = time.perf_counter()
     kb = KnowledgeBase()
     law_priors = law_memory.suggest_priors() if law_memory is not None else []
     predictor = Predictor(
@@ -227,15 +279,22 @@ def run_experiment(
         max_operator_feedback_operators=equation_max_operator_feedback_operators,
     )
     kb.equation_workbench = equation_workbench
+    _record_stage_timing(runtime_profile, 'agent_init', started)
 
     # Track what we've already reported to avoid duplicate prints
     reported_concepts = set()
     reported_rules = set()
 
     prev_discovery_count = 0
+    started = time.perf_counter()
     current_raw_state = env.observe()
+    _record_stage_timing(runtime_profile, 'environment_observe', started)
+    started = time.perf_counter()
     current_observation = Perception.perceive(current_raw_state)
+    _record_stage_timing(runtime_profile, 'perception', started)
+    started = time.perf_counter()
     current_features = current_observation.get_feature_vector()
+    _record_stage_timing(runtime_profile, 'feature_vector', started)
 
     for step in range(num_steps):
         # 1. OBSERVE the world
@@ -245,69 +304,101 @@ def run_experiment(
         had_collision = len(observation.collisions) > 0
 
         # 2. PREDICT what happens next (using current knowledge)
+        started = time.perf_counter()
         predicted = predictor.predict_next(features)
+        _record_stage_timing(runtime_profile, 'predict_next', started)
 
         # 3. SELECT an action (planned falsification, active experiment, curiosity)
         action = None
         if planned_actions and step < len(planned_actions):
             action = dict(planned_actions[step])
         if action is None:
+            started = time.perf_counter()
             action = predictor.suggest_experiment_action(
                 current_count=features.get('count', 0),
                 world_width=observation.world_width or 20.0,
                 world_height=observation.world_height or 20.0,
             )
+            _record_stage_timing(runtime_profile, 'predictor_action_select', started)
         if action is None and enable_equation_probes:
             if step > 0 and step % 40 == 0:
+                started = time.perf_counter()
                 equation_workbench.discover(step=step)
+                _record_stage_timing(runtime_profile, 'equation_mid_discover', started)
+            started = time.perf_counter()
             action = equation_workbench.suggest_probe_action(
                 current_count=features.get('count', 0),
                 world_width=observation.world_width or 20.0,
                 world_height=observation.world_height or 20.0,
                 step=step,
             )
+            _record_stage_timing(runtime_profile, 'equation_probe_select', started)
         if action is None:
+            started = time.perf_counter()
             action = curiosity.select_action(predictor, features)
+            _record_stage_timing(runtime_profile, 'curiosity_action_select', started)
 
         # 4. ACT and observe the outcome
         state_before = raw_state
+        started = time.perf_counter()
         raw_state = env.step(action)
+        _record_stage_timing(runtime_profile, 'environment_step', started)
+        started = time.perf_counter()
         math_discovery.observe_transition(state_before, raw_state, action, step + 1)
+        _record_stage_timing(runtime_profile, 'math_transition_observe', started)
+        started = time.perf_counter()
         equation_workbench.observe_transition(state_before, raw_state, action, step + 1)
+        _record_stage_timing(runtime_profile, 'equation_transition_observe', started)
+        started = time.perf_counter()
         observation = Perception.perceive(raw_state)
+        _record_stage_timing(runtime_profile, 'perception', started)
+        started = time.perf_counter()
         new_features = observation.get_feature_vector()
+        _record_stage_timing(runtime_profile, 'feature_vector', started)
         had_collision = len(observation.collisions) > 0
         current_raw_state = raw_state
         current_observation = observation
         current_features = new_features
 
         # 5. LEARN — record observations and check for discoveries
+        started = time.perf_counter()
         predictor.observe(new_features, had_collision, step + 1, raw_objects=raw_state.get('objects', []))
+        _record_stage_timing(runtime_profile, 'predictor_observe', started)
 
         # 6. CAUSAL REASONING — track actions and effects
+        started = time.perf_counter()
         causal.observe_step(action, state_before, raw_state, step + 1, observation.collisions)
+        _record_stage_timing(runtime_profile, 'causal_observe', started)
 
         # 7. PROGRAM SYNTHESIS — record actions for pattern detection
+        started = time.perf_counter()
         synthesizer.record_action(action, step + 1, new_features)
+        _record_stage_timing(runtime_profile, 'synthesis_record', started)
 
         # 8. MULTI-AGENT LANGUAGE — agents communicate about world state
+        started = time.perf_counter()
         multi_agent.step_agents(
             new_features,
             had_collision,
             step + 1,
             math_patterns=math_discovery.discovered_patterns(),
         )
+        _record_stage_timing(runtime_profile, 'language_step', started)
 
         # 9. SELF-MODIFICATION — agent inspects and improves its own reasoning
+        started = time.perf_counter()
         if kb.discovery_log and len(kb.discovery_log) > prev_discovery_count:
             self_modifier.record_discovery(step + 1)
         self_modifier.check_and_modify(step + 1)
+        _record_stage_timing(runtime_profile, 'self_modify', started)
 
         # 10. Calculate prediction error (drives future curiosity)
+        started = time.perf_counter()
         error = predictor.prediction_error(predicted, new_features)
 
         # 11. Decay exploration over time
         curiosity.decay_exploration()
+        _record_stage_timing(runtime_profile, 'prediction_error_curiosity_decay', started)
 
         # 9. Report new discoveries in real-time
         if verbose:
@@ -334,13 +425,17 @@ def run_experiment(
                 )
 
     # Final: map discoveries to human concepts
+    started = time.perf_counter()
     equation_workbench.discover(step=num_steps)
+    _record_stage_timing(runtime_profile, 'equation_final_discover', started)
     math_foundation = MathFoundationWorkbench(
         kb,
         math_discovery=math_discovery,
         equation_workbench=equation_workbench,
     )
+    started = time.perf_counter()
     foundation_report = math_foundation.evaluate(install=True)
+    _record_stage_timing(runtime_profile, 'math_foundation_evaluate', started)
     kb.math_foundation_report = foundation_report
 
     print()
@@ -348,7 +443,9 @@ def run_experiment(
     print("MAPPING DISCOVERIES TO HUMAN CONCEPTS...")
     print("-" * 70)
 
+    started = time.perf_counter()
     map_discoveries(kb, tracker)
+    _record_stage_timing(runtime_profile, 'map_discoveries', started)
 
     # Print final summary
     print(tracker.summary())
@@ -500,6 +597,7 @@ def run_experiment(
     _print_detector_diagnostics(predictor)
     _print_learned_dynamics_laws(predictor)
     if law_memory is not None:
+        started = time.perf_counter()
         law_memory.record_experiment(
             world_type=world_type,
             seed=seed,
@@ -510,6 +608,7 @@ def run_experiment(
             diagnostics=predictor.get_novel_physics_diagnostics(),
         )
         law_memory.install_principles(kb, step=num_steps)
+        _record_stage_timing(runtime_profile, 'law_memory_record', started)
 
     # Multi-agent language emergence report
     print()
@@ -525,6 +624,12 @@ def run_experiment(
     print("-" * 70)
     print(self_modifier.summary())
 
+    kb.runtime_profile = _experiment_runtime_profile_summary(
+        runtime_profile,
+        elapsed_seconds=time.perf_counter() - run_started,
+        steps=num_steps,
+        force_backend=force_backend,
+    )
     return tracker, kb, causal
 
 
@@ -5288,6 +5393,198 @@ def run_gpu_feasibility_benchmark(
     return report
 
 
+def _backend_profile_match(reference: dict, candidate: dict) -> dict:
+    checks = {
+        'ready_for_final': reference.get('ready_for_final') == candidate.get('ready_for_final'),
+        'equation_passed': reference.get('equation_passed') == candidate.get('equation_passed'),
+        'equation_count': reference.get('equation_count') == candidate.get('equation_count'),
+        'installed_count': reference.get('installed_count') == candidate.get('installed_count'),
+        'interesting_role': (
+            reference.get('interesting_role') == candidate.get('interesting_role')
+        ),
+        'leak_count': reference.get('leak_count') == candidate.get('leak_count'),
+    }
+    return {
+        'matches_reference': all(checks.values()),
+        'checks': checks,
+    }
+
+
+def _backend_profile_summary(rows: list[dict], reference_backend: str) -> list[dict]:
+    summaries = []
+    reference_elapsed_by_case = {
+        (
+            row['context'],
+            row['seed'],
+            row['objects'],
+            row['steps'],
+        ): float(row.get('elapsed_seconds', 0.0) or 0.0)
+        for row in rows
+        if row.get('force_backend') == reference_backend
+    }
+    for backend in sorted({row['force_backend'] for row in rows}):
+        backend_rows = [row for row in rows if row['force_backend'] == backend]
+        elapsed = [
+            float(row.get('elapsed_seconds', 0.0) or 0.0)
+            for row in backend_rows
+        ]
+        reference_elapsed = []
+        for row in backend_rows:
+            key = (row['context'], row['seed'], row['objects'], row['steps'])
+            if key in reference_elapsed_by_case:
+                reference_elapsed.append(reference_elapsed_by_case[key])
+        hot_stages = Counter(row.get('hot_stage') for row in backend_rows)
+        hot_stages.pop(None, None)
+        avg_elapsed = sum(elapsed) / max(len(elapsed), 1)
+        avg_reference_elapsed = sum(reference_elapsed) / max(len(reference_elapsed), 1)
+        summaries.append({
+            'force_backend': backend,
+            'case_count': len(backend_rows),
+            'avg_elapsed_seconds': round(avg_elapsed, 6),
+            'speedup_vs_reference_backend': round(
+                avg_reference_elapsed / avg_elapsed
+                if avg_elapsed > 0 and avg_reference_elapsed > 0
+                else 0.0,
+                3,
+            ),
+            'metric_match_count': sum(
+                1 for row in backend_rows
+                if row.get('matches_reference', True)
+            ),
+            'hot_stages': [
+                {'stage': stage, 'count': count}
+                for stage, count in hot_stages.most_common(5)
+            ],
+        })
+    return summaries
+
+
+def run_backend_profile_comparison(
+    *,
+    backends: list[str] | None = None,
+    seeds: int = 1,
+    steps: int = 80,
+    object_counts: list[int] | None = None,
+    world_types: list[str] | None = None,
+    num_agents: int = 2,
+    output_file: str | Path | None = None,
+) -> dict:
+    """Run a small non-final discovery profile across simulator backends."""
+    backends = backends or ['python', 'numpy']
+    object_counts = object_counts or [3]
+    world_types = world_types or ['standard', 'sideways_wind']
+    rows = []
+    reference_backend = backends[0]
+    reference_rows = {}
+
+    print("=" * 70)
+    print("BACKEND PROFILE COMPARISON")
+    print("=" * 70)
+    print(f"Backends: {', '.join(backends)}")
+    print(f"Worlds: {', '.join(world_types)}")
+    print(f"Seeds: 0..{seeds - 1}")
+    print(f"Object counts: {', '.join(str(count) for count in object_counts)}")
+    print(f"Steps per run: {steps}")
+    print("Runs final: False")
+    print()
+    print(
+        f"{'Backend':10s} {'World':22s} {'Seed':>4s} {'Obj':>3s} "
+        f"{'Elapsed':>8s} {'Hot stage':28s} {'Match':>5s}"
+    )
+    print("-" * 92)
+
+    for backend in backends:
+        for world_type in world_types:
+            for object_count in object_counts:
+                for seed in range(seeds):
+                    started = time.perf_counter()
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        _, kb, _ = run_experiment(
+                            num_steps=steps,
+                            num_initial_objects=object_count,
+                            seed=seed,
+                            verbose=False,
+                            report_interval=max(steps, 1),
+                            world_type=world_type,
+                            num_agents=num_agents,
+                            enable_equation_probes=True,
+                            force_backend=backend,
+                            profile_timings=True,
+                        )
+                    elapsed = time.perf_counter() - started
+                    foundation = _foundation_metrics_from_knowledge(kb)
+                    equations = _equation_metrics_from_knowledge(kb)
+                    interesting = equations.get('interesting_equation') or {}
+                    profile = dict(getattr(kb, 'runtime_profile', {}) or {})
+                    row = {
+                        'context': world_type,
+                        'seed': seed,
+                        'objects': object_count,
+                        'steps': steps,
+                        'force_backend': backend,
+                        'elapsed_seconds': round(elapsed, 6),
+                        'profile': profile,
+                        'hot_stage': profile.get('hot_stage'),
+                        'top_stages': list(profile.get('stages') or [])[:6],
+                        'ready_for_final': foundation['ready_for_final'],
+                        'readiness_score': foundation['readiness_score'],
+                        'equation_passed': equations['passed'],
+                        'equation_count': equations['equation_count'],
+                        'installed_count': equations['installed_count'],
+                        'interesting_role': interesting.get('role'),
+                        'interesting_score': equations['interesting_score'],
+                        'leak_count': len(equations.get('label_leaks') or []),
+                    }
+                    case_key = (world_type, seed, object_count, steps)
+                    if backend == reference_backend:
+                        row['reference_backend'] = True
+                        row['matches_reference'] = True
+                        row['reference_checks'] = {}
+                        reference_rows[case_key] = row
+                    else:
+                        match = _backend_profile_match(reference_rows[case_key], row)
+                        row['reference_backend'] = False
+                        row['matches_reference'] = match['matches_reference']
+                        row['reference_checks'] = match['checks']
+                    rows.append(row)
+                    print(
+                        f"{backend:10s} {world_type:22s} {seed:4d} "
+                        f"{object_count:3d} {elapsed:8.3f} "
+                        f"{str(row.get('hot_stage') or 'none')[:28]:28s} "
+                        f"{'YES' if row['matches_reference'] else 'NO':>5s}",
+                        flush=True,
+                    )
+
+    summaries = _backend_profile_summary(rows, reference_backend)
+    report = {
+        'run_kind': 'backend_profile_comparison',
+        'runs_final': False,
+        'reference_backend': reference_backend,
+        'backends': list(backends),
+        'world_types': list(world_types),
+        'seeds': int(seeds),
+        'steps': int(steps),
+        'object_counts': list(object_counts),
+        'rows': rows,
+        'backend_summaries': summaries,
+        'all_metric_matches': all(row.get('matches_reference') for row in rows),
+        'available_force_backends': available_force_backends(),
+    }
+    if output_file:
+        report['artifact_path'] = str(_write_json_artifact(output_file, report))
+    print("-" * 92)
+    for summary in summaries:
+        print(
+            f"{summary['force_backend']}: "
+            f"avg={summary['avg_elapsed_seconds']}s "
+            f"speedup_vs_{reference_backend}="
+            f"{summary['speedup_vs_reference_backend']} "
+            f"matches={summary['metric_match_count']}/{summary['case_count']}"
+        )
+    print(f"All backend metrics match reference: {report['all_metric_matches']}")
+    return report
+
+
 def _default_hf_run_id(prefix: str = 'math-final') -> str:
     return f"{prefix}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
 
@@ -6419,6 +6716,12 @@ if __name__ == '__main__':
     parser.add_argument('--physics-force-backend', type=str, default='python',
                         choices=['python', 'numpy', 'torch', 'cuda', 'auto'],
                         help='Simulator force backend for physics runs (default: python)')
+    parser.add_argument('--backend-profile-comparison', action='store_true',
+                        help='Run a non-final timing comparison across physics backends')
+    parser.add_argument('--backend-profile-backends', type=str, default='python,numpy',
+                        help='Comma-separated backends for timing comparison')
+    parser.add_argument('--backend-profile-output-file', type=str, default=None,
+                        help='Optional JSON path for backend profile comparison output')
     parser.add_argument('--math-final-discovery', action='store_true',
                         help='Run the final math discovery campaign when the user is ready to watch')
     parser.add_argument('--section-study-cycles', type=int, default=1,
@@ -6548,6 +6851,25 @@ if __name__ == '__main__':
                 else args.physics_force_backend
             ),
             output_file=args.gpu_output_file or args.hf_output_file,
+        )
+        raise SystemExit(0)
+
+    if args.backend_profile_comparison:
+        run_backend_profile_comparison(
+            backends=[
+                item.strip()
+                for item in args.backend_profile_backends.split(',')
+                if item.strip()
+            ],
+            seeds=args.seeds,
+            steps=args.benchmark_steps,
+            object_counts=_parse_csv_ints(args.object_counts),
+            world_types=_parse_csv_worlds(args.world_types),
+            num_agents=args.agents,
+            output_file=(
+                args.backend_profile_output_file
+                or args.hf_output_file
+            ),
         )
         raise SystemExit(0)
 

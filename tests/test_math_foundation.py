@@ -37,6 +37,7 @@ from main import (
     _weak_case_diagnostics,
     merge_final_artifacts,
     parse_live_progress_line,
+    run_backend_profile_comparison,
     run_gpu_feasibility_benchmark,
     run_discovery_readiness_audit,
     run_experiment,
@@ -1186,6 +1187,55 @@ class MathFoundationTests(unittest.TestCase):
         )
         self.assertIn('GPU FEASIBILITY BENCHMARK', output.getvalue())
         self.assertIn('physics_force_kernel=', output.getvalue())
+
+    def test_run_experiment_records_timing_profile_when_enabled(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            _, kb, _ = run_experiment(
+                num_steps=4,
+                num_initial_objects=2,
+                seed=0,
+                verbose=False,
+                report_interval=4,
+                force_backend='python',
+                profile_timings=True,
+            )
+
+        profile = kb.runtime_profile
+        stage_names = {item['stage'] for item in profile['stages']}
+
+        self.assertTrue(profile['enabled'])
+        self.assertEqual(4, profile['steps'])
+        self.assertEqual('python', profile['force_backend'])
+        self.assertIn('environment_step', stage_names)
+        self.assertIn('perception', stage_names)
+        self.assertIn('equation_final_discover', stage_names)
+        self.assertIsNotNone(profile['hot_stage'])
+
+    def test_backend_profile_comparison_is_non_final_and_writes_artifact(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'backend-profile.json')
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                report = run_backend_profile_comparison(
+                    backends=['python', 'numpy'],
+                    seeds=1,
+                    steps=6,
+                    object_counts=[2],
+                    world_types=['standard'],
+                    output_file=output_file,
+                )
+            with open(output_file, 'r', encoding='utf-8') as handle:
+                saved = json.load(handle)
+
+        self.assertFalse(report['runs_final'])
+        self.assertEqual('backend_profile_comparison', report['run_kind'])
+        self.assertEqual(2, len(report['rows']))
+        self.assertTrue(report['all_metric_matches'])
+        self.assertEqual(report['all_metric_matches'], saved['all_metric_matches'])
+        self.assertIn('backend_summaries', report)
+        self.assertTrue(report['rows'][0]['profile']['enabled'])
+        self.assertIn('BACKEND PROFILE COMPARISON', output.getvalue())
+        self.assertIn('All backend metrics match reference', output.getvalue())
 
     def test_math_final_artifact_prints_compact_upload_failure_summary(self):
         theory_memory = CumulativeTheoryMemory()
