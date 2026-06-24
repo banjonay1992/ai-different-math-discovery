@@ -1,8 +1,11 @@
 import contextlib
 import io
+import json
 import os
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'first_principles_ai'))
@@ -14,6 +17,7 @@ from agent.math_discovery import EmergentMathDiscovery
 from agent.math_foundation import MathFoundationWorkbench
 from agent.representation import KnowledgeBase
 from main import (
+    _checkpoint_theory_memory,
     _foundation_metrics_from_knowledge,
     _print_section_study_summary,
     _select_interesting_equation,
@@ -443,6 +447,66 @@ class MathFoundationTests(unittest.TestCase):
         )
         self.assertIn('radial_repulsion', manifest_components)
         self.assertIn('localized_pull', manifest_components)
+
+    def test_math_final_discovery_can_resume_hidden_world_offset(self):
+        def hidden_manifest(index, variant):
+            manifest = mock.Mock()
+            manifest.hidden_id = f"hidden_{index:02d}_{variant:04d}"
+            return manifest
+
+        output = io.StringIO()
+        with (
+            mock.patch('main.generate_hidden_world_manifest', side_effect=hidden_manifest) as generate,
+            mock.patch('main._run_hidden_manifest_final_section') as run_section,
+            contextlib.redirect_stdout(output),
+        ):
+            results = run_math_final_discovery(
+                seeds=1,
+                steps=40,
+                object_counts=[3],
+                world_types=[],
+                hidden_worlds=2,
+                hidden_world_start=7,
+                num_agents=2,
+                section_study_cycles=1,
+                theory_memory=CumulativeTheoryMemory(),
+            )
+
+        text = output.getvalue()
+        self.assertEqual([], results)
+        self.assertIn('Worlds: (none)', text)
+        self.assertIn('Hidden generated world start: 7', text)
+        self.assertEqual(
+            [mock.call(7, variant=7), mock.call(8, variant=8)],
+            generate.call_args_list,
+        )
+        self.assertEqual(
+            ['hidden_07_0007', 'hidden_08_0008'],
+            [call.args[0].hidden_id for call in run_section.call_args_list],
+        )
+
+    def test_theory_memory_checkpoint_writes_resumable_snapshot(self):
+        theory_memory = CumulativeTheoryMemory()
+        theory_memory.records.append({
+            'context': 'standard',
+            'seed': 0,
+            'phase': 'math_final_discovery',
+        })
+
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = os.path.join(tmpdir, 'theory-memory.json')
+            with contextlib.redirect_stdout(output):
+                _checkpoint_theory_memory(
+                    theory_memory,
+                    checkpoint_path,
+                    label='standard cycle 1/1',
+                )
+            with open(checkpoint_path, 'r', encoding='utf-8') as handle:
+                data = json.load(handle)
+
+        self.assertEqual('standard', data['records'][0]['context'])
+        self.assertIn('Theory memory checkpoint saved:', output.getvalue())
 
     def test_residual_first_selection_prefers_residual_over_baseline_motion(self):
         baseline = {

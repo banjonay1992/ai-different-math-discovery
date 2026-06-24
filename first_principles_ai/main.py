@@ -2686,15 +2686,18 @@ def run_math_final_discovery(
     object_counts: list[int] = None,
     world_types: list[str] = None,
     hidden_worlds: int = 3,
+    hidden_world_start: int = 0,
     self_authored_worlds: int = 0,
     num_agents: int = 2,
     section_study_cycles: int = 1,
     theory_memory: CumulativeTheoryMemory | None = None,
+    theory_memory_checkpoint_file: str | Path | None = None,
 ) -> list[dict]:
     """Run the watched discovery campaign and report live performance metrics."""
     object_counts = object_counts or [5]
-    world_types = world_types or WORLD_TYPES
+    world_types = WORLD_TYPES if world_types is None else list(world_types)
     hidden_worlds = max(0, int(hidden_worlds or 0))
+    hidden_world_start = max(0, int(hidden_world_start or 0))
     self_authored_worlds = max(0, int(self_authored_worlds or 0))
     section_study_cycles = max(1, int(section_study_cycles or 1))
     results = []
@@ -2703,8 +2706,9 @@ def run_math_final_discovery(
     print("=" * 70, flush=True)
     print("FINAL WATCHED MATH DISCOVERY CAMPAIGN", flush=True)
     print("=" * 70, flush=True)
-    print(f"Worlds: {', '.join(world_types)}", flush=True)
+    print(f"Worlds: {', '.join(world_types) if world_types else '(none)'}", flush=True)
     print(f"Hidden generated worlds: {hidden_worlds}", flush=True)
+    print(f"Hidden generated world start: {hidden_world_start}", flush=True)
     print(f"Self-authored hidden worlds: {self_authored_worlds}", flush=True)
     print(f"Seeds: 0..{seeds - 1}", flush=True)
     print(f"Object counts: {', '.join(str(count) for count in object_counts)}", flush=True)
@@ -2811,8 +2815,14 @@ def run_math_final_discovery(
                     cycle=cycle + 1,
                     total_cycles=section_study_cycles,
                 )
+            _checkpoint_theory_memory(
+                theory_memory,
+                theory_memory_checkpoint_file,
+                label=f"{world_type} cycle {cycle + 1}/{section_study_cycles}",
+            )
 
-    for index in range(hidden_worlds):
+    for offset in range(hidden_worlds):
+        index = hidden_world_start + offset
         manifest = generate_hidden_world_manifest(index, variant=index)
         _run_hidden_manifest_final_section(
             manifest,
@@ -2824,6 +2834,7 @@ def run_math_final_discovery(
             num_agents=num_agents,
             section_study_cycles=section_study_cycles,
             manifest_source='generated',
+            theory_memory_checkpoint_file=theory_memory_checkpoint_file,
         )
 
     if self_authored_worlds:
@@ -2877,6 +2888,7 @@ def run_math_final_discovery(
                 section_study_cycles=section_study_cycles,
                 manifest_source='self_authored',
                 self_authored_world_design=design,
+                theory_memory_checkpoint_file=theory_memory_checkpoint_file,
             )
 
     print("-" * 132, flush=True)
@@ -2917,6 +2929,7 @@ def _run_hidden_manifest_final_section(
     section_study_cycles: int,
     manifest_source: str,
     self_authored_world_design: dict | None = None,
+    theory_memory_checkpoint_file: str | Path | None = None,
 ):
     section_results = []
     for cycle in range(section_study_cycles):
@@ -3013,6 +3026,26 @@ def _run_hidden_manifest_final_section(
                 cycle=cycle + 1,
                 total_cycles=section_study_cycles,
             )
+        _checkpoint_theory_memory(
+            theory_memory,
+            theory_memory_checkpoint_file,
+            label=f"{manifest.hidden_id} cycle {cycle + 1}/{section_study_cycles}",
+        )
+
+
+def _checkpoint_theory_memory(
+    theory_memory: CumulativeTheoryMemory,
+    checkpoint_file: str | Path | None,
+    *,
+    label: str,
+):
+    if not checkpoint_file:
+        return
+    theory_memory.save(checkpoint_file)
+    print(
+        f"Theory memory checkpoint saved: {checkpoint_file} after {label}",
+        flush=True,
+    )
 
 
 def _hidden_manifest_observation_leaks(
@@ -4673,6 +4706,10 @@ if __name__ == '__main__':
                         help='Repeat and consolidate each final world section before moving on')
     parser.add_argument('--equation-hidden-worlds', type=int, default=0,
                         help='Generated hidden worlds to include in equation campaign')
+    parser.add_argument('--equation-hidden-start', type=int, default=0,
+                        help='First generated hidden-world index to run in final campaign')
+    parser.add_argument('--math-final-skip-known-worlds', action='store_true',
+                        help='Skip named/known world sections in the final campaign')
     parser.add_argument('--self-authored-worlds', type=int, default=0,
                         help='Autonomous hidden worlds to create from theory-memory designs')
     parser.add_argument('--equation-followup-budget', type=int, default=0,
@@ -4980,16 +5017,27 @@ if __name__ == '__main__':
         raise SystemExit(0)
 
     if args.math_final_discovery:
+        final_world_types = (
+            []
+            if args.math_final_skip_known_worlds
+            else _parse_csv_worlds(args.world_types)
+        )
         run_math_final_discovery(
             seeds=args.seeds,
             steps=args.benchmark_steps,
             object_counts=_parse_csv_ints(args.object_counts),
-            world_types=_parse_csv_worlds(args.world_types),
+            world_types=final_world_types,
             hidden_worlds=args.equation_hidden_worlds,
+            hidden_world_start=args.equation_hidden_start,
             self_authored_worlds=args.self_authored_worlds,
             num_agents=args.agents,
             section_study_cycles=args.section_study_cycles,
             theory_memory=theory_memory,
+            theory_memory_checkpoint_file=(
+                args.theory_memory_file
+                if args.theory_memory_file and not args.no_save_theory_memory
+                else None
+            ),
         )
         if (
             args.theory_memory_file
