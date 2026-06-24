@@ -4354,6 +4354,33 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertTrue(api.calls[1]['create_pr'])
         self.assertEqual('runs/demo/summary.json', api.calls[1]['path_in_repo'])
 
+    def test_hf_artifact_upload_retries_generic_forbidden_with_create_pr(self):
+        class FakeApi:
+            def __init__(self):
+                self.calls = []
+
+            def upload_file(self, **kwargs):
+                self.calls.append(dict(kwargs))
+                if len(self.calls) == 1:
+                    raise RuntimeError('403 Forbidden: Authorization error')
+                return 'https://huggingface.test/pr/2'
+
+        api = FakeApi()
+        result = upload_hf_artifact_file(
+            api,
+            path_or_fileobj='tmp/summary.json',
+            path_in_repo='runs/demo/summary.json',
+            repo_id='demo/artifacts',
+        )
+
+        self.assertEqual('uploaded_via_pr', result['status'])
+        self.assertEqual(
+            'forbidden_retry_create_pr',
+            result['fallback_reason'],
+        )
+        self.assertFalse(api.calls[0]['create_pr'])
+        self.assertTrue(api.calls[1]['create_pr'])
+
     def test_hf_artifact_upload_does_not_swallow_unrelated_errors(self):
         class FakeApi:
             def upload_file(self, **kwargs):

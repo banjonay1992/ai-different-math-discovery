@@ -22,6 +22,8 @@ import concurrent.futures
 import contextlib
 import io
 import json
+import base64
+import zlib
 import time
 from collections import Counter
 from pathlib import Path
@@ -1225,11 +1227,22 @@ def _equation_campaign_artifact_summary(
 
 def _hf_upload_requires_create_pr(error: Exception) -> bool:
     message = str(error).lower()
+    if '403' in message or 'forbidden' in message:
+        return True
     return (
         'create_pr' in message
         and 'pull request' in message
         and ('403' in message or 'forbidden' in message)
     )
+
+
+def _hf_upload_fallback_reason(error: Exception) -> str:
+    message = str(error).lower()
+    if 'create_pr' in message or 'pull request' in message:
+        return 'create_pr_required'
+    if '403' in message or 'forbidden' in message:
+        return 'forbidden_retry_create_pr'
+    return 'create_pr_retry'
 
 
 def upload_hf_artifact_file(
@@ -1273,7 +1286,7 @@ def upload_hf_artifact_file(
                     'repo_id': repo_id,
                     'repo_type': repo_type,
                     'create_pr': True,
-                    'fallback_reason': 'create_pr_required',
+                    'fallback_reason': _hf_upload_fallback_reason(error),
                     'url': str(uploaded),
                 }
         raise
@@ -2465,6 +2478,7 @@ def parse_live_progress_line(line: str) -> dict | None:
         'SCIENTIST_EVENT ': 'scientist_event',
         'HF_ARTIFACT ': 'hf_artifact',
         'HF_ARTIFACT_SUMMARY ': 'hf_artifact_summary',
+        'HF_ARTIFACT_CHUNK ': 'hf_artifact_chunk',
     }
     for prefix, stream in prefixes.items():
         if not text.startswith(prefix):
@@ -2499,6 +2513,7 @@ def run_live_progress_viewer(
         'scientist_event': 0,
         'hf_artifact': 0,
         'hf_artifact_summary': 0,
+        'hf_artifact_chunk': 0,
         'parse_error': 0,
     }
     last_hf = {}
@@ -2535,6 +2550,9 @@ def run_live_progress_viewer(
             counts['hf_artifact_summary'] += 1
             artifact_summary = event
             print(_format_hf_artifact_summary_event(event), flush=True)
+        elif event['stream'] == 'hf_artifact_chunk':
+            counts['hf_artifact_chunk'] += 1
+            print(_format_hf_artifact_chunk_event(event), flush=True)
         printed += 1
         return max_events <= 0 or printed < max_events
 
@@ -2571,6 +2589,7 @@ def run_live_progress_viewer(
         f"scientist={counts['scientist_event']} "
         f"artifacts={counts['hf_artifact']} "
         f"artifact_summaries={counts['hf_artifact_summary']} "
+        f"artifact_chunks={counts['hf_artifact_chunk']} "
         f"parse_errors={counts['parse_error']}",
         flush=True,
     )
@@ -2639,6 +2658,15 @@ def _format_hf_artifact_summary_event(event: dict) -> str:
         pieces.append(f"new_equation_cases={memory_delta.get('new_equation_cases')}")
         pieces.append(f"new_planned_outcomes={memory_delta.get('new_planned_outcomes')}")
     return ' | '.join(pieces)
+
+
+def _format_hf_artifact_chunk_event(event: dict) -> str:
+    return (
+        "HF_ARTIFACT_CHUNK "
+        f"run_id={event.get('run_id')} "
+        f"part={event.get('index')}/{event.get('total')} "
+        f"encoding={event.get('encoding')}"
+    )
 
 
 def _hf_compact_theory_memory(
@@ -4280,6 +4308,130 @@ def _experiment_design_cockpit(
     )
 
 
+def _weak_case_reasons(result: dict) -> list[str]:
+    reasons = []
+    if not result.get('ready_for_final'):
+        reasons.append('foundation_not_ready')
+    if not result.get('equation_passed'):
+        reasons.append('equation_not_clean')
+    if result.get('label_leaks'):
+        reasons.append('label_leak')
+    if (
+        result.get('interesting_equation')
+        and float(result.get('interesting_score', 0.0) or 0.0) < 0.25
+    ):
+        reasons.append('low_equation_score')
+    outcome = dict(result.get('planned_experiment_outcome') or {})
+    outcome_name = str(outcome.get('outcome') or '')
+    if any(token in outcome_name for token in ('conflict', 'absent', 'needs_repair')):
+        reasons.append('planned_holdout_or_repair_conflict')
+    if not result.get('passed') and not reasons:
+        reasons.append('failed_without_specific_reason')
+    return reasons
+
+
+def _weak_case_diagnostics(results: list[dict]) -> dict:
+    rows = []
+    reason_counts = Counter()
+    context_counts = Counter()
+    for result in results:
+        reasons = _weak_case_reasons(result)
+        if result.get('passed') and not reasons:
+            continue
+        context = str(result.get('context') or 'unknown')
+        for reason in reasons:
+            reason_counts[reason] += 1
+        context_counts[context] += 1
+        rows.append({
+            'context': context,
+            'seed': result.get('seed'),
+            'phase': result.get('phase', 'math_final_discovery'),
+            'passed': bool(result.get('passed')),
+            'ready_for_final': bool(result.get('ready_for_final')),
+            'equation_passed': bool(result.get('equation_passed')),
+            'leak_count': len(result.get('label_leaks') or []),
+            'interesting_score': round(
+                float(result.get('interesting_score', 0.0) or 0.0),
+                3,
+            ),
+            'interesting_role': (
+                dict(result.get('interesting_equation') or {}).get('role')
+            ),
+            'planned_experiment_kind': (
+                dict(result.get('planned_experiment') or {}).get('experiment_kind')
+            ),
+            'planned_outcome': (
+                dict(result.get('planned_experiment_outcome') or {}).get('outcome')
+            ),
+            'reasons': reasons,
+        })
+    status = 'all_clean' if not rows else 'needs_diagnosis'
+    next_actions = []
+    if reason_counts.get('label_leak'):
+        next_actions.append('inspect and block leaked rows before theorem selection')
+    if reason_counts.get('planned_holdout_or_repair_conflict'):
+        next_actions.append('run targeted replay/repair probes for conflicted theories')
+    if reason_counts.get('equation_not_clean') or reason_counts.get('low_equation_score'):
+        next_actions.append('increase local residual/operator search pressure for weak contexts')
+    if reason_counts.get('foundation_not_ready'):
+        next_actions.append('rerun foundation probes for weak rows before trusting equations')
+    return {
+        'status': status,
+        'weak_case_count': len(rows),
+        'reason_counts': dict(reason_counts),
+        'context_counts': dict(context_counts),
+        'rows': rows,
+        'next_actions': next_actions,
+    }
+
+
+def _artifact_status_needs_log_fallback(upload: dict) -> bool:
+    return upload.get('status') not in {'uploaded', 'uploaded_via_pr'}
+
+
+def _artifact_log_chunks(
+    artifact: dict,
+    *,
+    run_id: str,
+    max_chars: int = 12000,
+) -> list[dict]:
+    raw = json.dumps(artifact, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    encoded = base64.b64encode(zlib.compress(raw, level=9)).decode('ascii')
+    max_chars = max(1024, int(max_chars or 12000))
+    chunks = [
+        encoded[index:index + max_chars]
+        for index in range(0, len(encoded), max_chars)
+    ] or ['']
+    checksum = sum(raw) % 1000000007
+    return [
+        {
+            'run_id': run_id,
+            'index': index + 1,
+            'total': len(chunks),
+            'encoding': 'zlib+base64+json',
+            'raw_bytes': len(raw),
+            'compressed_chars': len(encoded),
+            'checksum_mod': checksum,
+            'data': chunk,
+        }
+        for index, chunk in enumerate(chunks)
+    ]
+
+
+def _emit_artifact_log_chunks(
+    artifact: dict,
+    *,
+    run_id: str,
+) -> list[dict]:
+    chunks = _artifact_log_chunks(artifact, run_id=run_id)
+    for chunk in chunks:
+        print(
+            "HF_ARTIFACT_CHUNK " + json.dumps(chunk, sort_keys=True),
+            flush=True,
+        )
+    return chunks
+
+
 def _compact_artifact_summary_for_log(artifact: dict) -> dict:
     upload = dict(artifact.get('hf_upload') or {})
     return {
@@ -4305,6 +4457,18 @@ def _compact_artifact_summary_for_log(artifact: dict) -> dict:
         'experiment_design_cockpit': list(
             artifact.get('experiment_design_cockpit') or []
         )[:3],
+        'weak_case_diagnostics': {
+            'status': dict(artifact.get('weak_case_diagnostics') or {}).get('status'),
+            'weak_case_count': dict(
+                artifact.get('weak_case_diagnostics') or {}
+            ).get('weak_case_count'),
+            'reason_counts': dict(
+                dict(artifact.get('weak_case_diagnostics') or {}).get(
+                    'reason_counts'
+                )
+                or {}
+            ),
+        },
     }
 
 
@@ -4338,6 +4502,15 @@ def _math_final_artifact_summary(
             or decomposition.get('benchmark_manifest_components')
         )
     ]
+    weak_case_diagnostics = _weak_case_diagnostics(results)
+    resource_efficiency = theory_memory.resource_efficiency_report()
+    super_system_snapshot = build_super_system_report(
+        theory_memory,
+        world_types=list(run_config.get('world_types') or WORLD_TYPES),
+        object_counts=list(run_config.get('object_counts') or [5]),
+        steps=int(run_config.get('steps', 240) or 240),
+        limit=5,
+    )
     return {
         'run_kind': 'math_final_discovery',
         'runs_final': True,
@@ -4354,8 +4527,14 @@ def _math_final_artifact_summary(
         'rows': _math_final_rows_for_artifact(results),
         'section_consolidations': section_consolidations,
         'leak_diagnostics': leak_diagnostics,
+        'weak_case_diagnostics': weak_case_diagnostics,
         'composite_decompositions': composite_decompositions,
         'readiness': theory_memory.discovery_readiness_report(),
+        'resource_efficiency': resource_efficiency,
+        'canonical_law_compression': (
+            resource_efficiency.get('canonical_law_compression')
+            or theory_memory.canonical_law_compression_report()
+        ),
         'memory_delta': theory_memory.memory_delta_since(starting_memory_summary),
         'experiment_design_cockpit': _experiment_design_cockpit(
             theory_memory,
@@ -4364,6 +4543,7 @@ def _math_final_artifact_summary(
             steps=int(run_config.get('steps', 240) or 240),
             limit=5,
         ),
+        'super_system_snapshot': super_system_snapshot,
         'theory_memory': theory_memory.to_dict(),
     }
 
@@ -4486,6 +4666,12 @@ def _persist_math_final_artifact(
             run_id=resolved_run_id,
         )
         artifact['hf_upload'] = second_upload
+        _write_json_artifact(artifact_path, artifact)
+    if _artifact_status_needs_log_fallback(artifact['hf_upload']):
+        artifact['log_artifact_chunks'] = _emit_artifact_log_chunks(
+            artifact,
+            run_id=resolved_run_id,
+        )
         _write_json_artifact(artifact_path, artifact)
     print(
         "HF_ARTIFACT "

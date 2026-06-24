@@ -20,6 +20,7 @@ from agent.math_foundation import MathFoundationWorkbench
 from agent.perception import Perception
 from agent.representation import KnowledgeBase
 from main import (
+    _artifact_log_chunks,
     _checkpoint_theory_memory,
     _experiment_design_cockpit,
     _foundation_metrics_from_knowledge,
@@ -32,6 +33,7 @@ from main import (
     _section_parameter_consolidation,
     _select_interesting_equation,
     _should_force_residual_first,
+    _weak_case_diagnostics,
     parse_live_progress_line,
     run_discovery_readiness_audit,
     run_experiment,
@@ -981,6 +983,9 @@ class MathFoundationTests(unittest.TestCase):
             'localized_tapered_power',
             artifact['section_consolidations'][0]['dominant_family'],
         )
+        self.assertIn('weak_case_diagnostics', artifact)
+        self.assertIn('super_system_snapshot', artifact)
+        self.assertIn('resource_efficiency', artifact)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_file = os.path.join(tmpdir, 'final.json')
@@ -1003,6 +1008,41 @@ class MathFoundationTests(unittest.TestCase):
         self.assertEqual('skipped', persisted['hf_upload']['status'])
         self.assertEqual('demo-run', saved['run_id'])
         self.assertIn('artifact_path', saved)
+
+    def test_weak_case_diagnostics_classifies_failures_and_conflicts(self):
+        diagnostics = _weak_case_diagnostics([
+            {
+                'context': 'localized_gravity',
+                'seed': 1,
+                'passed': False,
+                'ready_for_final': True,
+                'equation_passed': False,
+                'label_leaks': [{'labels': ['gravity']}],
+                'interesting_score': 0.11,
+                'interesting_equation': {'role': 'local_residual_direction_equation'},
+                'planned_experiment_outcome': {'outcome': 'blind_holdout_conflicted'},
+            },
+            {
+                'context': 'standard',
+                'seed': 0,
+                'passed': True,
+                'ready_for_final': True,
+                'equation_passed': True,
+                'label_leaks': [],
+                'interesting_score': 0.95,
+                'interesting_equation': {'role': 'position_update_equation'},
+            },
+        ])
+
+        self.assertEqual('needs_diagnosis', diagnostics['status'])
+        self.assertEqual(1, diagnostics['weak_case_count'])
+        self.assertEqual(1, diagnostics['reason_counts']['label_leak'])
+        self.assertEqual(1, diagnostics['reason_counts']['equation_not_clean'])
+        self.assertEqual(
+            1,
+            diagnostics['reason_counts']['planned_holdout_or_repair_conflict'],
+        )
+        self.assertTrue(diagnostics['next_actions'])
 
     def test_math_final_artifact_prints_compact_upload_failure_summary(self):
         theory_memory = CumulativeTheoryMemory()
@@ -1061,6 +1101,76 @@ class MathFoundationTests(unittest.TestCase):
         self.assertEqual('upload_failed', parsed['hf_upload']['reason'])
         self.assertEqual(1, parsed['result_count'])
         self.assertIn('experiment_design_cockpit', parsed)
+        self.assertIn('weak_case_diagnostics', parsed)
+
+    def test_failed_hf_upload_emits_reconstructable_log_chunks(self):
+        theory_memory = CumulativeTheoryMemory()
+        result = {
+            'context': 'standard',
+            'seed': 0,
+            'objects': 5,
+            'steps': 40,
+            'passed': True,
+            'ready_for_final': True,
+            'equation_passed': True,
+            'label_leaks': [],
+            'probe_suggestions': [],
+            'interesting_score': 0.97,
+            'interesting_equation': {
+                'role': 'position_update_equation',
+                'target': 'next_x',
+                'expression': 'x + vx * dt',
+                'score': 0.97,
+                'parameters': {},
+            },
+        }
+        starting = CumulativeTheoryMemory().memory_checkpoint_summary()
+        upload_failure = {
+            'status': 'failed',
+            'repo_id': 'demo/artifacts',
+            'path_in_repo': 'runs/demo-run/summary.json',
+            'reason': 'upload_failed',
+            'error': '403 Forbidden',
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'final.json')
+            output = io.StringIO()
+            with (
+                mock.patch('main._upload_math_final_artifact', return_value=upload_failure),
+                contextlib.redirect_stdout(output),
+            ):
+                persisted = _persist_math_final_artifact(
+                    [result],
+                    theory_memory,
+                    artifact_output_file=output_file,
+                    hf_output_repo='demo/artifacts',
+                    run_id='demo-run',
+                    run_config={'seeds': 1, 'world_types': ['standard']},
+                    starting_memory_summary=starting,
+                )
+
+        chunk_lines = [
+            line for line in output.getvalue().splitlines()
+            if line.startswith('HF_ARTIFACT_CHUNK ')
+        ]
+        self.assertTrue(chunk_lines)
+        chunk = parse_live_progress_line(chunk_lines[0])
+        self.assertEqual('hf_artifact_chunk', chunk['stream'])
+        self.assertEqual('zlib+base64+json', chunk['encoding'])
+        self.assertEqual(persisted['log_artifact_chunks'][0]['data'], chunk['data'])
+
+    def test_artifact_log_chunks_split_large_artifact(self):
+        chunks = _artifact_log_chunks(
+            {'payload': 'x' * 5000},
+            run_id='demo-run',
+            max_chars=1024,
+        )
+
+        self.assertGreaterEqual(len(chunks), 1)
+        self.assertEqual('demo-run', chunks[0]['run_id'])
+        self.assertEqual(len(chunks), chunks[0]['total'])
+        self.assertEqual('zlib+base64+json', chunks[0]['encoding'])
 
     def test_section_study_summary_filters_cross_section_followups(self):
         class FakeMemory:
