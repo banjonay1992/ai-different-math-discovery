@@ -1,0 +1,365 @@
+{
+  "branch": "codex/discovery-law-race-holdouts",
+  "commit": "e976f49c41b97b96d517512dd125cf2b8ae0f6e8",
+  "elapsed_seconds": 296.81,
+  "ending_progress": {
+    "blockers": [
+      "heldout_law_stability",
+      "blind_holdout_validation"
+    ],
+    "evidence_summary": {
+      "blind_holdout_confirmed_count": 0,
+      "blind_holdout_conflicted_count": 6,
+      "blind_holdout_plan_count": 0,
+      "conflict_resolution_settled_count": 4,
+      "planned_outcome_count": 36,
+      "selected_law_replay_confirmed_count": 0,
+      "selected_law_replay_conflicted_count": 2,
+      "selected_theorem_count": 2
+    },
+    "gates": {
+      "autonomous_loop_closure": {
+        "description": "the notebook records outcomes and designs the next experiments itself",
+        "evidence": {
+          "autonomous_design_count": 8,
+          "next_experiment_count": 8,
+          "planned_outcome_count": 36
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 1.0,
+        "weight": 0.1
+      },
+      "baseline_discovery_readiness": {
+        "description": "existing discovery gates are populated without running the watched final",
+        "evidence": {
+          "gate_count": 25,
+          "passed_gate_count": 25,
+          "readiness_status": "ready_for_watched_final"
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 1.0,
+        "weight": 0.12
+      },
+      "blind_holdout_validation": {
+        "description": "selected laws are validated on hidden or blind holdout worlds",
+        "evidence": {
+          "blind_holdout_confirmed_count": 0,
+          "blind_holdout_conflicted_count": 6,
+          "blind_holdout_plan_count": 0
+        },
+        "next_step": "execute blind holdout validations for selected laws",
+        "passed": false,
+        "score": 0.0,
+        "weight": 0.14
+      },
+      "bounded_memory_and_compression": {
+        "description": "long runs have bounded memory and compact reusable law summaries",
+        "evidence": {
+          "canonical_law_shard_count": 2,
+          "compressed_shard_count": 2,
+          "long_run_law_ready": true,
+          "long_run_ready": true
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 1.0,
+        "weight": 0.07
+      },
+      "heldout_law_stability": {
+        "description": "selected laws survive replay or have their conflicts resolved into a domain rule",
+        "evidence": {
+          "conflict_resolution_settled_count": 4,
+          "selected_law_replay_confirmed_count": 0,
+          "selected_law_replay_conflicted_count": 2,
+          "unresolved_conflict_count": 0
+        },
+        "next_step": "run selected-law conflict resolution until replays stop alternating",
+        "passed": false,
+        "score": 0.55,
+        "weight": 0.18
+      },
+      "raw_math_and_algebra_basis": {
+        "description": "counting, arithmetic, and broad algebraic equation forms are available",
+        "evidence": {
+          "algebra_expression_families": 19,
+          "algebra_proof_obligations": 13,
+          "arithmetic_coverage": 1.0,
+          "arithmetic_records": 1,
+          "leaked_manifest_count": 0
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 1.0,
+        "weight": 0.13
+      },
+      "selected_law_parameterization": {
+        "description": "repeated equation families have selected parameters rather than only variants",
+        "evidence": {
+          "selected_law_leak_count": 0,
+          "selected_support_count": 25,
+          "selected_theorem_count": 2
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 1.0,
+        "weight": 0.14
+      },
+      "self_authored_equation_templates": {
+        "description": "the system writes reusable equation templates from repeated evidence",
+        "evidence": {
+          "authored_equation_count": 7,
+          "best_confidence": 0.963
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 0.987,
+        "weight": 0.12
+      }
+    },
+    "progress_percent": 77.7,
+    "progress_score": 0.777,
+    "recommended_next_steps": [
+      "run selected-law conflict resolution until replays stop alternating",
+      "execute blind holdout validations for selected laws"
+    ],
+    "status": "approaching_85",
+    "target_percent": 85.0,
+    "target_reached": false
+  },
+  "memory_delta_counts": {
+    "equation_case_records": 7,
+    "planned_outcomes": 7,
+    "records": 7
+  },
+  "result_rows": [
+    {
+      "context": "repulsion",
+      "experiment_kind": "selected_law_conflict_resolution",
+      "followup_iteration": 1,
+      "interesting_expression": "k * taper(separation, 5_618) * unit_generated_center_vector / separation^1_5",
+      "interesting_score": 0.892,
+      "invariant_key": "repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+      "label_leak_count": 0,
+      "outcome": "conflict_rival_supported",
+      "seed": 11,
+      "selected_law_replay_key": "selected_law_replay:repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered:separation^-1.5",
+      "theory_kind": "tapered_distance_direction_residual",
+      "world_type": "repulsion"
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "experiment_kind": "selected_law_conflict_resolution",
+      "followup_iteration": 2,
+      "interesting_expression": "k * taper(separation, 9_399) * unit_generated_center_vector / separation^0_25",
+      "interesting_score": 0.835,
+      "invariant_key": "inverse_square_repulsion:baseline_adjusted_delta_velocity:inverse_separation_power:unit_local_inferred_vector:global",
+      "label_leak_count": 0,
+      "outcome": "conflict_rival_supported",
+      "seed": 10,
+      "selected_law_replay_key": "selected_law_replay:inverse_square_repulsion:baseline_adjusted_delta_velocity:inverse_separation_power:unit_local_inferred_vector:global:separation^-1.0",
+      "theory_kind": "distance_scaled_direction_residual",
+      "world_type": "inverse_square_repulsion"
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "experiment_kind": "post_run_replay_revision",
+      "followup_iteration": 3,
+      "interesting_expression": "k * unit_local_inferred_vector / separation^1_5",
+      "interesting_score": 0.835,
+      "invariant_key": null,
+      "label_leak_count": 0,
+      "outcome": "replay_conflicted_with_invariant",
+      "seed": 0,
+      "selected_law_replay_key": null,
+      "theory_kind": "tapered_distance_direction_residual",
+      "world_type": "inverse_square_repulsion"
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "experiment_kind": "post_run_replay_revision",
+      "followup_iteration": 4,
+      "interesting_expression": "k * taper(separation, 8_836) * unit_generated_center_vector / separation^0_25",
+      "interesting_score": 0.866,
+      "invariant_key": null,
+      "label_leak_count": 0,
+      "outcome": "replay_needs_parameter_resolution",
+      "seed": 4,
+      "selected_law_replay_key": null,
+      "theory_kind": "tapered_distance_direction_residual",
+      "world_type": "inverse_square_repulsion"
+    },
+    {
+      "context": "repulsion",
+      "experiment_kind": "domain_predicate_discovery",
+      "followup_iteration": 5,
+      "interesting_expression": "k * taper(separation, 5_934) * unit_generated_center_vector / separation^1",
+      "interesting_score": 0.911,
+      "invariant_key": null,
+      "label_leak_count": 0,
+      "outcome": "domain_predicate_rival_region",
+      "seed": 12,
+      "selected_law_replay_key": null,
+      "theory_kind": "tapered_distance_direction_residual",
+      "world_type": "repulsion"
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "experiment_kind": "domain_predicate_discovery",
+      "followup_iteration": 6,
+      "interesting_expression": "k * unit_local_inferred_vector / separation^2",
+      "interesting_score": 0.624,
+      "invariant_key": null,
+      "label_leak_count": 0,
+      "outcome": "domain_predicate_rival_region",
+      "seed": 11,
+      "selected_law_replay_key": null,
+      "theory_kind": "distance_scaled_direction_residual",
+      "world_type": "inverse_square_repulsion"
+    },
+    {
+      "context": "inverse_square_repulsion",
+      "experiment_kind": "equation_invariant_exponent_resolution",
+      "followup_iteration": 7,
+      "interesting_expression": "k * taper(separation, 9_421) * unit_generated_center_vector / separation^0_75",
+      "interesting_score": 0.804,
+      "invariant_key": "inverse_square_repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+      "label_leak_count": 0,
+      "outcome": "invariant_resolution_absent",
+      "seed": 12,
+      "selected_law_replay_key": null,
+      "theory_kind": "tapered_distance_direction_residual",
+      "world_type": "inverse_square_repulsion"
+    }
+  ],
+  "run_id": "goal-85-conflict-resolution-e976f49-1782261700",
+  "run_kind": "goal_85_conflict_resolution_followups",
+  "runs_final": false,
+  "starting_progress": {
+    "blockers": [
+      "heldout_law_stability",
+      "blind_holdout_validation"
+    ],
+    "evidence_summary": {
+      "blind_holdout_confirmed_count": 0,
+      "blind_holdout_conflicted_count": 6,
+      "blind_holdout_plan_count": 0,
+      "conflict_resolution_settled_count": 2,
+      "planned_outcome_count": 29,
+      "selected_law_replay_confirmed_count": 0,
+      "selected_law_replay_conflicted_count": 2,
+      "selected_theorem_count": 2
+    },
+    "gates": {
+      "autonomous_loop_closure": {
+        "description": "the notebook records outcomes and designs the next experiments itself",
+        "evidence": {
+          "autonomous_design_count": 8,
+          "next_experiment_count": 8,
+          "planned_outcome_count": 29
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 1.0,
+        "weight": 0.1
+      },
+      "baseline_discovery_readiness": {
+        "description": "existing discovery gates are populated without running the watched final",
+        "evidence": {
+          "gate_count": 25,
+          "passed_gate_count": 25,
+          "readiness_status": "ready_for_watched_final"
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 1.0,
+        "weight": 0.12
+      },
+      "blind_holdout_validation": {
+        "description": "selected laws are validated on hidden or blind holdout worlds",
+        "evidence": {
+          "blind_holdout_confirmed_count": 0,
+          "blind_holdout_conflicted_count": 6,
+          "blind_holdout_plan_count": 0
+        },
+        "next_step": "execute blind holdout validations for selected laws",
+        "passed": false,
+        "score": 0.0,
+        "weight": 0.14
+      },
+      "bounded_memory_and_compression": {
+        "description": "long runs have bounded memory and compact reusable law summaries",
+        "evidence": {
+          "canonical_law_shard_count": 2,
+          "compressed_shard_count": 2,
+          "long_run_law_ready": true,
+          "long_run_ready": true
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 1.0,
+        "weight": 0.07
+      },
+      "heldout_law_stability": {
+        "description": "selected laws survive replay or have their conflicts resolved into a domain rule",
+        "evidence": {
+          "conflict_resolution_settled_count": 2,
+          "selected_law_replay_confirmed_count": 0,
+          "selected_law_replay_conflicted_count": 2,
+          "unresolved_conflict_count": 0
+        },
+        "next_step": "run selected-law conflict resolution until replays stop alternating",
+        "passed": false,
+        "score": 0.55,
+        "weight": 0.18
+      },
+      "raw_math_and_algebra_basis": {
+        "description": "counting, arithmetic, and broad algebraic equation forms are available",
+        "evidence": {
+          "algebra_expression_families": 19,
+          "algebra_proof_obligations": 13,
+          "arithmetic_coverage": 1.0,
+          "arithmetic_records": 1,
+          "leaked_manifest_count": 0
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 1.0,
+        "weight": 0.13
+      },
+      "selected_law_parameterization": {
+        "description": "repeated equation families have selected parameters rather than only variants",
+        "evidence": {
+          "selected_law_leak_count": 0,
+          "selected_support_count": 21,
+          "selected_theorem_count": 2
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 1.0,
+        "weight": 0.14
+      },
+      "self_authored_equation_templates": {
+        "description": "the system writes reusable equation templates from repeated evidence",
+        "evidence": {
+          "authored_equation_count": 7,
+          "best_confidence": 0.962
+        },
+        "next_step": "keep monitoring this gate",
+        "passed": true,
+        "score": 0.987,
+        "weight": 0.12
+      }
+    },
+    "progress_percent": 77.7,
+    "progress_score": 0.777,
+    "recommended_next_steps": [
+      "run selected-law conflict resolution until replays stop alternating",
+      "execute blind holdout validations for selected laws"
+    ],
+    "status": "approaching_85",
+    "target_percent": 85.0,
+    "target_reached": false
+  }
+}

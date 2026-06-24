@@ -2228,6 +2228,79 @@ class DiscoveryLoopTests(unittest.TestCase):
         )
         self.assertEqual('holdout_conflicted', theorem['status'])
 
+    def test_rival_supported_conflict_reselects_only_same_family_parameter(self):
+        memory = self._build_selected_tapered_law_memory()
+        invariant = memory.operator_prior_invariant_consolidations(limit=4)[0]
+        replay_key = memory._selected_law_replay_key(invariant)
+        memory.planned_outcomes.append({
+            'theory_kind': 'tapered_distance_direction_residual',
+            'experiment_kind': 'selected_law_conflict_resolution',
+            'outcome': 'conflict_rival_supported',
+            'context': 'localized_gravity',
+            'seed': 8,
+            'invariant_key': invariant['key'],
+            'selected_law_replay_key': replay_key,
+            'target_scope': (
+                'localized_gravity/'
+                'tapered_distance_direction_residual/separation^-0.5'
+            ),
+            'rival_scope': (
+                'localized_gravity/'
+                'tapered_distance_direction_residual/separation^-1.5/'
+                'tapered/cutoff~9/unit_generated_center_vector'
+            ),
+            'primary_theory_label': (
+                'tapered_distance_direction_residual/separation^-0.5'
+            ),
+            'rival_theory_labels': [
+                'tapered_distance_direction_residual/separation^-1.5/'
+                'tapered/cutoff~9/unit_generated_center_vector',
+            ],
+            'best_score': 0.12,
+            'rival_best_score': 0.70,
+        })
+
+        reselected = next(
+            item for item in memory.operator_prior_invariant_consolidations(limit=4)
+            if item['key'] == invariant['key']
+        )
+        memory.planned_outcomes.append({
+            'theory_kind': 'tapered_distance_direction_residual',
+            'experiment_kind': 'selected_law_conflict_resolution',
+            'outcome': 'conflict_rival_supported',
+            'context': 'localized_gravity',
+            'seed': 9,
+            'invariant_key': invariant['key'],
+            'selected_law_replay_key': replay_key,
+            'target_scope': (
+                'localized_gravity/'
+                'tapered_distance_direction_residual/separation^-1.5'
+            ),
+            'rival_scope': (
+                'localized_gravity/'
+                'distance_scaled_direction_residual/separation^-2.0'
+            ),
+            'primary_theory_label': (
+                'tapered_distance_direction_residual/separation^-1.5'
+            ),
+            'rival_theory_labels': [
+                'distance_scaled_direction_residual/separation^-2.0',
+            ],
+            'best_score': 0.10,
+            'rival_best_score': 0.99,
+        })
+        after_cross_family = next(
+            item for item in memory.operator_prior_invariant_consolidations(limit=4)
+            if item['key'] == invariant['key']
+        )
+
+        self.assertEqual(1.5, reselected['selected_distance_exponent'])
+        self.assertEqual(
+            'conflict_rival_supported',
+            reselected['selected_resolution']['outcome'],
+        )
+        self.assertEqual(1.5, after_cross_family['selected_distance_exponent'])
+
     def test_rediscovery_goal_progress_penalizes_unresolved_selected_laws(self):
         memory = self._build_selected_tapered_law_memory()
         replay = memory.selected_law_replay_agenda(limit=1)[0]

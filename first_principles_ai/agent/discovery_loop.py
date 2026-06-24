@@ -6093,7 +6093,7 @@ class CumulativeTheoryMemory:
                 ),
                 'parameter_candidates': parameter_candidates,
             }
-            selected_resolution = self._selected_invariant_resolution(item['key'])
+            selected_resolution = self._selected_invariant_resolution(item)
             if selected_resolution:
                 selected_exponent = selected_resolution.get('distance_exponent')
                 item['selected_resolution'] = selected_resolution
@@ -6210,21 +6210,36 @@ class CumulativeTheoryMemory:
 
     def _selected_invariant_resolution(
         self,
-        invariant_key: str,
+        invariant: dict[str, Any],
     ) -> dict[str, Any] | None:
+        invariant_key = str(invariant.get('key') or '')
+        expected_family = self._family_key(
+            self._equation_invariant_theory_kind(invariant)
+        )
         selections = []
         for index, outcome in enumerate(self.planned_outcomes):
-            if outcome.get('experiment_kind') != 'equation_invariant_exponent_resolution':
-                continue
             if outcome.get('invariant_key') != invariant_key:
                 continue
+            experiment_kind = outcome.get('experiment_kind')
             result = outcome.get('outcome')
-            if result not in {
-                'invariant_exponent_selected',
-                'invariant_rival_exponent_selected',
-            }:
+            if experiment_kind == 'equation_invariant_exponent_resolution':
+                if result not in {
+                    'invariant_exponent_selected',
+                    'invariant_rival_exponent_selected',
+                }:
+                    continue
+            elif experiment_kind == 'selected_law_conflict_resolution':
+                if result not in {
+                    'conflict_selected_restored',
+                    'conflict_rival_supported',
+                }:
+                    continue
+            else:
                 continue
-            if result == 'invariant_rival_exponent_selected':
+            if result in {
+                'invariant_rival_exponent_selected',
+                'conflict_rival_supported',
+            }:
                 selected_scope = outcome.get('rival_scope')
                 selected_label = self._selected_label_from_scope(
                     selected_scope,
@@ -6238,6 +6253,12 @@ class CumulativeTheoryMemory:
                     [outcome.get('primary_theory_label')],
                 )
                 score = float(outcome.get('best_score', 0.0) or 0.0)
+            if (
+                selected_label
+                and expected_family
+                and not str(selected_label).startswith(f'{expected_family}/')
+            ):
+                continue
             exponent = self._distance_exponent_from_scope_or_label(
                 selected_scope,
                 selected_label,
@@ -6262,8 +6283,8 @@ class CumulativeTheoryMemory:
         return max(
             selections,
             key=lambda item: (
-                float(item.get('score', 0.0) or 0.0),
                 int(item.get('evidence_index', 0) or 0),
+                float(item.get('score', 0.0) or 0.0),
             ),
         )
 
@@ -6276,8 +6297,10 @@ class CumulativeTheoryMemory:
             text = str(scope)
             if '/' in text:
                 parts = text.split('/')
+                if parts[0].endswith('_residual') or 'residual' in parts[0]:
+                    return text
                 if len(parts) >= 2:
-                    return '/'.join(parts[-2:])
+                    return '/'.join(parts[1:])
         for label in fallback_labels:
             if label:
                 return str(label)
