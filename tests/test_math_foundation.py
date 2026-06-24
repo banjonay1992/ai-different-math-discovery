@@ -11,10 +11,13 @@ from unittest import mock
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'first_principles_ai'))
 sys.path.insert(0, PROJECT_DIR)
 
+import main as main_module
+
 from agent.equation_workbench import EquationWorkbench
 from agent.discovery_loop import CumulativeTheoryMemory
 from agent.math_discovery import EmergentMathDiscovery
 from agent.math_foundation import MathFoundationWorkbench
+from agent.perception import Perception
 from agent.representation import KnowledgeBase
 from main import (
     _checkpoint_theory_memory,
@@ -139,6 +142,63 @@ class MathFoundationTests(unittest.TestCase):
 
         self.assertEqual(64, kb.equation_workbench.max_operator_feedback_rows)
         self.assertEqual(2, kb.equation_workbench.max_operator_feedback_operators)
+
+    def test_run_experiment_reuses_perception_between_steps(self):
+        original_perceive = main_module.Perception.perceive
+        perceive_calls = 0
+
+        def counted_perceive(raw_state):
+            nonlocal perceive_calls
+            perceive_calls += 1
+            return original_perceive(raw_state)
+
+        with mock.patch.object(
+            main_module.Perception,
+            'perceive',
+            side_effect=counted_perceive,
+        ):
+            with contextlib.redirect_stdout(io.StringIO()):
+                run_experiment(
+                    num_steps=4,
+                    num_initial_objects=1,
+                    seed=0,
+                    verbose=False,
+                    report_interval=4,
+                )
+
+        self.assertEqual(5, perceive_calls)
+
+    def test_perception_feature_vector_matches_derived_properties(self):
+        observation = Perception.perceive(object_state(3, 2, vx=0.4, vy=-0.2))
+        features = observation.get_feature_vector()
+
+        self.assertEqual(observation.count, features['count'])
+        self.assertEqual(
+            round(observation.total_momentum_x, 6),
+            features['total_momentum_x'],
+        )
+        self.assertEqual(
+            round(observation.total_momentum_y, 6),
+            features['total_momentum_y'],
+        )
+        self.assertEqual(round(observation.total_momentum, 6), features['total_momentum'])
+        self.assertEqual(
+            round(observation.total_kinetic_energy, 6),
+            features['total_kinetic_energy'],
+        )
+        self.assertEqual(round(observation.total_mass, 6), features['total_mass'])
+        self.assertEqual(
+            round(observation.center_of_mass_x, 6),
+            features['center_of_mass_x'],
+        )
+        self.assertEqual(
+            round(observation.center_of_mass_y, 6),
+            features['center_of_mass_y'],
+        )
+        self.assertEqual(
+            round(sum(observation.pairwise_distances) / len(observation.pairwise_distances), 6),
+            features['mean_distance'],
+        )
 
     def test_math_foundation_prep_runs_without_final_campaign(self):
         theory_memory = CumulativeTheoryMemory()
@@ -543,8 +603,8 @@ class MathFoundationTests(unittest.TestCase):
             'invariant_resolution',
             authored_results[0]['self_authored_world_design']['source'],
         )
-        self.assertIn('radial_repulsion', manifest_components)
-        self.assertIn('localized_pull', manifest_components)
+        self.assertIn('piecewise_radial', manifest_components)
+        self.assertIn('cutoff_radial_push', manifest_components)
 
     def test_math_final_discovery_can_resume_hidden_world_offset(self):
         def hidden_manifest(index, variant):

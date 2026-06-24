@@ -203,6 +203,41 @@ class EmergentMathDiscoveryTests(unittest.TestCase):
         self.assertIn('Human-math comparison candidates', summary)
         self.assertIn('identity / object permanence', summary)
 
+    def test_discovered_patterns_cache_invalidates_on_new_evidence(self):
+        discovery = EmergentMathDiscovery()
+        discovery._record(
+            key='raw_pattern:a',
+            kind='concept',
+            description='first',
+            step=1,
+        )
+
+        first = discovery.discovered_patterns()
+        cached_revision = discovery._sorted_pattern_cache_revision
+        second = discovery.discovered_patterns()
+
+        self.assertEqual(['raw_pattern:a'], [pattern.key for pattern in first])
+        self.assertEqual(['raw_pattern:a'], [pattern.key for pattern in second])
+        self.assertEqual(cached_revision, discovery._sorted_pattern_cache_revision)
+
+        discovery._record(
+            key='raw_pattern:b',
+            kind='concept',
+            description='second',
+            step=2,
+            amount=3,
+        )
+        third = discovery.discovered_patterns()
+
+        self.assertEqual(
+            ['raw_pattern:b', 'raw_pattern:a'],
+            [pattern.key for pattern in third],
+        )
+        self.assertEqual(
+            discovery._patterns_revision,
+            discovery._sorted_pattern_cache_revision,
+        )
+
     def test_discovers_metric_scale_symmetry_and_mapping_without_taught_labels(self):
         kb = KnowledgeBase()
         discovery = EmergentMathDiscovery(

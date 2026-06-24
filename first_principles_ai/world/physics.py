@@ -13,7 +13,22 @@ import math
 import random
 
 
-from typing import Optional
+from typing import Callable, Optional
+
+
+ForceComponentApplier = Callable[[object, dict, float], None]
+FORCE_COMPONENT_APPLIERS: dict[str, ForceComponentApplier] = {}
+
+
+def register_force_component(component_type: str, applier: ForceComponentApplier):
+    """Register a simulator-only force component for hidden/adversarial worlds."""
+    if not component_type:
+        raise ValueError("component_type must be non-empty")
+    FORCE_COMPONENT_APPLIERS[component_type] = applier
+
+
+def registered_force_component_types() -> tuple[str, ...]:
+    return tuple(sorted(FORCE_COMPONENT_APPLIERS))
 
 
 class Vec2:
@@ -64,9 +79,13 @@ class PhysicsObject:
     _next_id = 0
 
     def __init__(self, position: Vec2, velocity: Vec2 = None,
-                 mass: float = 1.0, radius: float = 0.5):
-        self.id = PhysicsObject._next_id
-        PhysicsObject._next_id += 1
+                 mass: float = 1.0, radius: float = 0.5,
+                 object_id: int | None = None):
+        if object_id is None:
+            self.id = PhysicsObject._next_id
+            PhysicsObject._next_id += 1
+        else:
+            self.id = int(object_id)
         self.position = position
         self.velocity = velocity or Vec2(0, 0)
         self.mass = mass
@@ -93,16 +112,19 @@ class PhysicsWorld:
 
     def __init__(self, width: float = 20.0, height: float = 20.0,
                  gravity: float = 9.8, friction: float = 0.999,
-                 restitution: float = 0.85):
+                 restitution: float = 0.85,
+                 rng: random.Random | None = None):
         self.width = width
         self.height = height
         self.gravity = gravity
         self.friction = friction
         self.restitution = restitution
+        self.rng = rng or random.Random()
         self.objects: list[PhysicsObject] = []
         self.time: float = 0.0
         self.collision_events: list[dict] = []
         self._event_idx = 0
+        self._next_object_id = 0
         # Novel physics: no extra forces by default
         self.central_force: Optional[dict] = None  # {'x': cx, 'y': cy, 'strength': G}
         self.gravity_wells: list[dict] = []  # Localized attractive wells
@@ -111,6 +133,7 @@ class PhysicsWorld:
         self.uniform_force: Optional[dict] = None  # Constant acceleration
         self.vortex_fields: list[dict] = []  # Tangential force fields
         self.time_varying_force: Optional[dict] = None  # Sinusoidal acceleration
+        self.force_components: list[dict] = []  # Registry-driven hidden/adversarial forces
         self.world_type = 'standard'
 
     def add_object(self, obj: PhysicsObject) -> PhysicsObject:
@@ -122,10 +145,24 @@ class PhysicsWorld:
         obj = PhysicsObject(
             position=Vec2(x, y),
             velocity=Vec2(vx, vy),
-            mass=mass or random.uniform(0.5, 3.0),
-            radius=radius or random.uniform(0.3, 0.8),
+            mass=self.rng.uniform(0.5, 3.0) if mass is None else mass,
+            radius=self.rng.uniform(0.3, 0.8) if radius is None else radius,
+            object_id=self._allocate_object_id(),
         )
         return self.add_object(obj)
+
+    def _allocate_object_id(self) -> int:
+        object_id = self._next_object_id
+        self._next_object_id += 1
+        return object_id
+
+    def add_force_component(self, component_type: str, params: dict):
+        if component_type not in FORCE_COMPONENT_APPLIERS:
+            raise ValueError(f"Unknown force component type: {component_type}")
+        self.force_components.append({
+            'type': component_type,
+            'params': dict(params),
+        })
 
     def remove_object(self, obj_id: int):
         self.objects = [o for o in self.objects if o.id != obj_id]
@@ -295,6 +332,12 @@ class PhysicsWorld:
                 else:
                     obj.velocity.y += force * dt
 
+        for component in self.force_components:
+            applier = FORCE_COMPONENT_APPLIERS.get(component.get('type'))
+            if applier is None:
+                continue
+            applier(self, component.get('params', {}), dt)
+
         # Friction — multiplicative damping (breaks strict conservation, as in reality)
         for obj in self.objects:
             obj.velocity = obj.velocity * self.friction
@@ -365,3 +408,83 @@ class PhysicsWorld:
 
     def get_collisions(self) -> list[dict]:
         return list(self.collision_events)
+
+
+def _radial_force(
+    world: PhysicsWorld,
+    *,
+    x: float,
+    y: float,
+    strength: float,
+    exponent: float,
+    direction: float,
+    dt: float,
+    max_radius: float | None = None,
+):
+    exponent = max(float(exponent), 0.0)
+    for obj in world.objects:
+        dx = obj.position.x - x
+        dy = obj.position.y - y
+        dist_sq = dx * dx + dy * dy
+        dist = math.sqrt(max(dist_sq, 0.25))
+        if max_radius is not None and dist > max_radius:
+            continue
+        force = strength / max(dist ** exponent, 0.25)
+        obj.velocity.x += direction * (dx / dist) * force * dt
+        obj.velocity.y += direction * (dy / dist) * force * dt
+
+
+def _apply_cutoff_radial(world: PhysicsWorld, params: dict, dt: float):
+    _radial_force(
+        world,
+        x=float(params['x']),
+        y=float(params['y']),
+        strength=float(params['strength']),
+        exponent=float(params.get('exponent', 2.0)),
+        direction=float(params.get('direction', 1.0)),
+        max_radius=float(params['radius']),
+        dt=dt,
+    )
+
+
+def _apply_piecewise_radial(world: PhysicsWorld, params: dict, dt: float):
+    x = float(params['x'])
+    y = float(params['y'])
+    split_radius = float(params['split_radius'])
+    inner = dict(params.get('inner', {}))
+    outer = dict(params.get('outer', {}))
+    for obj in world.objects:
+        dx = obj.position.x - x
+        dy = obj.position.y - y
+        dist_sq = dx * dx + dy * dy
+        dist = math.sqrt(max(dist_sq, 0.25))
+        regime = inner if dist <= split_radius else outer
+        strength = float(regime.get('strength', 0.0))
+        if abs(strength) < 1e-12:
+            continue
+        exponent = max(float(regime.get('exponent', 2.0)), 0.0)
+        direction = float(regime.get('direction', 1.0))
+        force = strength / max(dist ** exponent, 0.25)
+        obj.velocity.x += direction * (dx / dist) * force * dt
+        obj.velocity.y += direction * (dy / dist) * force * dt
+
+
+def _apply_periodic_regime_uniform(world: PhysicsWorld, params: dict, dt: float):
+    period = max(float(params.get('period', 1.0)), 1e-6)
+    duty_cycle = min(max(float(params.get('duty_cycle', 0.5)), 0.0), 1.0)
+    phase = float(params.get('phase', 0.0))
+    cycle_position = ((world.time + phase) % period) / period
+    if cycle_position <= duty_cycle:
+        force = params.get('on_force', {})
+    else:
+        force = params.get('off_force', {})
+    fx = float(force.get('x', 0.0))
+    fy = float(force.get('y', 0.0))
+    for obj in world.objects:
+        obj.velocity.x += fx * dt
+        obj.velocity.y += fy * dt
+
+
+register_force_component('cutoff_radial', _apply_cutoff_radial)
+register_force_component('piecewise_radial', _apply_piecewise_radial)
+register_force_component('periodic_regime_uniform', _apply_periodic_regime_uniform)

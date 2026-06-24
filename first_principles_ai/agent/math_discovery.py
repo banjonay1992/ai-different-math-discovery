@@ -98,6 +98,9 @@ class EmergentMathDiscovery:
         self._last_velocity_signs: dict[int, dict[str, int]] = {}
         self._sign_switch_counts: dict[str, int] = {}
         self._action_outcomes: dict[tuple[str, int], int] = {}
+        self._patterns_revision = 0
+        self._sorted_pattern_cache_revision = -1
+        self._sorted_pattern_cache: list[RawMathPattern] = []
 
     def observe_transition(self, before: dict, after: dict, action: dict | None, step: int):
         before_snapshot = self._snapshot(before)
@@ -114,10 +117,13 @@ class EmergentMathDiscovery:
         self._maybe_install_patterns(step)
 
     def discovered_patterns(self) -> list[RawMathPattern]:
-        return sorted(
-            self.patterns.values(),
-            key=lambda pattern: (-pattern.evidence, pattern.key),
-        )
+        if self._sorted_pattern_cache_revision != self._patterns_revision:
+            self._sorted_pattern_cache = sorted(
+                self.patterns.values(),
+                key=lambda pattern: (-pattern.evidence, pattern.key),
+            )
+            self._sorted_pattern_cache_revision = self._patterns_revision
+        return list(self._sorted_pattern_cache)
 
     def compare_to_human_math(self) -> list[HumanMathComparison]:
         comparisons = []
@@ -531,6 +537,7 @@ class EmergentMathDiscovery:
         pattern.add_evidence(step, amount=amount)
         if properties:
             pattern.properties.update(properties)
+        self._patterns_revision += 1
         return pattern
 
     def _maybe_install_patterns(self, step: int):
@@ -547,6 +554,7 @@ class EmergentMathDiscovery:
                 continue
             if pattern.concept_name is None:
                 pattern.concept_name = self._install_concept(pattern, step).internal_name
+                self._patterns_revision += 1
             if pattern.kind == 'operation' and pattern.rule_name:
                 rule = self.knowledge_base.rules.get(pattern.rule_name)
                 if rule is not None:
@@ -559,6 +567,7 @@ class EmergentMathDiscovery:
                 and 'delta' in pattern.properties
             ):
                 pattern.rule_name = self._install_operation_rule(pattern, step)
+                self._patterns_revision += 1
 
     def _install_concept(self, pattern: RawMathPattern, step: int):
         concept_type = {

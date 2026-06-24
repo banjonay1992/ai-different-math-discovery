@@ -112,26 +112,70 @@ class WorldObservation:
         This is what the agent works with — it does NOT know the names mean.
         It discovers what's important through observation.
         """
+        count = len(self.objects)
+        total_momentum_x = 0.0
+        total_momentum_y = 0.0
+        total_kinetic_energy = 0.0
+        total_mass = 0.0
+        weighted_x = 0.0
+        weighted_y = 0.0
+        speed_sum = 0.0
+        max_x = max_y = 0.0
+        min_x = min_y = 0.0
+
+        if self.objects:
+            max_x = min_x = self.objects[0].x
+            max_y = min_y = self.objects[0].y
+
+        for obj in self.objects:
+            momentum_x = obj.mass * obj.vx
+            momentum_y = obj.mass * obj.vy
+            total_momentum_x += momentum_x
+            total_momentum_y += momentum_y
+            total_kinetic_energy += 0.5 * obj.mass * obj.speed ** 2
+            total_mass += obj.mass
+            weighted_x += obj.mass * obj.x
+            weighted_y += obj.mass * obj.y
+            speed_sum += obj.speed
+            max_x = max(max_x, obj.x)
+            min_x = min(min_x, obj.x)
+            max_y = max(max_y, obj.y)
+            min_y = min(min_y, obj.y)
+
+        pairwise_total = 0.0
+        pairwise_count = 0
+        for i in range(count):
+            first = self.objects[i]
+            for j in range(i + 1, count):
+                second = self.objects[j]
+                dx = first.x - second.x
+                dy = first.y - second.y
+                pairwise_total += math.sqrt(dx ** 2 + dy ** 2)
+                pairwise_count += 1
+
+        center_of_mass_x = weighted_x / total_mass if total_mass > 0 else 0.0
+        center_of_mass_y = weighted_y / total_mass if total_mass > 0 else 0.0
+        mean_distance = pairwise_total / pairwise_count if pairwise_count else 0.0
+        mean_speed = speed_sum / max(count, 1)
         return {
-            'count': self.count,
-            'total_momentum_x': round(self.total_momentum_x, 6),
-            'total_momentum_y': round(self.total_momentum_y, 6),
-            'total_momentum': round(self.total_momentum, 6),
-            'total_kinetic_energy': round(self.total_kinetic_energy, 6),
-            'total_mass': round(self.total_mass, 6),
-            'center_of_mass_x': round(self.center_of_mass_x, 6),
-            'center_of_mass_y': round(self.center_of_mass_y, 6),
-            'num_collisions': len(self.collisions),
-            'mean_distance': round(
-                sum(self.pairwise_distances) / max(len(self.pairwise_distances), 1), 6
-            ) if self.pairwise_distances else 0.0,
-            'max_x': max((o.x for o in self.objects), default=0.0),
-            'min_x': min((o.x for o in self.objects), default=0.0),
-            'max_y': max((o.y for o in self.objects), default=0.0),
-            'min_y': min((o.y for o in self.objects), default=0.0),
-            'mean_speed': round(
-                sum(o.speed for o in self.objects) / max(self.count, 1), 6
+            'count': count,
+            'total_momentum_x': round(total_momentum_x, 6),
+            'total_momentum_y': round(total_momentum_y, 6),
+            'total_momentum': round(
+                math.sqrt(total_momentum_x ** 2 + total_momentum_y ** 2),
+                6,
             ),
+            'total_kinetic_energy': round(total_kinetic_energy, 6),
+            'total_mass': round(total_mass, 6),
+            'center_of_mass_x': round(center_of_mass_x, 6),
+            'center_of_mass_y': round(center_of_mass_y, 6),
+            'num_collisions': len(self.collisions),
+            'mean_distance': round(mean_distance, 6),
+            'max_x': max_x,
+            'min_x': min_x,
+            'max_y': max_y,
+            'min_y': min_y,
+            'mean_speed': round(mean_speed, 6),
         }
 
 

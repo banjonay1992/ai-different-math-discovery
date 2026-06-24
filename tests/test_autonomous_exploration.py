@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import random
 import sys
 import unittest
 
@@ -22,7 +23,9 @@ from world.hidden_worlds import (
     generate_hidden_world_manifest,
     generate_self_authored_hidden_world_manifest,
     hidden_manifest_from_observation,
+    registered_hidden_component_types,
 )
+from world.physics import registered_force_component_types
 
 
 def learned_law(law_type: str, **properties):
@@ -118,10 +121,32 @@ class AutonomousExplorationTests(unittest.TestCase):
 
         observation = env.observe()
 
-        self.assertEqual('hidden_procedural', observation['world_type'])
+        self.assertNotIn('world_type', observation)
+        self.assertEqual('hidden_procedural', env.benchmark_metadata()['world_type'])
+        self.assertEqual(manifest.hidden_id, env.benchmark_metadata()['hidden_id'])
         self.assertFalse(hidden_manifest_from_observation(observation))
         self.assertNotIn('components', observation)
         self.assertNotIn('expected_discoveries', observation)
+
+    def test_environment_seed_is_reproducible_without_global_random_bleed(self):
+        random.seed(123456)
+        expected_global = random.Random(123456)
+
+        first = Environment(
+            num_initial_objects=3,
+            seed=19,
+            world_type='standard',
+        )
+        second = Environment(
+            num_initial_objects=3,
+            seed=19,
+            world_type='standard',
+        )
+
+        self.assertEqual(first.observe(), second.observe())
+        self.assertEqual([0, 1, 2], first.get_object_ids())
+        self.assertEqual([0, 1, 2], second.get_object_ids())
+        self.assertEqual(expected_global.random(), random.random())
 
     def test_environment_supports_direct_causal_interventions(self):
         env = Environment(
@@ -191,6 +216,51 @@ class AutonomousExplorationTests(unittest.TestCase):
         self.assertTrue(env.world.repulsion_zones)
         self.assertFalse(hidden_manifest_from_observation(observation))
 
+    def test_adversarial_hidden_components_are_registry_backed_and_blind(self):
+        cutoff = generate_hidden_world_manifest(seed=13, variant=25)
+        piecewise = generate_hidden_world_manifest(seed=13, variant=27)
+
+        registered_hidden = set(registered_hidden_component_types())
+        registered_forces = set(registered_force_component_types())
+        self.assertIn('cutoff_radial_pull', registered_hidden)
+        self.assertIn('piecewise_radial', registered_hidden)
+        self.assertIn('cutoff_radial', registered_forces)
+        self.assertIn('piecewise_radial', registered_forces)
+
+        cutoff_env = Environment(
+            num_initial_objects=2,
+            seed=13,
+            world_type='hidden_procedural',
+            hidden_manifest=cutoff,
+        )
+        piecewise_env = Environment(
+            num_initial_objects=2,
+            seed=13,
+            world_type='hidden_procedural',
+            hidden_manifest=piecewise,
+        )
+
+        self.assertIn(
+            'cutoff_radial_pull',
+            [component.component_type for component in cutoff.components],
+        )
+        self.assertIn(
+            'piecewise_radial',
+            [component.component_type for component in piecewise.components],
+        )
+        self.assertIn('piecewise_component', cutoff.expected_discoveries)
+        self.assertIn('piecewise_component', piecewise.expected_discoveries)
+        self.assertIn(
+            'cutoff_radial',
+            [component['type'] for component in cutoff_env.world.force_components],
+        )
+        self.assertIn(
+            'piecewise_radial',
+            [component['type'] for component in piecewise_env.world.force_components],
+        )
+        self.assertFalse(hidden_manifest_from_observation(cutoff_env.observe()))
+        self.assertFalse(hidden_manifest_from_observation(piecewise_env.observe()))
+
     def test_self_authored_hidden_world_manifest_stays_blind(self):
         design = {
             'design_key': 'autonomous_design:invariant_resolution:test',
@@ -216,8 +286,8 @@ class AutonomousExplorationTests(unittest.TestCase):
         observation = env.observe()
 
         self.assertEqual('authored_02_0004', manifest.hidden_id)
-        self.assertIn('radial_repulsion', component_types)
-        self.assertIn('localized_pull', component_types)
+        self.assertIn('piecewise_radial', component_types)
+        self.assertIn('cutoff_radial_push', component_types)
         self.assertFalse(hidden_manifest_from_observation(observation))
         self.assertNotIn('question', observation)
 

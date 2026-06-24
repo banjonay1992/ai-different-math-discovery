@@ -16,9 +16,24 @@ For the prototype, we provide the action space but the agent must learn what the
 """
 
 import random
-from typing import Optional
-from .physics import PhysicsWorld, PhysicsObject, Vec2
+from typing import Callable, Optional
+from .physics import PhysicsWorld
 from .hidden_worlds import HiddenWorldManifest, apply_hidden_world
+
+
+WorldConfigurator = Callable[[PhysicsWorld, float, float], None]
+WORLD_CONFIGURATORS: dict[str, WorldConfigurator] = {}
+
+
+def register_world_type(world_type: str, configurator: WorldConfigurator):
+    """Register a benchmark world without putting labels in observations."""
+    if not world_type:
+        raise ValueError("world_type must be non-empty")
+    WORLD_CONFIGURATORS[world_type] = configurator
+
+
+def registered_world_types() -> tuple[str, ...]:
+    return tuple(sorted(WORLD_CONFIGURATORS))
 
 
 class Environment:
@@ -28,78 +43,32 @@ class Environment:
                  num_initial_objects: int = 5, seed: int = None,
                  world_type: str = 'standard',
                  hidden_manifest: HiddenWorldManifest | None = None):
-        if seed is not None:
-            random.seed(seed)
-        self.world = PhysicsWorld(width, height)
-        self.world.world_type = world_type
+        self.rng = random.Random(seed)
+        self._benchmark_world_type = (
+            'hidden_procedural' if hidden_manifest is not None else world_type
+        )
+        self._hidden_id = hidden_manifest.hidden_id if hidden_manifest is not None else None
+        self.world = PhysicsWorld(width, height, rng=self.rng)
+        self.world.world_type = self._benchmark_world_type
         self.step_count = 0
 
-        # Configure novel physics based on world type
         if hidden_manifest is not None:
             apply_hidden_world(self.world, hidden_manifest)
-        elif world_type == 'central_force':
-            # Add a gravitational well at the center of the world
-            self.world.central_force = {
-                'x': width / 2,
-                'y': height / 2,
-                'strength': 200.0,  # Strong enough to be noticeable at typical distances
-            }
-        elif world_type == 'repulsion':
-            # Add a repulsion zone at the center
-            self.world.repulsion_zones = [{
-                'x': width / 2,
-                'y': height / 2,
-                'strength': 80.0,
-                'radius': 6.0,
-            }]
-        elif world_type == 'zero_gravity':
-            # No gravity — test if agent notices the absence
-            self.world.gravity = 0.0
-        elif world_type == 'sideways_wind':
-            # A steady horizontal acceleration layered on top of gravity
-            self.world.uniform_force = {'x': 8.0, 'y': 0.0}
-        elif world_type == 'vortex':
-            # A rotating tangential field centered in the world
-            self.world.vortex_fields = [{
-                'x': width / 2,
-                'y': height / 2,
-                'strength': 140.0,
-                'radius': 9.0,
-                'direction': 1.0,
-            }]
-        elif world_type == 'inverse_square_repulsion':
-            # A point source that pushes objects away with inverse-square falloff
-            self.world.inverse_square_repulsions = [{
-                'x': width / 2,
-                'y': height / 2,
-                'strength': 130.0,
-            }]
-        elif world_type == 'localized_gravity':
-            # An off-center attractive well with finite range
-            self.world.gravity_wells = [{
-                'x': width * 0.35,
-                'y': height * 0.65,
-                'strength': 260.0,
-                'radius': 9.0,
-            }]
-        elif world_type == 'time_varying':
-            # A global horizontal force that periodically reverses direction
-            self.world.time_varying_force = {
-                'axis': 'x',
-                'amplitude': 12.0,
-                'period': 1.28,
-                'phase': 0.0,
-            }
+        else:
+            configurator = WORLD_CONFIGURATORS.get(world_type)
+            if configurator is None:
+                raise ValueError(f"Unknown world type: {world_type}")
+            configurator(self.world, width, height)
 
         self._populate(num_initial_objects)
 
     def _populate(self, n: int):
         for _ in range(n):
             self.world.spawn_object(
-                x=random.uniform(2, self.world.width - 2),
-                y=random.uniform(2, self.world.height - 2),
-                vx=random.uniform(-3, 3),
-                vy=random.uniform(-3, 3),
+                x=self.rng.uniform(2, self.world.width - 2),
+                y=self.rng.uniform(2, self.world.height - 2),
+                vx=self.rng.uniform(-3, 3),
+                vy=self.rng.uniform(-3, 3),
             )
 
     def observe(self) -> dict:
@@ -110,8 +79,14 @@ class Environment:
             'time': round(self.world.time, 6),
             'step': self.step_count,
             'world_size': (self.world.width, self.world.height),
-            'world_type': self.world.world_type,
         }
+
+    def benchmark_metadata(self) -> dict:
+        """Return benchmark/report metadata that must stay outside agent input."""
+        metadata = {'world_type': self._benchmark_world_type}
+        if self._hidden_id is not None:
+            metadata['hidden_id'] = self._hidden_id
+        return metadata
 
     def step(self, action: dict = None) -> dict:
         """
@@ -159,4 +134,80 @@ class Environment:
 
     def get_random_object_id(self) -> Optional[int]:
         ids = self.get_object_ids()
-        return random.choice(ids) if ids else None
+        return self.rng.choice(ids) if ids else None
+
+
+def _standard_world(world: PhysicsWorld, width: float, height: float):
+    return None
+
+
+def _central_force_world(world: PhysicsWorld, width: float, height: float):
+    world.central_force = {
+        'x': width / 2,
+        'y': height / 2,
+        'strength': 200.0,
+    }
+
+
+def _repulsion_world(world: PhysicsWorld, width: float, height: float):
+    world.repulsion_zones = [{
+        'x': width / 2,
+        'y': height / 2,
+        'strength': 80.0,
+        'radius': 6.0,
+    }]
+
+
+def _zero_gravity_world(world: PhysicsWorld, width: float, height: float):
+    world.gravity = 0.0
+
+
+def _sideways_wind_world(world: PhysicsWorld, width: float, height: float):
+    world.uniform_force = {'x': 8.0, 'y': 0.0}
+
+
+def _vortex_world(world: PhysicsWorld, width: float, height: float):
+    world.vortex_fields = [{
+        'x': width / 2,
+        'y': height / 2,
+        'strength': 140.0,
+        'radius': 9.0,
+        'direction': 1.0,
+    }]
+
+
+def _inverse_square_repulsion_world(world: PhysicsWorld, width: float, height: float):
+    world.inverse_square_repulsions = [{
+        'x': width / 2,
+        'y': height / 2,
+        'strength': 130.0,
+    }]
+
+
+def _localized_gravity_world(world: PhysicsWorld, width: float, height: float):
+    world.gravity_wells = [{
+        'x': width * 0.35,
+        'y': height * 0.65,
+        'strength': 260.0,
+        'radius': 9.0,
+    }]
+
+
+def _time_varying_world(world: PhysicsWorld, width: float, height: float):
+    world.time_varying_force = {
+        'axis': 'x',
+        'amplitude': 12.0,
+        'period': 1.28,
+        'phase': 0.0,
+    }
+
+
+register_world_type('standard', _standard_world)
+register_world_type('central_force', _central_force_world)
+register_world_type('repulsion', _repulsion_world)
+register_world_type('zero_gravity', _zero_gravity_world)
+register_world_type('sideways_wind', _sideways_wind_world)
+register_world_type('vortex', _vortex_world)
+register_world_type('inverse_square_repulsion', _inverse_square_repulsion_world)
+register_world_type('localized_gravity', _localized_gravity_world)
+register_world_type('time_varying', _time_varying_world)

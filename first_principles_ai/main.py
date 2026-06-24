@@ -91,6 +91,7 @@ HIDDEN_DISCOVERY_TARGETS = {
     'composed_law',
     'zero_gravity',
     'damping_component',
+    'piecewise_component',
 }
 
 EXPECTED_NOVEL_BY_WORLD = {
@@ -222,12 +223,15 @@ def run_experiment(
     reported_rules = set()
 
     prev_discovery_count = 0
+    current_raw_state = env.observe()
+    current_observation = Perception.perceive(current_raw_state)
+    current_features = current_observation.get_feature_vector()
 
     for step in range(num_steps):
         # 1. OBSERVE the world
-        raw_state = env.observe()
-        observation = Perception.perceive(raw_state)
-        features = observation.get_feature_vector()
+        raw_state = current_raw_state
+        observation = current_observation
+        features = current_features
         had_collision = len(observation.collisions) > 0
 
         # 2. PREDICT what happens next (using current knowledge)
@@ -263,6 +267,9 @@ def run_experiment(
         observation = Perception.perceive(raw_state)
         new_features = observation.get_feature_vector()
         had_collision = len(observation.collisions) > 0
+        current_raw_state = raw_state
+        current_observation = observation
+        current_features = new_features
 
         # 5. LEARN — record observations and check for discoveries
         predictor.observe(new_features, had_collision, step + 1, raw_objects=raw_state.get('objects', []))
