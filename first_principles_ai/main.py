@@ -33,6 +33,7 @@ from world.physics import PhysicsObject
 from world.hidden_worlds import (
     HiddenWorldManifest,
     generate_hidden_world_manifest,
+    generate_self_authored_hidden_world_manifest,
     hidden_manifest_from_observation,
 )
 from agent.perception import Perception
@@ -78,6 +79,8 @@ HIDDEN_DISCOVERY_TARGETS = {
     'tangential_component',
     'time_varying_component',
     'composed_law',
+    'zero_gravity',
+    'damping_component',
 }
 
 EXPECTED_NOVEL_BY_WORLD = {
@@ -1552,6 +1555,7 @@ def run_math_foundation_prep(
     print(
         "  python3 first_principles_ai/main.py --math-final-discovery "
         "--benchmark-steps 600 --object-counts 5 --equation-hidden-worlds 3 "
+        "--self-authored-worlds 2 "
         "--theory-memory-file tmp/theory-memory.json"
     )
     return results
@@ -2682,6 +2686,7 @@ def run_math_final_discovery(
     object_counts: list[int] = None,
     world_types: list[str] = None,
     hidden_worlds: int = 3,
+    self_authored_worlds: int = 0,
     num_agents: int = 2,
     section_study_cycles: int = 1,
     theory_memory: CumulativeTheoryMemory | None = None,
@@ -2689,6 +2694,8 @@ def run_math_final_discovery(
     """Run the watched discovery campaign and report live performance metrics."""
     object_counts = object_counts or [5]
     world_types = world_types or WORLD_TYPES
+    hidden_worlds = max(0, int(hidden_worlds or 0))
+    self_authored_worlds = max(0, int(self_authored_worlds or 0))
     section_study_cycles = max(1, int(section_study_cycles or 1))
     results = []
     theory_memory = theory_memory or CumulativeTheoryMemory()
@@ -2698,6 +2705,7 @@ def run_math_final_discovery(
     print("=" * 70, flush=True)
     print(f"Worlds: {', '.join(world_types)}", flush=True)
     print(f"Hidden generated worlds: {hidden_worlds}", flush=True)
+    print(f"Self-authored hidden worlds: {self_authored_worlds}", flush=True)
     print(f"Seeds: 0..{seeds - 1}", flush=True)
     print(f"Object counts: {', '.join(str(count) for count in object_counts)}", flush=True)
     print(f"Steps per run: {steps}", flush=True)
@@ -2806,98 +2814,70 @@ def run_math_final_discovery(
 
     for index in range(hidden_worlds):
         manifest = generate_hidden_world_manifest(index, variant=index)
-        section_results = []
-        for cycle in range(section_study_cycles):
-            if section_study_cycles > 1:
+        _run_hidden_manifest_final_section(
+            manifest,
+            results=results,
+            theory_memory=theory_memory,
+            object_counts=object_counts,
+            steps=steps,
+            seeds=seeds,
+            num_agents=num_agents,
+            section_study_cycles=section_study_cycles,
+            manifest_source='generated',
+        )
+
+    if self_authored_worlds:
+        authored_designs = theory_memory.autonomous_experiment_design_agenda(
+            limit=self_authored_worlds,
+        )
+        if not authored_designs:
+            print(
+                "Self-authored hidden worlds requested, but no autonomous "
+                "designs are available yet.",
+                flush=True,
+            )
+        for index, design in enumerate(authored_designs):
+            manifest = generate_self_authored_hidden_world_manifest(
+                design,
+                seed=index,
+                variant=index,
+            )
+            if _hidden_manifest_observation_leaks(
+                manifest,
+                seed=0,
+                object_count=object_counts[0],
+            ):
                 print(
-                    f"Section study cycle {cycle + 1}/{section_study_cycles}: "
-                    f"{manifest.hidden_id}",
+                    f"Skipping self-authored hidden world {manifest.hidden_id}: "
+                    "manifest leaked through observation",
                     flush=True,
                 )
-            for case in _section_cycle_cases(
-                theory_memory,
-                manifest.hidden_id,
+                continue
+            question = str(
+                design.get('question')
+                or design.get('reason')
+                or design.get('design_key')
+                or 'autonomous_design'
+            )
+            if len(question) > 72:
+                question = question[:69] + '...'
+            print(
+                f"Self-authored hidden world: {manifest.hidden_id} "
+                f"source={design.get('source', 'unknown')} question={question}",
+                flush=True,
+            )
+            _run_hidden_manifest_final_section(
+                manifest,
+                results=results,
+                theory_memory=theory_memory,
                 object_counts=object_counts,
                 steps=steps,
                 seeds=seeds,
-                cycle=cycle,
-            ):
-                plan = case.get('plan')
-                actual_seed = int(case['seed'])
-                object_count = int(case['object_count'])
-                case_steps = int(case.get('steps', steps) or steps)
-                plan_text = (
-                    f" plan={plan['experiment_kind']}"
-                    if plan
-                    else ''
-                )
-                print(
-                    f"Running final case: {manifest.hidden_id} seed={actual_seed} "
-                    f"objects={object_count} steps={case_steps}{plan_text}",
-                    flush=True,
-                )
-                result = _run_math_final_discovery_case(
-                    context=manifest.hidden_id,
-                    seed=actual_seed,
-                    object_count=object_count,
-                    steps=case_steps,
-                    num_agents=num_agents,
-                    world_type='hidden_procedural',
-                    hidden_manifest=manifest,
-                    planned_actions=_planned_probe_actions(plan) if plan else None,
-                    residual_first=bool(plan and plan.get('residual_first')),
-                    equation_operator_priors=theory_memory.generated_operator_priors(
-                        context=manifest.hidden_id,
-                    ),
-                )
-                result['manifest'] = manifest.to_dict()
-                if plan:
-                    result['phase'] = 'math_final_discovery_followup'
-                    result['planned_experiment'] = dict(plan)
-                results.append(result)
-                section_results.append(result)
-                if plan:
-                    result['planned_experiment_outcome'] = (
-                        theory_memory.record_planned_result(
-                            plan,
-                            context=result['context'],
-                            seed=result['seed'],
-                            report=result.get('discovery_loop', {}),
-                            operator_prior_result=result,
-                        )
-                    )
-                else:
-                    theory_memory.record_result(
-                        result['context'],
-                        result['seed'],
-                        result.get('discovery_loop', {}),
-                    )
-                    theory_memory.record_operator_prior_results(
-                        result['context'],
-                        result['seed'],
-                        result,
-                    )
-                theory_memory.record_equation_case_result(
-                    result['context'],
-                    result['seed'],
-                    result,
-                    phase=(
-                        'math_final_discovery_followup'
-                        if plan
-                        else 'math_final_discovery'
-                    ),
-                )
-                _print_math_final_discovery_row(result)
-            if section_study_cycles > 1:
-                _print_section_study_summary(
-                    manifest.hidden_id,
-                    section_results,
-                    theory_memory,
-                    object_counts=object_counts,
-                    steps=steps,
-                    cycle=cycle + 1,
-                    total_cycles=section_study_cycles,
-                )
+                num_agents=num_agents,
+                section_study_cycles=section_study_cycles,
+                manifest_source='self_authored',
+                self_authored_world_design=design,
+            )
 
     print("-" * 132, flush=True)
     total = len(results)
@@ -2923,6 +2903,131 @@ def run_math_final_discovery(
             flush=True,
         )
     return results
+
+
+def _run_hidden_manifest_final_section(
+    manifest: HiddenWorldManifest,
+    *,
+    results: list[dict],
+    theory_memory: CumulativeTheoryMemory,
+    object_counts: list[int],
+    steps: int,
+    seeds: int,
+    num_agents: int,
+    section_study_cycles: int,
+    manifest_source: str,
+    self_authored_world_design: dict | None = None,
+):
+    section_results = []
+    for cycle in range(section_study_cycles):
+        if section_study_cycles > 1:
+            print(
+                f"Section study cycle {cycle + 1}/{section_study_cycles}: "
+                f"{manifest.hidden_id}",
+                flush=True,
+            )
+        for case in _section_cycle_cases(
+            theory_memory,
+            manifest.hidden_id,
+            object_counts=object_counts,
+            steps=steps,
+            seeds=seeds,
+            cycle=cycle,
+        ):
+            plan = case.get('plan')
+            actual_seed = int(case['seed'])
+            object_count = int(case['object_count'])
+            case_steps = int(case.get('steps', steps) or steps)
+            plan_text = (
+                f" plan={plan['experiment_kind']}"
+                if plan
+                else ''
+            )
+            print(
+                f"Running final case: {manifest.hidden_id} seed={actual_seed} "
+                f"objects={object_count} steps={case_steps}{plan_text}",
+                flush=True,
+            )
+            result = _run_math_final_discovery_case(
+                context=manifest.hidden_id,
+                seed=actual_seed,
+                object_count=object_count,
+                steps=case_steps,
+                num_agents=num_agents,
+                world_type='hidden_procedural',
+                hidden_manifest=manifest,
+                planned_actions=_planned_probe_actions(plan) if plan else None,
+                residual_first=bool(plan and plan.get('residual_first')),
+                equation_operator_priors=theory_memory.generated_operator_priors(
+                    context=manifest.hidden_id,
+                ),
+            )
+            result['manifest'] = manifest.to_dict()
+            result['manifest_source'] = manifest_source
+            if self_authored_world_design is not None:
+                result['self_authored_world_design'] = dict(self_authored_world_design)
+            if plan:
+                result['phase'] = 'math_final_discovery_followup'
+                result['planned_experiment'] = dict(plan)
+            results.append(result)
+            section_results.append(result)
+            if plan:
+                result['planned_experiment_outcome'] = (
+                    theory_memory.record_planned_result(
+                        plan,
+                        context=result['context'],
+                        seed=result['seed'],
+                        report=result.get('discovery_loop', {}),
+                        operator_prior_result=result,
+                    )
+                )
+            else:
+                theory_memory.record_result(
+                    result['context'],
+                    result['seed'],
+                    result.get('discovery_loop', {}),
+                )
+                theory_memory.record_operator_prior_results(
+                    result['context'],
+                    result['seed'],
+                    result,
+                )
+            theory_memory.record_equation_case_result(
+                result['context'],
+                result['seed'],
+                result,
+                phase=(
+                    'math_final_discovery_followup'
+                    if plan
+                    else 'math_final_discovery'
+                ),
+            )
+            _print_math_final_discovery_row(result)
+        if section_study_cycles > 1:
+            _print_section_study_summary(
+                manifest.hidden_id,
+                section_results,
+                theory_memory,
+                object_counts=object_counts,
+                steps=steps,
+                cycle=cycle + 1,
+                total_cycles=section_study_cycles,
+            )
+
+
+def _hidden_manifest_observation_leaks(
+    manifest: HiddenWorldManifest,
+    *,
+    seed: int,
+    object_count: int,
+) -> bool:
+    observation = Environment(
+        num_initial_objects=object_count,
+        seed=seed,
+        world_type='hidden_procedural',
+        hidden_manifest=manifest,
+    ).observe()
+    return hidden_manifest_from_observation(observation)
 
 
 def run_math_benchmark(
@@ -4346,6 +4451,8 @@ def _blind_hidden_discoveries(kb: KnowledgeBase) -> set[str]:
         discoveries.add('tangential_component')
     if 'time_varying_field' in law_types or 'time_varying_force' in novel_types:
         discoveries.add('time_varying_component')
+    if 'zero_gravity' in novel_types:
+        discoveries.add('zero_gravity')
     if 'composed_dynamics' in law_types:
         discoveries.add('composed_law')
     return discoveries
@@ -4566,6 +4673,8 @@ if __name__ == '__main__':
                         help='Repeat and consolidate each final world section before moving on')
     parser.add_argument('--equation-hidden-worlds', type=int, default=0,
                         help='Generated hidden worlds to include in equation campaign')
+    parser.add_argument('--self-authored-worlds', type=int, default=0,
+                        help='Autonomous hidden worlds to create from theory-memory designs')
     parser.add_argument('--equation-followup-budget', type=int, default=0,
                         help='Autonomous planned follow-up probes to run after the initial equation campaign')
     parser.add_argument('--hf-log-artifact-summary', action='store_true',
@@ -4877,6 +4986,7 @@ if __name__ == '__main__':
             object_counts=_parse_csv_ints(args.object_counts),
             world_types=_parse_csv_worlds(args.world_types),
             hidden_worlds=args.equation_hidden_worlds,
+            self_authored_worlds=args.self_authored_worlds,
             num_agents=args.agents,
             section_study_cycles=args.section_study_cycles,
             theory_memory=theory_memory,

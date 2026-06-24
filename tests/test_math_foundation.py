@@ -382,6 +382,68 @@ class MathFoundationTests(unittest.TestCase):
             hidden_results[1]['phase'],
         )
 
+    def test_math_final_discovery_runs_self_authored_hidden_worlds(self):
+        class SelfAuthoredMemory(CumulativeTheoryMemory):
+            def autonomous_experiment_design_agenda(self, limit=8):
+                return [{
+                    'design_key': 'autonomous_design:invariant_resolution:test',
+                    'source': 'invariant_resolution',
+                    'experiment_kind': 'equation_invariant_exponent_resolution',
+                    'priority': 0.91,
+                    'question': 'Which distance exponent wins a near/mid/far race?',
+                    'expected_result': 'select a robust exponent',
+                    'falsifies_if': 'all exponents tie on heldout rows',
+                    'evidence': {'support_count': 2},
+                }][:limit]
+
+            def planned_experiments(self, world_types, object_counts, steps, limit):
+                return []
+
+        theory_memory = SelfAuthoredMemory()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results = run_math_final_discovery(
+                seeds=1,
+                steps=40,
+                object_counts=[3],
+                world_types=['standard'],
+                hidden_worlds=0,
+                self_authored_worlds=1,
+                num_agents=2,
+                section_study_cycles=2,
+                theory_memory=theory_memory,
+            )
+
+        text = output.getvalue()
+        authored_results = [
+            result for result in results
+            if result['context'] == 'authored_00_0000'
+        ]
+        manifest_components = [
+            component['type']
+            for component in authored_results[0]['manifest']['components']
+        ]
+
+        self.assertEqual(4, len(results))
+        self.assertEqual(2, len(authored_results))
+        self.assertEqual([0, 1], [result['seed'] for result in authored_results])
+        self.assertIn('Self-authored hidden worlds: 1', text)
+        self.assertIn('Self-authored hidden world: authored_00_0000', text)
+        self.assertIn('Section study cycle 1/2: authored_00_0000', text)
+        self.assertIn('Section study cycle 2/2: authored_00_0000', text)
+        self.assertIn('Running final case: authored_00_0000 seed=0', text)
+        self.assertEqual(
+            {'self_authored'},
+            {result['manifest_source'] for result in authored_results},
+        )
+        self.assertIn('self_authored_world_design', authored_results[0])
+        self.assertEqual(
+            'invariant_resolution',
+            authored_results[0]['self_authored_world_design']['source'],
+        )
+        self.assertIn('radial_repulsion', manifest_components)
+        self.assertIn('localized_pull', manifest_components)
+
     def test_residual_first_selection_prefers_residual_over_baseline_motion(self):
         baseline = {
             'target': 'next_x',

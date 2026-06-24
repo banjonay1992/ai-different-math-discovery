@@ -18,7 +18,11 @@ from main import (
     run_hidden_holdout_benchmark,
 )
 from world.environment import Environment
-from world.hidden_worlds import generate_hidden_world_manifest, hidden_manifest_from_observation
+from world.hidden_worlds import (
+    generate_hidden_world_manifest,
+    generate_self_authored_hidden_world_manifest,
+    hidden_manifest_from_observation,
+)
 
 
 def learned_law(law_type: str, **properties):
@@ -118,6 +122,52 @@ class AutonomousExplorationTests(unittest.TestCase):
         self.assertFalse(hidden_manifest_from_observation(observation))
         self.assertNotIn('components', observation)
         self.assertNotIn('expected_discoveries', observation)
+
+    def test_hidden_world_generator_covers_more_component_recipes(self):
+        component_signatures = {
+            tuple(
+                component.component_type
+                for component in generate_hidden_world_manifest(
+                    seed=11,
+                    variant=variant,
+                ).components
+            )
+            for variant in range(15)
+        }
+
+        self.assertGreaterEqual(len(component_signatures), 12)
+        self.assertIn(('zero_gravity', 'uniform_push'), component_signatures)
+        self.assertIn(('soft_drag', 'uniform_push'), component_signatures)
+
+    def test_self_authored_hidden_world_manifest_stays_blind(self):
+        design = {
+            'design_key': 'autonomous_design:invariant_resolution:test',
+            'source': 'invariant_resolution',
+            'question': 'Which distance exponent wins a near/mid/far race?',
+        }
+
+        manifest = generate_self_authored_hidden_world_manifest(
+            design,
+            seed=4,
+            variant=2,
+        )
+        component_types = [
+            component.component_type
+            for component in manifest.components
+        ]
+        env = Environment(
+            num_initial_objects=2,
+            seed=4,
+            world_type='hidden_procedural',
+            hidden_manifest=manifest,
+        )
+        observation = env.observe()
+
+        self.assertEqual('authored_02_0004', manifest.hidden_id)
+        self.assertIn('radial_repulsion', component_types)
+        self.assertIn('localized_pull', component_types)
+        self.assertFalse(hidden_manifest_from_observation(observation))
+        self.assertNotIn('question', observation)
 
     def test_blind_hidden_discovery_maps_laws_without_manifest_labels(self):
         kb = LawMemoryKnowledgeBuilder.with_laws([

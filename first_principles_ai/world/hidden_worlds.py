@@ -9,6 +9,7 @@ world marker so the agent cannot branch on component labels.
 """
 
 from dataclasses import dataclass, field
+import hashlib
 import random
 
 
@@ -19,6 +20,8 @@ HIDDEN_COMPONENT_TO_EXPECTED_DISCOVERY = {
     'tangential_flow': 'tangential_component',
     'time_wave': 'time_varying_component',
     'localized_pull': 'radial_component',
+    'zero_gravity': 'zero_gravity',
+    'soft_drag': 'damping_component',
 }
 
 
@@ -76,6 +79,16 @@ def generate_hidden_world_manifest(seed: int, variant: int = 0) -> HiddenWorldMa
         ('time_wave', 'uniform_push'),
         ('localized_pull', 'uniform_push', 'tangential_flow'),
         ('time_wave', 'radial_repulsion', 'uniform_push'),
+        ('radial_attraction', 'tangential_flow'),
+        ('localized_pull', 'time_wave'),
+        ('radial_repulsion', 'tangential_flow'),
+        ('zero_gravity', 'uniform_push'),
+        ('time_wave', 'localized_pull', 'radial_repulsion'),
+        ('tangential_flow',),
+        ('radial_attraction', 'radial_repulsion'),
+        ('localized_pull', 'localized_pull'),
+        ('soft_drag', 'uniform_push'),
+        ('zero_gravity', 'time_wave', 'tangential_flow'),
     ]
     component_types = recipes[variant % len(recipes)]
     components = tuple(
@@ -84,6 +97,34 @@ def generate_hidden_world_manifest(seed: int, variant: int = 0) -> HiddenWorldMa
     )
     return HiddenWorldManifest(
         hidden_id=f"hidden_{variant:02d}_{seed:04d}",
+        seed=seed,
+        components=components,
+    )
+
+
+def generate_self_authored_hidden_world_manifest(
+    design: dict,
+    seed: int = 0,
+    variant: int = 0,
+) -> HiddenWorldManifest:
+    """
+    Convert an autonomous theory question into a hidden physics world.
+
+    The design stays outside the observation channel. Only the simulator receives
+    the resulting component recipe, so the agent must rediscover the effect from
+    public state transitions.
+    """
+    design_key = str(design.get('design_key') or design.get('question') or variant)
+    digest = hashlib.sha256(design_key.encode('utf-8')).hexdigest()
+    design_offset = int(digest[:8], 16)
+    rng = random.Random((seed + 17) * 15485863 + variant * 32452843 + design_offset)
+    recipe = _self_authored_recipe_for_design(design)
+    components = tuple(
+        _component_for(component_type, rng)
+        for component_type in recipe
+    )
+    return HiddenWorldManifest(
+        hidden_id=f"authored_{variant:02d}_{seed:04d}",
         seed=seed,
         components=components,
     )
@@ -133,6 +174,10 @@ def apply_hidden_world(world, manifest: HiddenWorldManifest):
                 'strength': params['strength'],
                 'radius': params['radius'],
             })
+        elif component.component_type == 'zero_gravity':
+            world.gravity = 0.0
+        elif component.component_type == 'soft_drag':
+            world.friction = params['friction']
 
 
 def hidden_manifest_from_observation(observation: dict) -> bool:
@@ -190,4 +235,60 @@ def _component_for(component_type: str, rng: random.Random) -> HiddenWorldCompon
             'strength': rng.uniform(180.0, 280.0),
             'radius': rng.uniform(7.0, 9.5),
         })
+    if component_type == 'zero_gravity':
+        return HiddenWorldComponent(component_type, {})
+    if component_type == 'soft_drag':
+        return HiddenWorldComponent(component_type, {
+            'friction': rng.uniform(0.985, 0.994),
+        })
     raise ValueError(f"Unknown hidden component type: {component_type}")
+
+
+def _self_authored_recipe_for_design(design: dict) -> tuple[str, ...]:
+    text = ' '.join(
+        str(design.get(key, ''))
+        for key in (
+            'design_key',
+            'source',
+            'experiment_kind',
+            'question',
+            'hypothesis',
+            'experiment',
+            'expected_result',
+            'falsifies_if',
+            'next_action',
+        )
+    ).lower()
+    probe_or_world = str(design.get('probe_or_world') or '').lower()
+    text = f"{text} {probe_or_world}"
+    if 'period' in text or 'phase' in text or 'time' in text:
+        return ('time_wave', 'uniform_push')
+    if (
+        'vector_direction' in text
+        or 'perpendicular' in text
+        or 'vortex' in text
+        or 'tangent' in text
+    ):
+        return ('tangential_flow', 'radial_attraction')
+    if 'cutoff' in text or 'boundary' in text or 'localized' in text:
+        return ('localized_pull', 'uniform_push')
+    if (
+        'exponent' in text
+        or 'near/mid/far' in text
+        or 'distance' in text
+        or 'inverse' in text
+    ):
+        return ('radial_repulsion', 'localized_pull')
+    if 'baseline' in text or 'residual' in text:
+        return ('uniform_push', 'time_wave')
+    if 'holdout' in text or 'counterexample' in text or 'hidden' in text:
+        return ('radial_attraction', 'radial_repulsion', 'uniform_push')
+    recipes = [
+        ('uniform_push', 'radial_attraction'),
+        ('radial_repulsion', 'tangential_flow'),
+        ('localized_pull', 'time_wave'),
+        ('zero_gravity', 'uniform_push'),
+    ]
+    design_key = str(design.get('design_key') or design.get('question') or '')
+    digest = hashlib.sha256(design_key.encode('utf-8')).hexdigest()
+    return recipes[int(digest[:4] or '0', 16) % len(recipes)]
