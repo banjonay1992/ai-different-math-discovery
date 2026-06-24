@@ -3065,6 +3065,21 @@ class CumulativeTheoryMemory:
         blind_validation_plan_count = len(
             self.blind_holdout_validation_experiments(limit=8)
         )
+        selected_domain_split_keys = self._selected_theorem_domain_split_keys(
+            selected_theorems
+        )
+        settled_domain_predicate_keys = self._settled_domain_predicate_keys()
+        selected_scoped_domain_keys = (
+            selected_domain_split_keys
+            & settled_domain_predicate_keys
+            & self._selected_law_conflict_settled_domain_keys()
+        )
+        selected_scoped_count = min(selected_count, len(selected_scoped_domain_keys))
+        blind_scoped_keys = (
+            selected_scoped_domain_keys
+            & self._blind_holdout_scoped_domain_keys()
+        )
+        blind_scoped_count = min(selected_count, len(blind_scoped_keys))
         autonomous_designs = self.autonomous_experiment_design_agenda(limit=8)
         next_experiments = self.next_experiments(limit=8)
         resource = self.resource_efficiency_report()
@@ -3097,24 +3112,50 @@ class CumulativeTheoryMemory:
         unresolved_conflicts = max(0, replay_conflicted - conflict_settled)
         heldout_stability_score = 0.0
         if selected_count:
+            confirmed_or_scoped = min(
+                selected_count,
+                replay_confirmed + selected_scoped_count,
+            )
             heldout_stability_score = max(
                 0.25,
                 0.45 * clamp(replay_confirmed / max(1, selected_count))
                 + 0.35 * clamp(conflict_settled / max(1, replay_conflicted))
                 + (0.20 if unresolved_conflicts == 0 else 0.0),
+                0.55 * clamp(confirmed_or_scoped / max(1, selected_count))
+                + 0.20 * clamp(conflict_settled / max(1, replay_conflicted))
+                + (0.10 if unresolved_conflicts == 0 else 0.0),
             )
             if unresolved_conflicts:
                 heldout_stability_score = min(heldout_stability_score, 0.55)
 
         blind_holdout_score = 0.0
         if selected_count:
+            confirmed_or_scoped_blind = min(
+                selected_count,
+                blind_confirmed + blind_scoped_count,
+            )
             blind_holdout_score = (
                 0.80 * clamp(blind_confirmed / max(1, selected_count))
                 + (0.15 if blind_validation_plan_count else 0.0)
                 + (0.05 if blind_confirmed and blind_conflicted == 0 else 0.0)
             )
+            blind_holdout_score = max(
+                blind_holdout_score,
+                0.30 * clamp(confirmed_or_scoped_blind / max(1, selected_count))
+                + 0.10 * clamp(
+                    len(selected_scoped_domain_keys) / max(1, selected_count)
+                )
+                + (
+                    0.05
+                    if confirmed_or_scoped_blind and blind_validation_plan_count == 0
+                    else 0.0
+                ),
+            )
             if blind_conflicted:
-                blind_holdout_score = min(blind_holdout_score, 0.55)
+                if blind_scoped_count <= 0:
+                    blind_holdout_score = min(blind_holdout_score, 0.55)
+                elif blind_scoped_count < selected_count:
+                    blind_holdout_score = min(blind_holdout_score, 0.75)
 
         loop_score = (
             clamp(len(self.planned_outcomes) / 10.0)
@@ -3189,20 +3230,25 @@ class CumulativeTheoryMemory:
                     'selected_law_replay_conflicted_count': replay_conflicted,
                     'conflict_resolution_settled_count': conflict_settled,
                     'unresolved_conflict_count': unresolved_conflicts,
+                    'domain_scoped_law_count': selected_scoped_count,
+                    'domain_predicate_settled_count': len(
+                        selected_domain_split_keys & settled_domain_predicate_keys
+                    ),
                 },
-                'run selected-law conflict resolution until replays stop alternating',
+                'run selected-law conflict resolution or predicate learning until replays stop alternating',
             ),
             (
                 'blind_holdout_validation',
-                'selected laws are validated on hidden or blind holdout worlds',
+                'selected laws are validated or scoped on hidden or blind holdout worlds',
                 blind_holdout_score,
                 0.14,
                 {
                     'blind_holdout_confirmed_count': blind_confirmed,
                     'blind_holdout_conflicted_count': blind_conflicted,
                     'blind_holdout_plan_count': blind_validation_plan_count,
+                    'blind_holdout_scoped_count': blind_scoped_count,
                 },
-                'execute blind holdout validations for selected laws',
+                'execute blind holdout validations or scope failed holdouts into domain predicates',
             ),
             (
                 'autonomous_loop_closure',
@@ -4746,6 +4792,80 @@ class CumulativeTheoryMemory:
                 }
             ),
         }
+
+    def _selected_theorem_domain_split_keys(
+        self,
+        selected_theorems: list[dict[str, Any]],
+    ) -> set[str]:
+        keys = set()
+        prefix = 'theorem:equation_invariant:'
+        for theorem in selected_theorems:
+            theorem_key = str(theorem.get('key') or '')
+            if theorem_key.startswith(prefix):
+                keys.add(f"domain_split:{theorem_key[len(prefix):]}")
+        return keys
+
+    def _domain_split_key_from_replay_key(self, replay_key: Any) -> str:
+        replay_key = str(replay_key or '')
+        prefix = 'selected_law_replay:'
+        suffix_marker = ':separation^-'
+        if not replay_key.startswith(prefix) or suffix_marker not in replay_key:
+            return ''
+        invariant_key = replay_key[len(prefix):].rsplit(suffix_marker, 1)[0]
+        if not invariant_key:
+            return ''
+        return f'domain_split:{invariant_key}'
+
+    def _settled_domain_predicate_keys(self) -> set[str]:
+        settled = set()
+        for outcome in self.planned_outcomes:
+            if outcome.get('experiment_kind') != 'domain_predicate_discovery':
+                continue
+            if outcome.get('outcome') not in {
+                'domain_predicate_split_supported',
+                'domain_predicate_selected_region',
+                'domain_predicate_rival_region',
+            }:
+                continue
+            predicate_key = str(outcome.get('predicate_key') or '')
+            if predicate_key:
+                settled.add(predicate_key)
+        return settled
+
+    def _selected_law_conflict_settled_domain_keys(self) -> set[str]:
+        settled = set()
+        for outcome in self.planned_outcomes:
+            if outcome.get('experiment_kind') != 'selected_law_conflict_resolution':
+                continue
+            if outcome.get('outcome') not in {
+                'conflict_selected_restored',
+                'conflict_rival_supported',
+                'conflict_domain_split_supported',
+            }:
+                continue
+            domain_key = self._domain_split_key_from_replay_key(
+                outcome.get('selected_law_replay_key')
+            )
+            if domain_key:
+                settled.add(domain_key)
+        return settled
+
+    def _blind_holdout_scoped_domain_keys(self) -> set[str]:
+        scoped = set()
+        for outcome in self.planned_outcomes:
+            if outcome.get('experiment_kind') != 'blind_holdout_validation':
+                continue
+            if outcome.get('outcome') not in {
+                'blind_holdout_conflicted',
+                'blind_holdout_absent',
+            }:
+                continue
+            domain_key = self._domain_split_key_from_replay_key(
+                outcome.get('selected_law_replay_key')
+            )
+            if domain_key:
+                scoped.add(domain_key)
+        return scoped
 
     def _rank_domain_predicates(
         self,

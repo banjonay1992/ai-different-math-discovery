@@ -2412,6 +2412,146 @@ class DiscoveryLoopTests(unittest.TestCase):
             after['evidence_summary']['blind_holdout_confirmed_count'],
         )
 
+    def test_rediscovery_goal_progress_counts_domain_scoped_blind_conflicts(self):
+        memory = self._build_selected_tapered_law_memory()
+        replay = memory.selected_law_replay_agenda(limit=1)[0]
+        replay_conflicted = memory.evaluate_planned_result(
+            replay,
+            context='localized_gravity',
+            seed=6,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 1.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.82,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.record_equation_case_result(
+            'localized_gravity',
+            6,
+            {
+                'interesting_equation': {
+                    'target': 'baseline_adjusted_delta_velocity',
+                    'expression': (
+                        'k * taper(separation, 9) * '
+                        'unit_generated_center_vector / separation^1_5'
+                    ),
+                    'role': 'generated_operator_distance_scaled_direction_equation',
+                    'score': 0.82,
+                    'parameters': {
+                        'cutoff_radius': 9.0,
+                        'distance_exponent': 1.5,
+                    },
+                },
+                'passed': True,
+                'label_leaks': [],
+            },
+            phase='equation_followup',
+        )
+        memory.planned_outcomes.append(replay_conflicted)
+        validation = memory.blind_holdout_validation_experiments(limit=1)[0]
+        blind_conflicted = memory.evaluate_planned_result(
+            validation,
+            context='hidden:blind',
+            seed=7,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 1.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.83,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(blind_conflicted)
+        conflict_plan = memory.selected_law_conflict_experiments(limit=1)[0]
+        conflict_outcome = memory.evaluate_planned_result(
+            conflict_plan,
+            context='localized_gravity',
+            seed=8,
+            report={
+                'theories': [
+                    {
+                        'theory_kind': 'tapered_distance_direction_residual',
+                        'parameters': {
+                            'distance_exponent': 0.5,
+                            'cutoff_radius': 9.0,
+                        },
+                        'score': 0.81,
+                    },
+                    {
+                        'theory_kind': 'tapered_distance_direction_residual',
+                        'parameters': {
+                            'distance_exponent': 1.5,
+                            'cutoff_radius': 9.0,
+                        },
+                        'score': 0.84,
+                    },
+                ],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(conflict_outcome)
+        predicate_plan = memory.domain_predicate_learning_agenda(limit=1)[0]
+        predicate_outcome = memory.evaluate_planned_result(
+            predicate_plan,
+            context='localized_gravity',
+            seed=9,
+            report={
+                'theories': [{
+                    'theory_kind': 'tapered_distance_direction_residual',
+                    'parameters': {
+                        'distance_exponent': 1.5,
+                        'cutoff_radius': 9.0,
+                    },
+                    'score': 0.84,
+                }],
+                'proof_checks': [],
+            },
+        )
+        memory.planned_outcomes.append(predicate_outcome)
+
+        progress = memory.rediscovery_goal_progress_report()
+
+        self.assertEqual('blind_holdout_conflicted', blind_conflicted['outcome'])
+        self.assertEqual('conflict_domain_split_supported', conflict_outcome['outcome'])
+        self.assertEqual(
+            'domain_predicate_rival_region',
+            predicate_outcome['outcome'],
+        )
+        self.assertGreaterEqual(
+            progress['gates']['heldout_law_stability']['score'],
+            0.85,
+        )
+        self.assertGreaterEqual(
+            progress['gates']['blind_holdout_validation']['score'],
+            0.40,
+        )
+        self.assertLess(
+            progress['gates']['blind_holdout_validation']['score'],
+            0.85,
+        )
+        self.assertEqual(
+            1,
+            progress['gates']['heldout_law_stability']['evidence'][
+                'domain_scoped_law_count'
+            ],
+        )
+        self.assertEqual(
+            1,
+            progress['gates']['blind_holdout_validation']['evidence'][
+                'blind_holdout_scoped_count'
+            ],
+        )
+
     def test_rediscovery_goal_progress_audit_prints_stricter_score(self):
         memory = self._build_selected_tapered_law_memory()
         output = io.StringIO()

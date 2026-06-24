@@ -1,0 +1,116 @@
+{
+  "branch": "codex/discovery-law-race-holdouts",
+  "commit": "ba20098a60a661a1b3fc30ad05ef59160e8d0f0c",
+  "elapsed_seconds": 245.57,
+  "ending_progress": {
+    "blockers": [
+      "heldout_law_stability",
+      "blind_holdout_validation"
+    ],
+    "evidence_summary": {
+      "blind_holdout_confirmed_count": 0,
+      "blind_holdout_conflicted_count": 8,
+      "blind_holdout_plan_count": 0,
+      "conflict_resolution_settled_count": 6,
+      "planned_outcome_count": 41,
+      "selected_law_replay_confirmed_count": 0,
+      "selected_law_replay_conflicted_count": 2,
+      "selected_theorem_count": 2
+    },
+    "progress_percent": 77.7,
+    "progress_score": 0.777,
+    "recommended_next_steps": [
+      "run selected-law conflict resolution until replays stop alternating",
+      "execute blind holdout validations for selected laws"
+    ],
+    "status": "approaching_85",
+    "target_percent": 85.0,
+    "target_reached": false
+  },
+  "memory_delta_counts": {
+    "equation_case_records": 5,
+    "planned_outcomes": 5,
+    "records": 5
+  },
+  "result_rows": [
+    {
+      "context": "repulsion",
+      "experiment_kind": "selected_law_replay",
+      "followup_iteration": 1,
+      "interesting_expression": "k * taper(separation, 6_065) * unit_generated_center_vector / separation^0_5",
+      "interesting_score": 0.914,
+      "invariant_key": "repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+      "label_leak_count": 0,
+      "outcome": "selected_law_replay_conflicted",
+      "seed": 13,
+      "selected_law_replay_key": "selected_law_replay:repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered:separation^-1.0",
+      "theory_kind": "tapered_distance_direction_residual",
+      "world_type": "repulsion"
+    },
+    {
+      "context": "repulsion",
+      "experiment_kind": "selected_law_conflict_resolution",
+      "followup_iteration": 2,
+      "interesting_expression": "k * taper(separation, 6_065) * unit_generated_center_vector / separation^1_25",
+      "interesting_score": 0.898,
+      "invariant_key": "repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+      "label_leak_count": 0,
+      "outcome": "conflict_domain_split_supported",
+      "seed": 14,
+      "selected_law_replay_key": "selected_law_replay:repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered:separation^-1.0",
+      "theory_kind": "tapered_distance_direction_residual",
+      "world_type": "repulsion"
+    },
+    {
+      "context": "hidden_05_0005",
+      "experiment_kind": "blind_holdout_validation",
+      "followup_iteration": 3,
+      "interesting_expression": "k * taper(separation, 7_576) * unit_generated_center_vector / separation^1_5",
+      "interesting_score": 0.854,
+      "invariant_key": "repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+      "label_leak_count": 0,
+      "outcome": "blind_holdout_absent",
+      "seed": 5,
+      "selected_law_replay_key": "selected_law_replay:repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered:separation^-1.0",
+      "theory_kind": "tapered_distance_direction_residual",
+      "world_type": "hidden_procedural"
+    },
+    {
+      "context": "repulsion",
+      "experiment_kind": "blind_holdout_validation",
+      "followup_iteration": 4,
+      "interesting_expression": "k * taper(separation, 6_065) * unit_generated_center_vector / separation^1",
+      "interesting_score": 0.914,
+      "invariant_key": "repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+      "label_leak_count": 0,
+      "outcome": "blind_holdout_conflicted",
+      "seed": 15,
+      "selected_law_replay_key": "selected_law_replay:repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered:separation^-1.0",
+      "theory_kind": "tapered_distance_direction_residual",
+      "world_type": "repulsion"
+    },
+    {
+      "context": "repulsion",
+      "experiment_kind": "selected_law_conflict_resolution",
+      "followup_iteration": 5,
+      "interesting_expression": "k * taper(separation, 5_907) * unit_generated_center_vector / separation^1",
+      "interesting_score": 0.888,
+      "invariant_key": "repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered",
+      "label_leak_count": 0,
+      "outcome": "conflict_domain_split_supported",
+      "seed": 16,
+      "selected_law_replay_key": "selected_law_replay:repulsion:baseline_adjusted_delta_velocity:localized_tapered_power:unit_generated_center_vector:tapered:separation^-1.0",
+      "theory_kind": "tapered_distance_direction_residual",
+      "world_type": "repulsion"
+    }
+  ],
+  "run_id": "goal-85-reselected-validation-ba20098-1782262430",
+  "run_kind": "goal_85_reselected_validation_followups",
+  "runs_final": false,
+  "starting_progress": {
+    "progress_percent": 79.8,
+    "progress_score": 0.798,
+    "status": "approaching_85",
+    "target_reached": false
+  }
+}
