@@ -2763,7 +2763,10 @@ def run_math_final_discovery(
                     num_agents=num_agents,
                     world_type=world_type,
                     planned_actions=_planned_probe_actions(plan) if plan else None,
-                    residual_first=bool(plan and plan.get('residual_first')),
+                    residual_first=(
+                        bool(plan and plan.get('residual_first'))
+                        or _should_force_residual_first(theory_memory, world_type)
+                    ),
                     equation_operator_priors=theory_memory.generated_operator_priors(
                         context=world_type,
                     ),
@@ -2970,7 +2973,13 @@ def _run_hidden_manifest_final_section(
                 world_type='hidden_procedural',
                 hidden_manifest=manifest,
                 planned_actions=_planned_probe_actions(plan) if plan else None,
-                residual_first=bool(plan and plan.get('residual_first')),
+                residual_first=(
+                    bool(plan and plan.get('residual_first'))
+                    or _should_force_residual_first(
+                        theory_memory,
+                        manifest.hidden_id,
+                    )
+                ),
                 equation_operator_priors=theory_memory.generated_operator_priors(
                     context=manifest.hidden_id,
                 ),
@@ -3595,6 +3604,45 @@ def _interesting_equation_family(result: dict) -> tuple[str, str]:
     return str(family), exponent_label
 
 
+def _is_motion_update_family(family: str) -> bool:
+    return family in {
+        'position_update_equation',
+        'constant_change_equation',
+    }
+
+
+def _clean_equation_results(section_results: list[dict]) -> list[dict]:
+    return [
+        result for result in section_results
+        if result.get('interesting_equation')
+        and not result.get('label_leaks')
+        and (result.get('passed') or result.get('equation_passed'))
+    ]
+
+
+def _should_force_residual_first(
+    theory_memory: CumulativeTheoryMemory,
+    context: str,
+) -> bool:
+    if context in {'standard', 'zero_gravity'}:
+        return False
+    records = [
+        record for record in getattr(theory_memory, 'equation_case_records', [])
+        if str(record.get('context') or '') == context
+        and bool(record.get('passed'))
+        and int(record.get('label_leak_count', 0) or 0) == 0
+    ]
+    for record in records:
+        family = (
+            dict(record.get('parameters') or {}).get('operator_kind')
+            or record.get('role')
+            or 'unknown'
+        )
+        if not _is_motion_update_family(str(family)):
+            return True
+    return False
+
+
 def _section_contexts_for_plan(plan: dict) -> set[str]:
     contexts = set()
     for key in ('world_type', 'source_context'):
@@ -3718,7 +3766,41 @@ def _section_best_result(context: str, section_results: list[dict]) -> dict:
             section_results,
             key=lambda item: float(item.get('interesting_score', 0.0) or 0.0),
         )
-    return max(section_results, key=_interesting_result_rank)
+    clean_results = _clean_equation_results(section_results)
+    non_motion_results = [
+        result for result in clean_results
+        if not _is_motion_update_family(_interesting_equation_family(result)[0])
+    ]
+    if not non_motion_results:
+        return max(section_results, key=_interesting_result_rank)
+
+    signature_counts = Counter(
+        _interesting_equation_family(result)
+        for result in non_motion_results
+    )
+    signature_scores = {}
+    for signature in signature_counts:
+        matching = [
+            result for result in non_motion_results
+            if _interesting_equation_family(result) == signature
+        ]
+        signature_scores[signature] = sum(
+            float(result.get('interesting_score', 0.0) or 0.0)
+            for result in matching
+        ) / max(1, len(matching))
+    dominant_signature = max(
+        signature_counts,
+        key=lambda signature: (
+            signature_counts[signature],
+            _interesting_equation_priority(signature[0]),
+            signature_scores[signature],
+        ),
+    )
+    signature_results = [
+        result for result in non_motion_results
+        if _interesting_equation_family(result) == dominant_signature
+    ]
+    return max(signature_results, key=_interesting_result_rank)
 
 
 def _print_section_study_summary(

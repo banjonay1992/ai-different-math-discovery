@@ -20,7 +20,9 @@ from main import (
     _checkpoint_theory_memory,
     _foundation_metrics_from_knowledge,
     _print_section_study_summary,
+    _section_best_result,
     _select_interesting_equation,
+    _should_force_residual_first,
     run_discovery_readiness_audit,
     run_experiment,
     run_math_final_discovery,
@@ -537,6 +539,77 @@ class MathFoundationTests(unittest.TestCase):
 
         self.assertEqual('residual_direction_equation', selected['role'])
         self.assertEqual('position_update_equation', normal['role'])
+
+    def test_section_memory_forces_residual_first_after_non_motion_law(self):
+        theory_memory = CumulativeTheoryMemory()
+
+        self.assertFalse(_should_force_residual_first(theory_memory, 'sideways_wind'))
+
+        theory_memory.equation_case_records.append({
+            'context': 'sideways_wind',
+            'seed': 5,
+            'role': 'residual_direction_equation',
+            'parameters': {},
+            'passed': True,
+            'label_leak_count': 0,
+        })
+        theory_memory.equation_case_records.append({
+            'context': 'standard',
+            'seed': 7,
+            'role': 'residual_direction_equation',
+            'parameters': {},
+            'passed': True,
+            'label_leak_count': 0,
+        })
+
+        self.assertTrue(_should_force_residual_first(theory_memory, 'sideways_wind'))
+        self.assertFalse(_should_force_residual_first(theory_memory, 'standard'))
+
+    def test_section_best_result_prefers_robust_non_motion_signature(self):
+        baseline = {
+            'passed': True,
+            'equation_passed': True,
+            'label_leaks': [],
+            'interesting_score': 0.97,
+            'interesting_equation': {
+                'target': 'next_x',
+                'expression': 'x + vx * dt',
+                'role': 'position_update_equation',
+                'score': 0.97,
+                'parameters': {},
+            },
+        }
+        periodic_a = {
+            'passed': True,
+            'equation_passed': True,
+            'label_leaks': [],
+            'interesting_score': 0.91,
+            'interesting_equation': {
+                'target': 'baseline_adjusted_delta_vy',
+                'expression': 'a * sin(step/76) + b * cos(step/76)',
+                'role': 'residual_periodic_equation',
+                'score': 0.91,
+                'parameters': {'operator_kind': 'phase_basis'},
+            },
+        }
+        periodic_b = {
+            **periodic_a,
+            'interesting_score': 0.92,
+            'interesting_equation': {
+                **periodic_a['interesting_equation'],
+                'score': 0.92,
+            },
+        }
+
+        selected = _section_best_result(
+            'hidden_02_0002',
+            [baseline, periodic_a, periodic_b],
+        )
+
+        self.assertEqual(
+            'residual_periodic_equation',
+            selected['interesting_equation']['role'],
+        )
 
     def test_section_study_summary_filters_cross_section_followups(self):
         class FakeMemory:
