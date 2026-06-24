@@ -1316,6 +1316,7 @@ def _run_equation_followup_cases(
             equation_operator_priors=theory_memory.generated_operator_priors(
                 context=context,
             ),
+            residual_first=bool(plan.get('residual_first')),
         )
         result['phase'] = 'autonomous_followup'
         result['followup_iteration'] = iteration + 1
@@ -1435,32 +1436,10 @@ def _planned_probe_actions(plan: dict, max_actions: int = 4) -> list[dict]:
 def _interesting_result_rank(result: dict) -> tuple[float, float]:
     equation = result.get('interesting_equation') or {}
     role = equation.get('role', '')
-    priorities = {
-        'generated_operator_tapered_distance_direction_equation': 6.0,
-        'generated_operator_tapered_distance_perpendicular_equation': 6.0,
-        'generated_operator_cutoff_direction_equation': 5.9,
-        'generated_operator_cutoff_perpendicular_equation': 5.9,
-        'generated_operator_distance_scaled_direction_equation': 5.8,
-        'generated_operator_distance_scaled_perpendicular_equation': 5.8,
-        'generated_operator_periodic_equation': 5.45,
-        'local_residual_distance_scaled_direction_equation': 5.6,
-        'local_residual_distance_scaled_perpendicular_equation': 5.6,
-        'residual_distance_scaled_direction_equation': 5.5,
-        'residual_distance_scaled_perpendicular_equation': 5.5,
-        'residual_periodic_equation': 5.3,
-        'local_residual_direction_equation': 5.2,
-        'local_residual_perpendicular_equation': 5.2,
-        'residual_direction_equation': 5.0,
-        'residual_perpendicular_equation': 5.0,
-        'vector_direction_equation': 4.0,
-        'vector_perpendicular_equation': 4.0,
-        'direction_scaled_equation': 3.5,
-        'perpendicular_scaled_equation': 3.5,
-        'constant_change_equation': 3.0,
-        'position_update_equation': 2.0,
-        'derived_magnitude_equation': 1.0,
-    }
-    return (priorities.get(role, 0.0), float(result.get('interesting_score', 0.0)))
+    return (
+        _interesting_equation_priority(role),
+        float(result.get('interesting_score', 0.0)),
+    )
 
 
 def run_math_foundation_prep(
@@ -2742,44 +2721,77 @@ def run_math_final_discovery(
                     f"{world_type}",
                     flush=True,
                 )
-            for object_count in object_counts:
-                for seed in range(seeds):
-                    actual_seed = seed + cycle * seeds
-                    print(
-                        f"Running final case: {world_type} seed={actual_seed} "
-                        f"objects={object_count} steps={steps}",
-                        flush=True,
-                    )
-                    result = _run_math_final_discovery_case(
+            for case in _section_cycle_cases(
+                theory_memory,
+                world_type,
+                object_counts=object_counts,
+                steps=steps,
+                seeds=seeds,
+                cycle=cycle,
+            ):
+                plan = case.get('plan')
+                actual_seed = int(case['seed'])
+                object_count = int(case['object_count'])
+                case_steps = int(case.get('steps', steps) or steps)
+                plan_text = (
+                    f" plan={plan['experiment_kind']}"
+                    if plan
+                    else ''
+                )
+                print(
+                    f"Running final case: {world_type} seed={actual_seed} "
+                    f"objects={object_count} steps={case_steps}{plan_text}",
+                    flush=True,
+                )
+                result = _run_math_final_discovery_case(
+                    context=world_type,
+                    seed=actual_seed,
+                    object_count=object_count,
+                    steps=case_steps,
+                    num_agents=num_agents,
+                    world_type=world_type,
+                    planned_actions=_planned_probe_actions(plan) if plan else None,
+                    residual_first=bool(plan and plan.get('residual_first')),
+                    equation_operator_priors=theory_memory.generated_operator_priors(
                         context=world_type,
-                        seed=actual_seed,
-                        object_count=object_count,
-                        steps=steps,
-                        num_agents=num_agents,
-                        world_type=world_type,
-                        equation_operator_priors=theory_memory.generated_operator_priors(
-                            context=world_type,
-                        ),
+                    ),
+                )
+                if plan:
+                    result['phase'] = 'math_final_discovery_followup'
+                    result['planned_experiment'] = dict(plan)
+                results.append(result)
+                section_results.append(result)
+                theory_memory.record_result(
+                    result['context'],
+                    result['seed'],
+                    result.get('discovery_loop', {}),
+                )
+                theory_memory.record_operator_prior_results(
+                    result['context'],
+                    result['seed'],
+                    result,
+                )
+                if plan:
+                    result['planned_experiment_outcome'] = (
+                        theory_memory.record_planned_result(
+                            plan,
+                            context=result['context'],
+                            seed=result['seed'],
+                            report=result.get('discovery_loop', {}),
+                            operator_prior_result=result,
+                        )
                     )
-                    results.append(result)
-                    section_results.append(result)
-                    theory_memory.record_result(
-                        result['context'],
-                        result['seed'],
-                        result.get('discovery_loop', {}),
-                    )
-                    theory_memory.record_operator_prior_results(
-                        result['context'],
-                        result['seed'],
-                        result,
-                    )
-                    theory_memory.record_equation_case_result(
-                        result['context'],
-                        result['seed'],
-                        result,
-                        phase='math_final_discovery',
-                    )
-                    _print_math_final_discovery_row(result)
+                theory_memory.record_equation_case_result(
+                    result['context'],
+                    result['seed'],
+                    result,
+                    phase=(
+                        'math_final_discovery_followup'
+                        if plan
+                        else 'math_final_discovery'
+                    ),
+                )
+                _print_math_final_discovery_row(result)
             if section_study_cycles > 1:
                 _print_section_study_summary(
                     world_type,
@@ -3028,6 +3040,7 @@ def _run_equation_campaign_case(
     enable_equation_probes: bool = True,
     planned_actions: list[dict] | None = None,
     equation_operator_priors: list[dict] | None = None,
+    residual_first: bool = False,
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -3044,7 +3057,7 @@ def _run_equation_campaign_case(
             planned_actions=planned_actions,
             equation_operator_priors=equation_operator_priors,
         )
-    metrics = _equation_metrics_from_knowledge(kb)
+    metrics = _equation_metrics_from_knowledge(kb, residual_first=residual_first)
     return {
         'context': context,
         'seed': seed,
@@ -3054,8 +3067,22 @@ def _run_equation_campaign_case(
     }
 
 
-def _equation_metrics_from_knowledge(kb: KnowledgeBase) -> dict:
-    workbench = getattr(kb, 'equation_workbench', None)
+def _equation_metrics_from_knowledge(
+    kb: KnowledgeBase,
+    *,
+    residual_first: bool = False,
+) -> dict:
+    return _equation_metrics_from_pack(
+        getattr(kb, 'equation_workbench', None),
+        residual_first=residual_first,
+    )
+
+
+def _equation_metrics_from_pack(
+    workbench,
+    *,
+    residual_first: bool = False,
+) -> dict:
     if workbench is None:
         return {
             'equation_count': 0,
@@ -3076,11 +3103,10 @@ def _equation_metrics_from_knowledge(kb: KnowledgeBase) -> dict:
         }
     pack = workbench.review_pack()
     top_equation = pack['top_equations'][0] if pack['top_equations'] else {}
-    interesting_equation = (
-        pack['interesting_equations'][0]
-        if pack['interesting_equations']
-        else top_equation
-    )
+    interesting_equation = _select_interesting_equation(
+        pack,
+        residual_first=residual_first,
+    ) or top_equation
     top_score = float(top_equation.get('score', 0.0)) if top_equation else 0.0
     interesting_score = (
         float(interesting_equation.get('score', 0.0))
@@ -3104,6 +3130,85 @@ def _equation_metrics_from_knowledge(kb: KnowledgeBase) -> dict:
         'label_leaks': pack['label_leaks'],
         'passed': pack['equation_count'] > 0 and not pack['label_leaks'],
     }
+
+
+def _select_interesting_equation(
+    pack: dict,
+    *,
+    residual_first: bool = False,
+) -> dict:
+    top_equation = (
+        pack.get('top_equations', [{}])[0]
+        if pack.get('top_equations')
+        else {}
+    )
+    default = (
+        pack.get('interesting_equations', [{}])[0]
+        if pack.get('interesting_equations')
+        else top_equation
+    )
+    if not residual_first:
+        return dict(default or {})
+    residual = _best_residual_first_equation(pack)
+    if not residual:
+        return dict(default or {})
+    default_role = str((default or {}).get('role') or '')
+    if default_role in {'position_update_equation', 'constant_change_equation'}:
+        return residual
+    if _interesting_equation_priority(residual.get('role', '')) > _interesting_equation_priority(default_role):
+        return residual
+    return dict(default or {})
+
+
+def _best_residual_first_equation(pack: dict) -> dict:
+    categories = dict(pack.get('categories') or {})
+    candidates = []
+    for category in ('residual_strength', 'residual_dynamics', 'residual_periodic'):
+        candidates.extend(dict(item) for item in categories.get(category, []))
+    candidates = [
+        candidate for candidate in candidates
+        if float(candidate.get('score', 0.0) or 0.0) >= 0.20
+    ]
+    if not candidates:
+        return {}
+    candidates.sort(
+        key=lambda item: (
+            _interesting_equation_priority(str(item.get('role') or '')),
+            float(item.get('score', 0.0) or 0.0),
+            -int(item.get('complexity', 0) or 0),
+        ),
+        reverse=True,
+    )
+    return candidates[0]
+
+
+def _interesting_equation_priority(role: str) -> float:
+    priorities = {
+        'generated_operator_tapered_distance_direction_equation': 6.0,
+        'generated_operator_tapered_distance_perpendicular_equation': 6.0,
+        'generated_operator_cutoff_direction_equation': 5.9,
+        'generated_operator_cutoff_perpendicular_equation': 5.9,
+        'generated_operator_distance_scaled_direction_equation': 5.8,
+        'generated_operator_distance_scaled_perpendicular_equation': 5.8,
+        'generated_operator_periodic_equation': 5.45,
+        'local_residual_distance_scaled_direction_equation': 5.6,
+        'local_residual_distance_scaled_perpendicular_equation': 5.6,
+        'residual_distance_scaled_direction_equation': 5.5,
+        'residual_distance_scaled_perpendicular_equation': 5.5,
+        'residual_periodic_equation': 5.3,
+        'local_residual_direction_equation': 5.2,
+        'local_residual_perpendicular_equation': 5.2,
+        'residual_direction_equation': 5.0,
+        'residual_perpendicular_equation': 5.0,
+        'vector_direction_equation': 4.0,
+        'vector_perpendicular_equation': 4.0,
+        'direction_scaled_equation': 3.5,
+        'perpendicular_scaled_equation': 3.5,
+        'constant_change_equation': 3.0,
+        'position_update_equation': 2.0,
+        'derived_magnitude_equation': 1.0,
+    }
+    return priorities.get(role, 0.0)
 
 
 def _run_math_foundation_prep_case(
@@ -3159,6 +3264,8 @@ def _run_math_final_discovery_case(
     world_type: str,
     hidden_manifest: HiddenWorldManifest | None = None,
     equation_operator_priors: list[dict] | None = None,
+    planned_actions: list[dict] | None = None,
+    residual_first: bool = False,
 ) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         _, kb, _ = run_experiment(
@@ -3172,12 +3279,16 @@ def _run_math_final_discovery_case(
             hidden_manifest=hidden_manifest,
             allow_memory_probes=False,
             enable_equation_probes=True,
+            planned_actions=planned_actions,
             equation_operator_priors=equation_operator_priors,
             equation_max_operator_feedback_rows=96,
             equation_max_operator_feedback_operators=2,
         )
     foundation = _foundation_metrics_from_knowledge(kb)
-    equations = _equation_metrics_from_knowledge(kb)
+    equations = _equation_metrics_from_knowledge(
+        kb,
+        residual_first=residual_first,
+    )
     return {
         'context': context,
         'seed': seed,
@@ -3324,9 +3435,95 @@ def _section_followup_plans(
     )
     followups = [
         plan for plan in candidates
-        if context in _section_contexts_for_plan(plan)
+        if str(plan.get('world_type') or '') == context
+        and context in _section_contexts_for_plan(plan)
     ]
     return followups[:limit]
+
+
+def _section_cycle_cases(
+    theory_memory: CumulativeTheoryMemory,
+    context: str,
+    *,
+    object_counts: list[int],
+    steps: int,
+    seeds: int,
+    cycle: int,
+) -> list[dict]:
+    target_count = max(1, seeds) * max(1, len(object_counts))
+    if cycle <= 0:
+        return [
+            {
+                'seed': seed,
+                'object_count': object_count,
+                'steps': steps,
+                'plan': None,
+            }
+            for object_count in object_counts
+            for seed in range(seeds)
+        ]
+
+    cases = []
+    seen_plans = set()
+    followups = _section_followup_plans(
+        theory_memory,
+        context,
+        object_counts=object_counts,
+        steps=steps,
+        limit=target_count,
+    )
+    allowed_counts = set(object_counts)
+    for plan in followups:
+        object_count = int(plan.get('object_count') or object_counts[0])
+        if object_count not in allowed_counts:
+            object_count = object_counts[0]
+        plan_key = (
+            plan.get('experiment_kind'),
+            plan.get('replay_key'),
+            int(plan.get('seed', 0) or 0),
+            object_count,
+        )
+        if plan_key in seen_plans:
+            continue
+        seen_plans.add(plan_key)
+        cases.append({
+            'seed': int(plan.get('seed', 0) or 0),
+            'object_count': object_count,
+            'steps': int(plan.get('steps', steps) or steps),
+            'plan': dict(plan),
+        })
+        if len(cases) >= target_count:
+            return cases
+
+    fresh_seed = cycle * max(1, seeds)
+    fresh_seen = {
+        (case['seed'], case['object_count'])
+        for case in cases
+    }
+    while len(cases) < target_count:
+        for object_count in object_counts:
+            if len(cases) >= target_count:
+                break
+            while (fresh_seed, object_count) in fresh_seen:
+                fresh_seed += 1
+            cases.append({
+                'seed': fresh_seed,
+                'object_count': object_count,
+                'steps': steps,
+                'plan': None,
+            })
+            fresh_seen.add((fresh_seed, object_count))
+            fresh_seed += 1
+    return cases
+
+
+def _section_best_result(context: str, section_results: list[dict]) -> dict:
+    if context in {'standard', 'zero_gravity'}:
+        return max(
+            section_results,
+            key=lambda item: float(item.get('interesting_score', 0.0) or 0.0),
+        )
+    return max(section_results, key=_interesting_result_rank)
 
 
 def _print_section_study_summary(
@@ -3349,10 +3546,7 @@ def _print_section_study_summary(
         family, exponent = _interesting_equation_family(result)
         family_counts[family] += 1
         exponent_counts[exponent] += 1
-    best = max(
-        section_results,
-        key=lambda item: float(item.get('interesting_score', 0.0) or 0.0),
-    )
+    best = _section_best_result(context, section_results)
     best_equation = dict(best.get('interesting_equation') or {})
     best_text = (
         f"{best_equation.get('target', '?')} ~= "

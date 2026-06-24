@@ -16,6 +16,7 @@ from agent.representation import KnowledgeBase
 from main import (
     _foundation_metrics_from_knowledge,
     _print_section_study_summary,
+    _select_interesting_equation,
     run_discovery_readiness_audit,
     run_experiment,
     run_math_final_discovery,
@@ -230,6 +231,105 @@ class MathFoundationTests(unittest.TestCase):
         self.assertIn('Families:', text)
         self.assertIn('Best so far:', text)
         self.assertEqual(3, len(theory_memory.records))
+
+    def test_math_final_discovery_executes_section_followup_replays(self):
+        class ReplayMemory(CumulativeTheoryMemory):
+            def planned_experiments(self, world_types, object_counts, steps, limit):
+                if not self.equation_case_records:
+                    return []
+                return [{
+                    'theory_kind': 'residual_after_transition',
+                    'experiment_kind': 'post_run_replay_revision',
+                    'priority': 0.99,
+                    'world_type': 'sideways_wind',
+                    'seed': 0,
+                    'object_count': object_counts[0],
+                    'steps': steps,
+                    'hidden_holdout': False,
+                    'reason': 'force residual-first replay of seed=0',
+                    'expected_result': 'surface a residual law',
+                    'falsifies_if': 'baseline transition stays dominant',
+                    'source_status': 'robust_law',
+                    'source_context': 'sideways_wind',
+                    'target_context': 'post_run_replay_context',
+                    'replay_key': 'post_run_replay:test:0:baseline',
+                    'replay_issue': 'baseline_headline_needs_residual_replay',
+                    'original_record': {
+                        'context': 'sideways_wind',
+                        'seed': 0,
+                        'target': 'next_x',
+                        'expression': 'x + vx * dt',
+                        'role': 'position_update_equation',
+                    },
+                    'learned_invariant': {
+                        'context': 'sideways_wind',
+                        'law_family': 'linear_transition',
+                    },
+                    'equation_invariant': {
+                        'context': 'sideways_wind',
+                        'law_family': 'linear_transition',
+                    },
+                    'residual_first': True,
+                    'replay_from_start': True,
+                }]
+
+        theory_memory = ReplayMemory()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            results = run_math_final_discovery(
+                seeds=1,
+                steps=40,
+                object_counts=[3],
+                world_types=['sideways_wind'],
+                hidden_worlds=0,
+                num_agents=2,
+                section_study_cycles=2,
+                theory_memory=theory_memory,
+            )
+
+        text = output.getvalue()
+        self.assertEqual([0, 0], [result['seed'] for result in results])
+        self.assertIn('plan=post_run_replay_revision', text)
+        self.assertEqual(
+            'post_run_replay_revision',
+            results[1]['planned_experiment']['experiment_kind'],
+        )
+        self.assertTrue(results[1]['planned_experiment']['residual_first'])
+        self.assertEqual(
+            'math_final_discovery_followup',
+            results[1]['phase'],
+        )
+        self.assertEqual(2, len(theory_memory.equation_case_records))
+
+    def test_residual_first_selection_prefers_residual_over_baseline_motion(self):
+        baseline = {
+            'target': 'next_x',
+            'expression': 'x + vx * dt',
+            'role': 'position_update_equation',
+            'score': 0.97,
+            'complexity': 2,
+        }
+        residual = {
+            'target': 'baseline_adjusted_delta_velocity',
+            'expression': 'k * unit_inferred_vector',
+            'role': 'residual_direction_equation',
+            'score': 0.31,
+            'complexity': 3,
+        }
+        pack = {
+            'top_equations': [baseline],
+            'interesting_equations': [baseline],
+            'categories': {
+                'motion_updates': [baseline],
+                'residual_dynamics': [residual],
+            },
+        }
+
+        selected = _select_interesting_equation(pack, residual_first=True)
+        normal = _select_interesting_equation(pack, residual_first=False)
+
+        self.assertEqual('residual_direction_equation', selected['role'])
+        self.assertEqual('position_update_equation', normal['role'])
 
     def test_section_study_summary_filters_cross_section_followups(self):
         class FakeMemory:
