@@ -19,8 +19,13 @@ from agent.representation import KnowledgeBase
 from main import (
     _checkpoint_theory_memory,
     _foundation_metrics_from_knowledge,
+    _math_final_artifact_summary,
+    _persist_math_final_artifact,
     _print_section_study_summary,
     _section_best_result,
+    _section_composite_decomposition,
+    _section_leak_diagnosis,
+    _section_parameter_consolidation,
     _select_interesting_equation,
     _should_force_residual_first,
     run_discovery_readiness_audit,
@@ -610,6 +615,185 @@ class MathFoundationTests(unittest.TestCase):
             'residual_periodic_equation',
             selected['interesting_equation']['role'],
         )
+
+    def test_section_consolidation_selects_majority_exponent_and_radius(self):
+        def row(seed, exponent, radius):
+            return {
+                'context': 'hidden_07_0007',
+                'seed': seed,
+                'passed': True,
+                'equation_passed': True,
+                'label_leaks': [],
+                'interesting_score': 0.88,
+                'interesting_equation': {
+                    'role': 'generated_operator_tapered_distance_perpendicular_equation',
+                    'target': 'baseline_adjusted_delta_velocity',
+                    'expression': (
+                        'k * taper(separation, 7_2) * '
+                        'perpendicular(unit_generated_center_vector) '
+                        f'/ separation^{exponent}'
+                    ),
+                    'parameters': {
+                        'operator_kind': 'localized_tapered_power',
+                        'distance_exponent': exponent,
+                        'cutoff_radius': radius,
+                        'relation': 'perpendicular',
+                    },
+                },
+            }
+
+        consolidation = _section_parameter_consolidation(
+            'hidden_07_0007',
+            [row(0, 0.5, 7.2), row(1, 0.5, 7.35), row(2, 0.75, 8.4)],
+        )
+
+        self.assertEqual('localized_tapered_power', consolidation['dominant_family'])
+        self.assertEqual(0.5, consolidation['selected_distance_exponent'])
+        self.assertAlmostEqual(0.667, consolidation['distance_exponent_confidence'])
+        self.assertAlmostEqual(7.275, consolidation['selected_cutoff_radius'])
+
+    def test_section_leak_diagnosis_summarizes_labels_and_rows(self):
+        diagnosis = _section_leak_diagnosis(
+            'localized_gravity',
+            [{
+                'context': 'localized_gravity',
+                'seed': 2,
+                'phase': 'math_final_discovery',
+                'passed': False,
+                'label_leaks': [{
+                    'labels': ['gravity', 'localized_gravity'],
+                    'description': 'mentions gravity',
+                }],
+                'interesting_equation': {
+                    'role': 'localized_tapered_power',
+                    'expression': 'gravity',
+                },
+            }],
+        )
+
+        self.assertEqual(1, diagnosis['leak_count'])
+        self.assertEqual(1, diagnosis['affected_row_count'])
+        self.assertEqual(1, diagnosis['label_counts']['gravity'])
+        self.assertIn('block leaked rows', diagnosis['recommendation'])
+
+    def test_composite_decomposition_splits_phase_and_tangential_components(self):
+        phase = {
+            'context': 'hidden_04_0004',
+            'seed': 1,
+            'passed': True,
+            'equation_passed': True,
+            'label_leaks': [],
+            'interesting_equation': {
+                'role': 'residual_periodic_equation',
+                'expression': 'a * sin(step/75) + b * cos(step/75)',
+                'parameters': {'operator_kind': 'phase_basis'},
+            },
+            'manifest': {
+                'components': [{'type': 'time_wave'}, {'type': 'tangential_flow'}],
+            },
+        }
+        tangential = {
+            'context': 'hidden_04_0004',
+            'seed': 2,
+            'passed': True,
+            'equation_passed': True,
+            'label_leaks': [],
+            'interesting_equation': {
+                'role': 'generated_operator_tapered_distance_perpendicular_equation',
+                'expression': (
+                    'k * taper(separation, 7_5) * '
+                    'perpendicular(unit_generated_center_vector)'
+                ),
+                'parameters': {'operator_kind': 'localized_tapered_power'},
+            },
+            'manifest': phase['manifest'],
+        }
+
+        decomposition = _section_composite_decomposition(
+            'hidden_04_0004',
+            [phase, tangential],
+        )
+
+        self.assertEqual('composite_hypothesis', decomposition['status'])
+        components = {
+            item['component'] for item in decomposition['inferred_components']
+        }
+        self.assertIn('time_varying_component', components)
+        self.assertIn('tangential_component', components)
+        self.assertEqual(1, decomposition['benchmark_manifest_components']['time_wave'])
+
+    def test_math_final_artifact_writes_summary_with_diagnostics(self):
+        theory_memory = CumulativeTheoryMemory()
+        result = {
+            'context': 'hidden_07_0007',
+            'seed': 0,
+            'objects': 5,
+            'steps': 120,
+            'passed': True,
+            'ready_for_final': True,
+            'equation_passed': True,
+            'label_leaks': [],
+            'interesting_score': 0.91,
+            'interesting_equation': {
+                'role': 'generated_operator_tapered_distance_perpendicular_equation',
+                'target': 'baseline_adjusted_delta_velocity',
+                'expression': (
+                    'k * taper(separation, 7_2) * '
+                    'perpendicular(unit_generated_center_vector) / separation^0.5'
+                ),
+                'parameters': {
+                    'operator_kind': 'localized_tapered_power',
+                    'distance_exponent': 0.5,
+                    'cutoff_radius': 7.2,
+                },
+            },
+            'manifest': {'components': [{'type': 'tangential_flow'}]},
+        }
+        theory_memory.record_equation_case_result(
+            'hidden_07_0007',
+            0,
+            result,
+            phase='math_final_discovery',
+        )
+        starting = CumulativeTheoryMemory().memory_checkpoint_summary()
+        artifact = _math_final_artifact_summary(
+            [result],
+            theory_memory,
+            run_id='demo-run',
+            run_config={'seeds': 1},
+            starting_memory_summary=starting,
+        )
+
+        self.assertTrue(artifact['runs_final'])
+        self.assertEqual(1, artifact['passed_count'])
+        self.assertEqual('demo-run', artifact['run_id'])
+        self.assertEqual(1, artifact['memory_delta']['new_equation_cases'])
+        self.assertEqual(
+            'localized_tapered_power',
+            artifact['section_consolidations'][0]['dominant_family'],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'final.json')
+            with mock.patch.dict(
+                os.environ,
+                {'HF_OUTPUT_REPO': '', 'HF_RUN_REPO': '', 'HF_TOKEN': ''},
+            ), contextlib.redirect_stdout(io.StringIO()):
+                persisted = _persist_math_final_artifact(
+                    [result],
+                    theory_memory,
+                    artifact_output_file=output_file,
+                    hf_output_repo=None,
+                    run_id='demo-run',
+                    run_config={'seeds': 1},
+                    starting_memory_summary=starting,
+                )
+            with open(output_file, 'r', encoding='utf-8') as handle:
+                saved = json.load(handle)
+
+        self.assertEqual('skipped', persisted['hf_upload']['status'])
+        self.assertEqual('demo-run', saved['run_id'])
+        self.assertIn('artifact_path', saved)
 
     def test_section_study_summary_filters_cross_section_followups(self):
         class FakeMemory:

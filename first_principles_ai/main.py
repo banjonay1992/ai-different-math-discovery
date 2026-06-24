@@ -2692,8 +2692,16 @@ def run_math_final_discovery(
     section_study_cycles: int = 1,
     theory_memory: CumulativeTheoryMemory | None = None,
     theory_memory_checkpoint_file: str | Path | None = None,
+    artifact_output_file: str | Path | None = None,
+    hf_output_repo: str | None = None,
+    run_id: str | None = None,
 ) -> list[dict]:
     """Run the watched discovery campaign and report live performance metrics."""
+    starting_memory_summary = (
+        theory_memory.memory_checkpoint_summary()
+        if theory_memory is not None
+        else CumulativeTheoryMemory().memory_checkpoint_summary()
+    )
     object_counts = object_counts or [5]
     world_types = WORLD_TYPES if world_types is None else list(world_types)
     hidden_worlds = max(0, int(hidden_worlds or 0))
@@ -2916,6 +2924,31 @@ def run_math_final_discovery(
             f"{best['interesting_equation'].get('expression', '?')} "
             f"(score={best['interesting_score']:.2f})",
             flush=True,
+        )
+    if (
+        artifact_output_file
+        or hf_output_repo
+        or os.environ.get('HF_OUTPUT_REPO')
+        or os.environ.get('HF_RUN_REPO')
+    ):
+        _persist_math_final_artifact(
+            results,
+            theory_memory,
+            artifact_output_file=artifact_output_file,
+            hf_output_repo=hf_output_repo,
+            run_id=run_id,
+            run_config={
+                'seeds': seeds,
+                'steps': steps,
+                'object_counts': list(object_counts),
+                'world_types': list(world_types),
+                'hidden_worlds': hidden_worlds,
+                'hidden_world_start': hidden_world_start,
+                'self_authored_worlds': self_authored_worlds,
+                'num_agents': num_agents,
+                'section_study_cycles': section_study_cycles,
+            },
+            starting_memory_summary=starting_memory_summary,
         )
     return results
 
@@ -3848,6 +3881,40 @@ def _print_section_study_summary(
         f"(score={float(best.get('interesting_score', 0.0) or 0.0):.2f})",
         flush=True,
     )
+    consolidation = _section_parameter_consolidation(context, section_results)
+    if consolidation.get('dominant_family'):
+        parts = [
+            f"family={consolidation['dominant_family']}",
+            f"support={consolidation['support_count']}/{consolidation['eligible_count']}",
+        ]
+        exponent = consolidation.get('selected_distance_exponent')
+        if exponent is not None:
+            parts.append(
+                f"exponent={exponent} "
+                f"({consolidation['distance_exponent_confidence']:.0%})"
+            )
+        radius = consolidation.get('selected_cutoff_radius')
+        if radius is not None:
+            parts.append(
+                f"radius~{radius} "
+                f"({consolidation['cutoff_radius_confidence']:.0%})"
+            )
+        print(f"  Robust law: {', '.join(parts)}", flush=True)
+    leak_diagnosis = _section_leak_diagnosis(context, section_results)
+    if leak_diagnosis.get('leak_count'):
+        print(
+            "  Leak diagnosis: "
+            f"labels={_counter_preview(Counter(leak_diagnosis['label_counts']))} "
+            f"rows={leak_diagnosis['affected_row_count']}",
+            flush=True,
+        )
+    decomposition = _section_composite_decomposition(context, section_results)
+    if decomposition.get('inferred_component_count', 0) > 1:
+        component_text = ', '.join(
+            f"{item['component']}:{item['support_count']}"
+            for item in decomposition['inferred_components'][:4]
+        )
+        print(f"  Component hypotheses: {component_text}", flush=True)
     followups = _section_followup_plans(
         theory_memory,
         context,
@@ -3864,6 +3931,473 @@ def _print_section_study_summary(
                 f"priority={plan['priority']:.2f}: {plan['reason']}",
                 flush=True,
             )
+
+
+def _section_groups(results: list[dict]) -> dict[str, list[dict]]:
+    groups: dict[str, list[dict]] = {}
+    for result in results:
+        groups.setdefault(str(result.get('context') or 'unknown'), []).append(result)
+    return groups
+
+
+def _numeric_parameter_from_result(result: dict, key: str) -> float | None:
+    parameters = dict((result.get('interesting_equation') or {}).get('parameters') or {})
+    value = parameters.get(key)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _rounded_number(value: float | None, digits: int = 3) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), digits)
+
+
+def _section_parameter_consolidation(
+    context: str,
+    section_results: list[dict],
+) -> dict:
+    clean_results = _clean_equation_results(section_results)
+    non_motion = [
+        result for result in clean_results
+        if not _is_motion_update_family(_interesting_equation_family(result)[0])
+    ]
+    if not non_motion:
+        return {
+            'context': context,
+            'eligible_count': 0,
+            'dominant_family': None,
+        }
+    family_counts = Counter(
+        _interesting_equation_family(result)[0]
+        for result in non_motion
+    )
+    dominant_family, support_count = family_counts.most_common(1)[0]
+    family_results = [
+        result for result in non_motion
+        if _interesting_equation_family(result)[0] == dominant_family
+    ]
+
+    exponents = [
+        _numeric_parameter_from_result(result, 'distance_exponent')
+        for result in family_results
+    ]
+    exponents = [value for value in exponents if value is not None]
+    exponent_counts = Counter(
+        round(float(value), 2)
+        for value in exponents
+    )
+    selected_exponent = None
+    exponent_confidence = 0.0
+    if exponent_counts:
+        selected_exponent, exponent_support = exponent_counts.most_common(1)[0]
+        exponent_confidence = exponent_support / max(1, len(exponents))
+
+    radii = [
+        _numeric_parameter_from_result(result, 'cutoff_radius')
+        for result in family_results
+    ]
+    radii = [value for value in radii if value is not None]
+    radius_clusters = Counter(round(float(value)) for value in radii)
+    selected_radius = None
+    radius_confidence = 0.0
+    radius_spread = None
+    if radius_clusters:
+        cluster, radius_support = radius_clusters.most_common(1)[0]
+        cluster_values = [
+            value for value in radii
+            if round(float(value)) == cluster
+        ]
+        selected_radius = _median(cluster_values)
+        radius_confidence = radius_support / max(1, len(radii))
+        radius_spread = (
+            round(max(cluster_values) - min(cluster_values), 3)
+            if len(cluster_values) > 1
+            else 0.0
+        )
+
+    relation_counts = Counter()
+    for result in family_results:
+        parameters = dict((result.get('interesting_equation') or {}).get('parameters') or {})
+        relation = parameters.get('relation')
+        if relation:
+            relation_counts[str(relation)] += 1
+
+    return {
+        'context': context,
+        'eligible_count': len(non_motion),
+        'dominant_family': dominant_family,
+        'family_counts': dict(family_counts),
+        'support_count': support_count,
+        'support_fraction': round(support_count / max(1, len(non_motion)), 3),
+        'selected_distance_exponent': _rounded_number(selected_exponent),
+        'distance_exponent_counts': {
+            str(key): count for key, count in exponent_counts.items()
+        },
+        'distance_exponent_confidence': round(exponent_confidence, 3),
+        'selected_cutoff_radius': _rounded_number(selected_radius),
+        'cutoff_radius_clusters': {
+            str(key): count for key, count in radius_clusters.items()
+        },
+        'cutoff_radius_confidence': round(radius_confidence, 3),
+        'cutoff_radius_cluster_spread': radius_spread,
+        'relation_counts': dict(relation_counts),
+    }
+
+
+def _section_leak_diagnosis(context: str, section_results: list[dict]) -> dict:
+    leak_rows = []
+    label_counts = Counter()
+    expression_counts = Counter()
+    for result in section_results:
+        leaks = list(result.get('label_leaks') or [])
+        if not leaks:
+            continue
+        labels = Counter()
+        for leak in leaks:
+            for label in leak.get('labels') or []:
+                label_counts[str(label)] += 1
+                labels[str(label)] += 1
+            expression = leak.get('expression') or leak.get('description')
+            if expression:
+                expression_counts[str(expression)] += 1
+        leak_rows.append({
+            'context': result.get('context'),
+            'seed': result.get('seed'),
+            'phase': result.get('phase', 'math_final_discovery'),
+            'interesting_role': (
+                (result.get('interesting_equation') or {}).get('role')
+            ),
+            'interesting_expression': (
+                (result.get('interesting_equation') or {}).get('expression')
+            ),
+            'leak_count': len(leaks),
+            'labels': dict(labels),
+        })
+    if not leak_rows:
+        return {
+            'context': context,
+            'leak_count': 0,
+            'affected_row_count': 0,
+            'label_counts': {},
+            'rows': [],
+            'recommendation': None,
+        }
+    recommendation = (
+        'block leaked rows from robust-law selection and inspect forbidden '
+        'label source before trusting localized/hidden claims'
+    )
+    return {
+        'context': context,
+        'leak_count': sum(row['leak_count'] for row in leak_rows),
+        'affected_row_count': len(leak_rows),
+        'label_counts': dict(label_counts),
+        'top_expressions': dict(expression_counts.most_common(5)),
+        'rows': leak_rows,
+        'recommendation': recommendation,
+    }
+
+
+def _component_hypothesis_from_result(result: dict) -> str | None:
+    family, _exponent = _interesting_equation_family(result)
+    equation = dict(result.get('interesting_equation') or {})
+    expression = str(equation.get('expression') or '').lower()
+    role = str(equation.get('role') or '')
+    if _is_motion_update_family(family):
+        return 'baseline_motion_or_uniform_component'
+    if family == 'phase_basis' or 'periodic' in role or 'sin(step' in expression:
+        return 'time_varying_component'
+    if 'perpendicular' in expression or 'perpendicular' in role:
+        return 'tangential_component'
+    if family in {
+        'localized_tapered_power',
+        'localized_cutoff_window',
+        'local_residual_direction_equation',
+        'local_residual_distance_scaled_direction_equation',
+    }:
+        return 'localized_radial_component'
+    if 'unit_inferred_vector' in expression or 'unit_local_inferred_vector' in expression:
+        return 'radial_or_uniform_component'
+    return None
+
+
+def _section_composite_decomposition(
+    context: str,
+    section_results: list[dict],
+) -> dict:
+    component_counts = Counter()
+    family_counts = Counter()
+    manifest_components = Counter()
+    seen_manifests = set()
+    for result in _clean_equation_results(section_results):
+        family, _exponent = _interesting_equation_family(result)
+        family_counts[family] += 1
+        component = _component_hypothesis_from_result(result)
+        if component:
+            component_counts[component] += 1
+        manifest = dict(result.get('manifest') or {})
+        if manifest:
+            manifest_key = json.dumps(
+                manifest,
+                sort_keys=True,
+                separators=(',', ':'),
+                default=str,
+            )
+            if manifest_key not in seen_manifests:
+                seen_manifests.add(manifest_key)
+                for component_data in manifest.get('components') or []:
+                    component_type = component_data.get('type')
+                    if component_type:
+                        manifest_components[str(component_type)] += 1
+    inferred_components = [
+        {
+            'component': component,
+            'support_count': count,
+            'support_fraction': round(count / max(1, sum(component_counts.values())), 3),
+        }
+        for component, count in component_counts.most_common()
+    ]
+    status = (
+        'composite_hypothesis'
+        if len(component_counts) > 1
+        else 'single_component_or_unresolved'
+    )
+    return {
+        'context': context,
+        'status': status,
+        'inferred_component_count': len(component_counts),
+        'inferred_components': inferred_components,
+        'family_counts': dict(family_counts),
+        'benchmark_manifest_components': dict(manifest_components),
+    }
+
+
+def _math_final_rows_for_artifact(results: list[dict]) -> list[dict]:
+    rows = []
+    for result in results:
+        equation = dict(result.get('interesting_equation') or {})
+        rows.append({
+            'context': result.get('context'),
+            'seed': result.get('seed'),
+            'objects': result.get('objects'),
+            'steps': result.get('steps'),
+            'phase': result.get('phase', 'math_final_discovery'),
+            'passed': bool(result.get('passed')),
+            'ready_for_final': bool(result.get('ready_for_final')),
+            'equation_passed': bool(result.get('equation_passed')),
+            'leak_count': len(result.get('label_leaks') or []),
+            'interesting_score': result.get('interesting_score'),
+            'interesting_role': equation.get('role'),
+            'interesting_target': equation.get('target'),
+            'interesting_expression': equation.get('expression'),
+            'interesting_parameters': dict(equation.get('parameters') or {}),
+            'planned_experiment_kind': (
+                dict(result.get('planned_experiment') or {}).get('experiment_kind')
+            ),
+            'planned_outcome': (
+                dict(result.get('planned_experiment_outcome') or {}).get('outcome')
+            ),
+        })
+    return rows
+
+
+def _math_final_artifact_summary(
+    results: list[dict],
+    theory_memory: CumulativeTheoryMemory,
+    *,
+    run_id: str,
+    run_config: dict,
+    starting_memory_summary: dict,
+) -> dict:
+    section_groups = _section_groups(results)
+    section_consolidations = [
+        _section_parameter_consolidation(context, rows)
+        for context, rows in sorted(section_groups.items())
+    ]
+    leak_diagnostics = [
+        diagnosis for diagnosis in (
+            _section_leak_diagnosis(context, rows)
+            for context, rows in sorted(section_groups.items())
+        )
+        if diagnosis.get('leak_count')
+    ]
+    composite_decompositions = [
+        decomposition for decomposition in (
+            _section_composite_decomposition(context, rows)
+            for context, rows in sorted(section_groups.items())
+        )
+        if (
+            decomposition.get('inferred_component_count', 0) > 1
+            or decomposition.get('benchmark_manifest_components')
+        )
+    ]
+    return {
+        'run_kind': 'math_final_discovery',
+        'runs_final': True,
+        'run_id': run_id,
+        'run_config': dict(run_config),
+        'result_count': len(results),
+        'passed_count': sum(1 for result in results if result.get('passed')),
+        'equation_clean_count': sum(
+            1 for result in results
+            if result.get('equation_passed') and not result.get('label_leaks')
+        ),
+        'ready_count': sum(1 for result in results if result.get('ready_for_final')),
+        'section_count': len(section_groups),
+        'rows': _math_final_rows_for_artifact(results),
+        'section_consolidations': section_consolidations,
+        'leak_diagnostics': leak_diagnostics,
+        'composite_decompositions': composite_decompositions,
+        'readiness': theory_memory.discovery_readiness_report(),
+        'memory_delta': theory_memory.memory_delta_since(starting_memory_summary),
+        'theory_memory': theory_memory.to_dict(),
+    }
+
+
+def _default_hf_run_id(prefix: str = 'math-final') -> str:
+    return f"{prefix}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
+
+
+def _write_json_artifact(path: str | Path, artifact: dict):
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open('w', encoding='utf-8') as handle:
+        json.dump(artifact, handle, indent=2, sort_keys=True)
+    return output_path
+
+
+def _upload_math_final_artifact(
+    artifact_path: Path,
+    *,
+    hf_output_repo: str | None,
+    run_id: str,
+) -> dict:
+    repo_id = (
+        hf_output_repo
+        or os.environ.get('HF_OUTPUT_REPO')
+        or os.environ.get('HF_RUN_REPO')
+    )
+    if not repo_id:
+        return {
+            'status': 'skipped',
+            'reason': 'no_hf_output_repo',
+        }
+    token = os.environ.get('HF_TOKEN')
+    if not token:
+        return {
+            'status': 'skipped',
+            'repo_id': repo_id,
+            'reason': 'missing_HF_TOKEN',
+        }
+    try:
+        from huggingface_hub import HfApi
+    except Exception as error:
+        return {
+            'status': 'failed',
+            'repo_id': repo_id,
+            'reason': 'missing_huggingface_hub',
+            'error': str(error),
+        }
+    api = HfApi(token=token)
+    create_error = None
+    try:
+        api.create_repo(
+            repo_id=repo_id,
+            repo_type='dataset',
+            exist_ok=True,
+            private=False,
+        )
+    except Exception as error:
+        create_error = str(error)
+    path_in_repo = f"runs/{run_id}/summary.json"
+    try:
+        upload = upload_hf_artifact_file(
+            api,
+            path_or_fileobj=str(artifact_path),
+            path_in_repo=path_in_repo,
+            repo_id=repo_id,
+            repo_type='dataset',
+        )
+        if create_error:
+            upload['create_repo_warning'] = create_error
+        return upload
+    except Exception as error:
+        return {
+            'status': 'failed',
+            'repo_id': repo_id,
+            'repo_type': 'dataset',
+            'path_in_repo': path_in_repo,
+            'create_repo_error': create_error,
+            'error': str(error),
+        }
+
+
+def _persist_math_final_artifact(
+    results: list[dict],
+    theory_memory: CumulativeTheoryMemory,
+    *,
+    artifact_output_file: str | Path | None,
+    hf_output_repo: str | None,
+    run_id: str | None,
+    run_config: dict,
+    starting_memory_summary: dict,
+) -> dict:
+    resolved_run_id = run_id or os.environ.get('HF_RUN_ID') or _default_hf_run_id()
+    output_file = (
+        Path(artifact_output_file)
+        if artifact_output_file
+        else Path('tmp') / f'{resolved_run_id}-summary.json'
+    )
+    artifact = _math_final_artifact_summary(
+        results,
+        theory_memory,
+        run_id=resolved_run_id,
+        run_config=run_config,
+        starting_memory_summary=starting_memory_summary,
+    )
+    artifact_path = _write_json_artifact(output_file, artifact)
+    upload = _upload_math_final_artifact(
+        artifact_path,
+        hf_output_repo=hf_output_repo,
+        run_id=resolved_run_id,
+    )
+    artifact['artifact_path'] = str(artifact_path)
+    artifact['hf_upload'] = upload
+    _write_json_artifact(artifact_path, artifact)
+    if upload.get('status') in {'uploaded', 'uploaded_via_pr'}:
+        second_upload = _upload_math_final_artifact(
+            artifact_path,
+            hf_output_repo=hf_output_repo,
+            run_id=resolved_run_id,
+        )
+        artifact['hf_upload'] = second_upload
+        _write_json_artifact(artifact_path, artifact)
+    print(
+        "HF_ARTIFACT "
+        + json.dumps({
+            'run_id': resolved_run_id,
+            'summary': str(artifact_path),
+            'repo': (
+                hf_output_repo
+                or os.environ.get('HF_OUTPUT_REPO')
+                or os.environ.get('HF_RUN_REPO')
+            ),
+            'upload_status': artifact['hf_upload'].get('status'),
+        }, sort_keys=True),
+        flush=True,
+    )
+    return artifact
 
 
 def _print_equation_category_review(results: list[dict]):
@@ -4843,7 +5377,11 @@ if __name__ == '__main__':
     parser.add_argument('--theory-memory-file', type=str, default=None,
                         help='Optional JSON file for persistent cumulative theory memory')
     parser.add_argument('--hf-output-file', type=str, default=None,
-                        help='Optional JSON artifact path for HF non-final campaign output')
+                        help='Optional JSON artifact path for HF campaign output')
+    parser.add_argument('--hf-output-repo', type=str, default=None,
+                        help='Optional HF dataset repo for campaign artifact upload')
+    parser.add_argument('--hf-run-id', type=str, default=None,
+                        help='Stable run id for HF artifact paths')
     parser.add_argument('--hf-skip-prep', action='store_true',
                         help='HF non-final campaign records domain worlds without running prep cases')
     parser.add_argument('--hf-no-live-scientist', action='store_true',
@@ -5120,6 +5658,9 @@ if __name__ == '__main__':
                 if args.theory_memory_file and not args.no_save_theory_memory
                 else None
             ),
+            artifact_output_file=args.hf_output_file,
+            hf_output_repo=args.hf_output_repo,
+            run_id=args.hf_run_id,
         )
         if (
             args.theory_memory_file
