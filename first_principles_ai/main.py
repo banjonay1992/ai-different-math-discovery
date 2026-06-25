@@ -229,6 +229,14 @@ from agent.science_coordination_policy import (
     write_science_coordination_policy_ledger,
     write_science_coordination_policy_outbox_jsonl,
 )
+from agent.science_coordination_policy_outcome import (
+    build_science_coordination_policy_outcome_assessment,
+    load_plain_json as load_science_coordination_policy_outcome_plain_json,
+    load_science_coordination_policy_outcome_ledger,
+    read_science_coordination_policy_outcome_transcript,
+    write_science_coordination_policy_outcome_ledger,
+    write_science_coordination_policy_outcome_outbox_jsonl,
+)
 from agent.module_chat_adapter import (
     append_rolling_family_record,
     build_module_family_response_ledger,
@@ -9379,6 +9387,178 @@ def run_science_coordination_policy_recommender(
     return result
 
 
+def run_science_coordination_policy_outcome_assessor(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    transcript_file: str | Path | None = None,
+    policy_ledger_file: str | Path = 'tmp/module-chat-science-coordination-policy-ledger.json',
+    history_ledger_file: str | Path = 'tmp/module-chat-science-coordination-history-ledger.json',
+    cycle_strategy_outcome_ledger_file: str | Path = 'tmp/module-chat-science-campaign-cycle-strategy-outcome-ledger.json',
+    cycle_strategy_ledger_file: str | Path = 'tmp/module-chat-science-campaign-cycle-strategy-ledger.json',
+    strategy_outcome_ledger_file: str | Path = 'tmp/module-chat-science-campaign-strategy-outcome-ledger.json',
+    frontier_outcome_ledger_file: str | Path = 'tmp/module-chat-science-theory-frontier-outcome-ledger.json',
+    theory_memory_ledger_file: str | Path | None = None,
+    campaign_cycle_memory_ledger_file: str | Path | None = None,
+    hypothesis_ledger_file: str | Path | None = None,
+    campaign_ledger_file: str | Path | None = None,
+    experiment_ledger_file: str | Path | None = None,
+    module_chat_ledger_file: str | Path | None = None,
+    policy_outcome_ledger_file: str | Path = 'tmp/module-chat-science-coordination-policy-outcome-ledger.json',
+    prior_policy_outcome_ledger_file: str | Path | None = None,
+    outbox_file: str | Path | None = None,
+    output_file: str | Path | None = None,
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Assess whether science coordination policies changed symbolic outcomes."""
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=str(runtime_memory_path),
+    )
+    transcript = read_science_coordination_policy_outcome_transcript(transcript_file)
+    policy_ledger = load_science_coordination_policy_outcome_plain_json(policy_ledger_file)
+    history_ledger = load_science_coordination_policy_outcome_plain_json(history_ledger_file)
+    cycle_strategy_outcome_ledger = load_science_coordination_policy_outcome_plain_json(cycle_strategy_outcome_ledger_file)
+    cycle_strategy_ledger = load_science_coordination_policy_outcome_plain_json(cycle_strategy_ledger_file)
+    strategy_outcome_ledger = load_science_coordination_policy_outcome_plain_json(strategy_outcome_ledger_file)
+    frontier_outcome_ledger = load_science_coordination_policy_outcome_plain_json(frontier_outcome_ledger_file)
+    theory_memory_ledger = (
+        load_science_coordination_policy_outcome_plain_json(theory_memory_ledger_file)
+        if theory_memory_ledger_file
+        else {}
+    )
+    campaign_cycle_memory_ledger = (
+        load_science_coordination_policy_outcome_plain_json(campaign_cycle_memory_ledger_file)
+        if campaign_cycle_memory_ledger_file
+        else {}
+    )
+    hypothesis_ledger = (
+        load_science_coordination_policy_outcome_plain_json(hypothesis_ledger_file)
+        if hypothesis_ledger_file
+        else {}
+    )
+    campaign_ledger = (
+        load_science_coordination_policy_outcome_plain_json(campaign_ledger_file)
+        if campaign_ledger_file
+        else {}
+    )
+    experiment_ledger = (
+        load_science_coordination_policy_outcome_plain_json(experiment_ledger_file)
+        if experiment_ledger_file
+        else {}
+    )
+    module_chat_ledger = (
+        load_science_coordination_policy_outcome_plain_json(module_chat_ledger_file)
+        if module_chat_ledger_file
+        else {}
+    )
+    policy_outcome_ledger = load_science_coordination_policy_outcome_ledger(policy_outcome_ledger_file)
+    prior_policy_outcome_ledger = (
+        load_science_coordination_policy_outcome_plain_json(prior_policy_outcome_ledger_file)
+        if prior_policy_outcome_ledger_file
+        else {}
+    )
+    before_hash = _file_sha256(runtime_memory_path)
+    runtime_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+    updated_ledger, message = build_science_coordination_policy_outcome_assessment(
+        transcript_messages=list(transcript.get('messages') or []),
+        policy_outcome_ledger=policy_outcome_ledger,
+        policy_ledger=policy_ledger,
+        history_ledger=history_ledger,
+        cycle_strategy_outcome_ledger=cycle_strategy_outcome_ledger,
+        cycle_strategy_ledger=cycle_strategy_ledger,
+        strategy_outcome_ledger=strategy_outcome_ledger,
+        frontier_outcome_ledger=frontier_outcome_ledger,
+        theory_memory_ledger=theory_memory_ledger,
+        campaign_cycle_memory_ledger=campaign_cycle_memory_ledger,
+        hypothesis_ledger=hypothesis_ledger,
+        campaign_ledger=campaign_ledger,
+        experiment_ledger=experiment_ledger,
+        module_chat_ledger=module_chat_ledger,
+        prior_policy_outcome_ledger=prior_policy_outcome_ledger,
+        runtime_memory_data=loaded_memory,
+        runtime_memory_hash_state=runtime_hash_state,
+        project_owned_boundary=dict(capsule.get('project_owned_boundary') or {}),
+        artifact_path=policy_outcome_ledger_file,
+    )
+    write_science_coordination_policy_outcome_ledger(policy_outcome_ledger_file, updated_ledger)
+    if outbox_file:
+        write_science_coordination_policy_outcome_outbox_jsonl(outbox_file, message)
+    latest = dict(updated_ledger.get('latest') or {})
+    state_counts = dict(latest.get('state_counts') or {})
+    result = {
+        'science_coordination_policy_outcome_capability': True,
+        'policy_outcome_ledger_path': str(policy_outcome_ledger_file),
+        'policy_outcome_ledger_hash': updated_ledger.get('ledger_hash'),
+        'science_coordination_policy_outcome_id': latest.get('science_coordination_policy_outcome_id'),
+        'processed_message_count': len(updated_ledger.get('processed_message_ids') or []),
+        'new_message_count': int(latest.get('new_message_count', 0) or 0),
+        'skipped_message_count': int(latest.get('skipped_message_count', 0) or 0),
+        'code_count': int(state_counts.get('code', 0) or 0),
+        'funfun_count': int(state_counts.get('funfun', 0) or 0),
+        'language_count': int(state_counts.get('language', 0) or 0),
+        'theory_count': int(state_counts.get('theory', 0) or 0),
+        'boundary_count': int(state_counts.get('boundary', 0) or 0),
+        'waiting_count': int(state_counts.get('waiting', 0) or 0),
+        'no_gain_count': int(state_counts.get('no_gain', 0) or 0),
+        'retired_count': int(state_counts.get('retired', 0) or 0),
+        'selected_outcome': latest.get('selected_outcome'),
+        'selected_action': latest.get('selected_action'),
+        'policy_retention_state': latest.get('policy_retention_state'),
+        'chosen_recipient': latest.get('chosen_recipient'),
+        'outbox_count': int(latest.get('outbox_count', 0) or 0),
+        'outbox_file': str(outbox_file) if outbox_file else None,
+        'response_message': message,
+        'runtime_memory_hash_state': runtime_hash_state,
+        'runtime_memory_mutated': not bool(runtime_hash_state.get('unchanged', True)),
+        'label_leaks': list(latest.get('label_leaks') or []),
+        'label_leaks_count': len(latest.get('label_leaks') or []),
+        'checkpoint_boundary_state': latest.get('checkpoint_boundary_state'),
+        'project_owned_boundary': dict(capsule.get('project_owned_boundary') or {}),
+        'third_party_checkpoint_used': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'third_party_checkpoint_used'
+            )
+        ),
+        'invalid_message_count': len(transcript.get('invalid_messages') or []),
+        'no_sibling_imports': True,
+        'project_owned_checkpoint_claimed': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'project_owned_checkpoint_verified'
+            )
+        ),
+    }
+    if output_file:
+        _write_json_artifact(output_file, result)
+    print(
+        "AI_DIFFERENT_SCIENCE_COORDINATION_POLICY_OUTCOME "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    return result
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -10522,6 +10702,8 @@ if __name__ == '__main__':
                         help='Export local science coordination payoff records for the history participant')
     parser.add_argument('--module-chat-science-coordination-policy', action='store_true',
                         help='Recommend cautious science-side coordination policy from history records')
+    parser.add_argument('--module-chat-science-coordination-policy-outcome', action='store_true',
+                        help='Assess whether science coordination policies changed symbolic outcomes')
     parser.add_argument('--module-chat-response-mode', type=str, default='plan',
                         choices=['plan', 'run'],
                         help='Plan or run the cheap no-save abstraction-transfer response')
@@ -10712,6 +10894,15 @@ if __name__ == '__main__':
     parser.add_argument('--module-chat-science-policy-outbox-file', type=str,
                         default='tmp/module-chat-science-coordination-policy-outbox.jsonl',
                         help='JSONL path for at most one science coordination policy message')
+    parser.add_argument('--module-chat-science-policy-outcome-ledger-file', type=str,
+                        default='tmp/module-chat-science-coordination-policy-outcome-ledger.json',
+                        help='JSON path for science coordination policy outcome state')
+    parser.add_argument('--module-chat-prior-science-policy-outcome-ledger-file', type=str,
+                        default=None,
+                        help='Optional prior science coordination policy outcome ledger JSON path')
+    parser.add_argument('--module-chat-science-policy-outcome-outbox-file', type=str,
+                        default='tmp/module-chat-science-coordination-policy-outcome-outbox.jsonl',
+                        help='JSONL path for at most one science coordination policy outcome message')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -11334,6 +11525,30 @@ if __name__ == '__main__':
             policy_ledger_file=args.module_chat_science_policy_ledger_file,
             prior_policy_ledger_file=args.module_chat_prior_science_policy_ledger_file,
             outbox_file=args.module_chat_science_policy_outbox_file,
+            output_file=args.module_chat_output_file or args.hf_output_file,
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_science_coordination_policy_outcome:
+        run_science_coordination_policy_outcome_assessor(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            transcript_file=args.module_chat_inbox,
+            policy_ledger_file=args.module_chat_science_policy_ledger_file,
+            history_ledger_file=args.module_chat_science_history_ledger_file,
+            cycle_strategy_outcome_ledger_file=args.module_chat_campaign_cycle_strategy_outcome_ledger_file,
+            cycle_strategy_ledger_file=args.module_chat_campaign_cycle_strategy_ledger_file,
+            strategy_outcome_ledger_file=args.module_chat_campaign_strategy_outcome_ledger_file,
+            frontier_outcome_ledger_file=args.module_chat_frontier_outcome_ledger_file,
+            theory_memory_ledger_file=args.module_chat_theory_memory_ledger_file,
+            campaign_cycle_memory_ledger_file=args.module_chat_campaign_cycle_memory_ledger_file,
+            hypothesis_ledger_file=args.module_chat_hypothesis_ledger_file,
+            campaign_ledger_file=args.module_chat_campaign_ledger_file,
+            experiment_ledger_file=args.module_chat_experiment_ledger_file,
+            module_chat_ledger_file=args.module_chat_module_ledger_file,
+            policy_outcome_ledger_file=args.module_chat_science_policy_outcome_ledger_file,
+            prior_policy_outcome_ledger_file=args.module_chat_prior_science_policy_outcome_ledger_file,
+            outbox_file=args.module_chat_science_policy_outcome_outbox_file,
             output_file=args.module_chat_output_file or args.hf_output_file,
         )
         raise SystemExit(0)
