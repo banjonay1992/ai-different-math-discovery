@@ -114,6 +114,15 @@ python3 main.py --math-foundation-prep --seeds 1 --benchmark-steps 220 --world-t
 # Inspect the saved discovery notebook without running simulations or the final
 python3 main.py --discovery-readiness --theory-memory-file tmp/theory-memory.json
 
+# Export an orchestrator-facing status capsule as a plain module-chat message
+python3 main.py --module-chat-export --module-chat-inbox tmp/module-chat-inbox.jsonl --module-chat-output-file tmp/ai-different-module-message.json --theory-memory-file tmp/theory-memory.json
+
+# Process a richer Language/Code/funfun exchange once, persisting a compact response ledger
+python3 main.py --module-chat-family-response --module-chat-response-mode run --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-ledger-file tmp/module-chat-response-ledger.json --theory-memory-file tmp/theory-memory.json
+
+# Process a rolling module-chat log idempotently, skipping old inbound messages
+python3 main.py --module-chat-rolling-family-response --module-chat-response-mode run --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-rolling-memory-file tmp/module-chat-family-memory.json --module-chat-ledger-file tmp/module-chat-response-ledger.json --theory-memory-file tmp/theory-memory.json
+
 # Inspect long-run memory growth and quantized compression state
 python3 main.py --memory-efficiency-review --theory-memory-file tmp/theory-memory.json
 

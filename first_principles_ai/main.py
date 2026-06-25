@@ -77,14 +77,20 @@ from agent.status_capsule import (
     load_capsule_memory_data,
 )
 from agent.module_chat_adapter import (
+    append_rolling_family_record,
     build_module_family_response_ledger,
     choose_module_family_followup,
     choose_module_family_recipient,
     export_chat_driven_response_message,
     export_capsule_chat_message,
     export_module_family_response_message,
+    load_rolling_family_memory,
+    module_chat_summary_from_messages,
     read_module_chat_inbox,
+    read_module_chat_log,
+    rolling_unprocessed_inbound_messages,
     write_response_ledger,
+    write_rolling_family_memory,
 )
 from agent.explorer import (
     ExplorationPlanner,
@@ -6433,6 +6439,201 @@ def run_module_chat_family_response(
     return message
 
 
+def run_module_chat_rolling_family_response(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    recipient: str = 'auto',
+    topic: str = 'ai_different.module_family_response',
+    chat_log_file: str | Path | None = None,
+    output_file: str | Path | None = None,
+    ledger_file: str | Path = 'tmp/module-chat-response-ledger.json',
+    rolling_memory_file: str | Path = 'tmp/module-chat-family-memory.json',
+    response_mode: str = 'plan',
+    fallback_outcome_mode: str = 'confirmed',
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Run an idempotent rolling module-family response pass over a bus log."""
+    if response_mode not in {'plan', 'run'}:
+        raise ValueError('response_mode must be plan or run')
+    if fallback_outcome_mode not in {'confirmed', 'weak', 'absent'}:
+        raise ValueError('fallback_outcome_mode must be confirmed, weak, or absent')
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+        working_memory = CumulativeTheoryMemory.from_dict(loaded_memory)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+        working_memory = CumulativeTheoryMemory.from_dict(loaded_memory)
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+        working_memory = CumulativeTheoryMemory.from_dict(loaded_memory)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=runtime_memory_path,
+    )
+    rolling_memory = load_rolling_family_memory(rolling_memory_file)
+    log_summary = read_module_chat_log(chat_log_file, participant='ai_different')
+    unprocessed = rolling_unprocessed_inbound_messages(
+        log_summary,
+        rolling_memory,
+        participant='ai_different',
+    )
+    before_hash = _file_sha256(runtime_memory_path)
+    runtime_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+    new_messages = list(unprocessed['new_messages'])
+    skipped_messages = list(unprocessed['skipped_messages'])
+    message = None
+    ledger = None
+    if new_messages:
+        round_summary = module_chat_summary_from_messages(
+            new_messages,
+            path=log_summary.get('path'),
+            invalid_messages=log_summary.get('invalid_messages') or [],
+        )
+        selected = choose_module_family_followup(capsule, round_summary)
+        selected_recipient = choose_module_family_recipient(
+            round_summary,
+            selected,
+            requested_recipient=recipient,
+        )
+        preview_ledger = build_module_family_response_ledger(
+            capsule,
+            round_summary,
+            selected_recipient=selected_recipient,
+            response_mode=response_mode,
+            runtime_memory_hash_state=runtime_hash_state,
+            ledger_path=ledger_file,
+        )
+        campaign_summary = None
+        ran_campaign = False
+        if preview_ledger['run_decision']['should_run_no_save_campaign']:
+            outcome_mode = (
+                selected.get('outcome_mode')
+                if selected.get('outcome_mode') in {'confirmed', 'weak', 'absent'}
+                else fallback_outcome_mode
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                campaign_summary = run_abstraction_transfer_campaign(
+                    theory_memory=working_memory,
+                    seed_start=0,
+                    steps=90,
+                    object_count=5,
+                    target_world_types=[
+                        'standard',
+                        'time_varying',
+                        'hidden_procedural',
+                    ],
+                    outcome_mode=outcome_mode,
+                    emit_hf_artifact_summary=False,
+                )
+            capsule = build_ai_different_status_capsule(
+                working_memory.to_dict(),
+                git_status_text=status_text,
+                git_ignored_text=ignored_text,
+                runtime_memory_path=runtime_memory_path,
+            )
+            ran_campaign = True
+        runtime_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+        ledger = build_module_family_response_ledger(
+            capsule,
+            round_summary,
+            selected_recipient=selected_recipient,
+            response_mode=response_mode,
+            campaign_summary=campaign_summary,
+            ran_campaign=ran_campaign,
+            runtime_memory_hash_state=runtime_hash_state,
+            ledger_path=ledger_file,
+        )
+        write_response_ledger(ledger_file, ledger)
+        message = export_module_family_response_message(
+            ledger,
+            recipient=selected_recipient,
+            topic=topic,
+        )
+        rolling_memory = append_rolling_family_record(
+            rolling_memory,
+            processed_messages=new_messages,
+            ledger=ledger,
+            response_message=message,
+            skipped_count=len(skipped_messages),
+            runtime_memory_hash_state=runtime_hash_state,
+            observed_outgoing_response_ids=unprocessed.get('prior_outgoing_response_ids'),
+        )
+        write_rolling_family_memory(rolling_memory_file, rolling_memory)
+    latest = dict(rolling_memory.get('latest') or {})
+    result = {
+        'rolling_family_response_available': True,
+        'source_log_path': log_summary.get('path'),
+        'rolling_memory_path': str(rolling_memory_file),
+        'processed_message_count': len(rolling_memory.get('processed_message_ids') or []),
+        'skipped_message_count': len(skipped_messages),
+        'new_message_count': len(new_messages),
+        'new_message_ids': list(unprocessed.get('new_message_ids') or []),
+        'skipped_message_ids': list(unprocessed.get('skipped_message_ids') or []),
+        'prior_outgoing_response_ids': list(
+            unprocessed.get('prior_outgoing_response_ids') or []
+        ),
+        'outgoing_response_ids': list(rolling_memory.get('outgoing_response_ids') or []),
+        'selected_recipient': (
+            message.get('recipient') if message else latest.get('selected_recipient')
+        ),
+        'evidence_counts_by_sender': (
+            ledger.get('evidence_counts_by_sender')
+            if ledger
+            else latest.get('evidence_counts_by_sender', {})
+        ),
+        'outcome_or_plan': (
+            ledger.get('outcome_or_plan')
+            if ledger
+            else latest.get('outcome_or_plan', {})
+        ),
+        'ledger_id': ledger.get('ledger_id') if ledger else latest.get('response_ledger_id'),
+        'ledger_hash': (
+            ledger.get('ledger_hash') if ledger else latest.get('response_ledger_hash')
+        ),
+        'ledger_path': (
+            ledger.get('artifact_path') if ledger else latest.get('response_ledger_path')
+        ),
+        'response_message': message,
+        'label_clean': (
+            bool(ledger.get('label_clean')) if ledger else bool(latest.get('label_clean', True))
+        ),
+        'project_owned_boundary': dict(capsule.get('project_owned_boundary') or {}),
+        'runtime_memory_hash_state': runtime_hash_state,
+        'runtime_memory_mutated': not bool(runtime_hash_state.get('unchanged', True)),
+        'third_party_checkpoint_used': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'third_party_checkpoint_used'
+            )
+        ),
+        'invalid_message_count': len(log_summary.get('invalid_messages') or []),
+        'memory_hash': rolling_memory.get('memory_hash'),
+    }
+    if output_file:
+        _write_json_artifact(output_file, result)
+    print(
+        "AI_DIFFERENT_ROLLING_FAMILY_RESPONSE "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    return result
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -7536,6 +7737,8 @@ if __name__ == '__main__':
                         help='Read module-chat inbox and emit an abstraction-transfer response message')
     parser.add_argument('--module-chat-family-response', action='store_true',
                         help='Read a richer module-family inbox, persist a ledger, and emit a response')
+    parser.add_argument('--module-chat-rolling-family-response', action='store_true',
+                        help='Run idempotent rolling module-family response over a chat JSONL log')
     parser.add_argument('--module-chat-response-mode', type=str, default='plan',
                         choices=['plan', 'run'],
                         help='Plan or run the cheap no-save abstraction-transfer response')
@@ -7550,6 +7753,9 @@ if __name__ == '__main__':
     parser.add_argument('--module-chat-ledger-file', type=str,
                         default='tmp/module-chat-response-ledger.json',
                         help='JSON path for the persisted module-chat response ledger')
+    parser.add_argument('--module-chat-rolling-memory-file', type=str,
+                        default='tmp/module-chat-family-memory.json',
+                        help='JSON path for rolling module-family response memory')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -7757,6 +7963,31 @@ if __name__ == '__main__':
             inbox_file=args.module_chat_inbox,
             output_file=args.module_chat_output_file or args.hf_output_file,
             ledger_file=args.module_chat_ledger_file,
+            response_mode=args.module_chat_response_mode,
+            fallback_outcome_mode=args.abstraction_transfer_outcome,
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_rolling_family_response:
+        response_topic = (
+            args.module_chat_topic
+            if args.module_chat_topic != 'ai_different.status_capsule'
+            else 'ai_different.module_family_response'
+        )
+        recipient = (
+            'auto'
+            if args.module_chat_recipient == 'orchestrator'
+            else args.module_chat_recipient
+        )
+        run_module_chat_rolling_family_response(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            recipient=recipient,
+            topic=response_topic,
+            chat_log_file=args.module_chat_inbox,
+            output_file=args.module_chat_output_file or args.hf_output_file,
+            ledger_file=args.module_chat_ledger_file,
+            rolling_memory_file=args.module_chat_rolling_memory_file,
             response_mode=args.module_chat_response_mode,
             fallback_outcome_mode=args.abstraction_transfer_outcome,
         )

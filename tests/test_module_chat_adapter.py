@@ -12,6 +12,7 @@ PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'fir
 sys.path.insert(0, PROJECT_DIR)
 
 from agent.module_chat_adapter import (  # noqa: E402
+    append_rolling_family_record,
     build_module_family_response_ledger,
     build_module_chat_message,
     build_chat_driven_response_payload,
@@ -21,10 +22,14 @@ from agent.module_chat_adapter import (  # noqa: E402
     export_module_family_response_message,
     export_chat_driven_response_message,
     export_capsule_chat_message,
+    load_rolling_family_memory,
     load_response_ledger,
     read_module_chat_inbox,
+    read_module_chat_log,
+    rolling_unprocessed_inbound_messages,
     validate_module_chat_message,
     validate_participant,
+    write_rolling_family_memory,
     write_response_ledger,
 )
 from agent.status_capsule import build_ai_different_status_capsule  # noqa: E402
@@ -32,6 +37,7 @@ from main import (  # noqa: E402
     run_module_chat_export,
     run_module_chat_family_response,
     run_module_chat_response_loop,
+    run_module_chat_rolling_family_response,
 )
 
 
@@ -174,6 +180,94 @@ def three_module_messages(include_request=True):
         ),
     ])
     return messages
+
+
+def two_round_family_log_messages():
+    first = three_module_messages()
+    second = [
+        build_module_chat_message(
+            sender='language_model_2',
+            recipient='ai_different',
+            topic='digest.abstraction_transfer.coordination',
+            body={
+                'message_id': 'lang-digest-2',
+                'request_kind': 'abstraction_transfer_followup',
+                'question': 'Plan the next transfer check after the first response.',
+                'outcome_mode': 'absent',
+                'priority': 0.6,
+            },
+            evidence={'digest_kind': 'coordination', 'priority': 0.6},
+            tags=['abstraction_transfer', 'coordination'],
+        ),
+        build_module_chat_message(
+            sender='code_module',
+            recipient='ai_different',
+            topic='evidence.abstraction_transfer.budget',
+            body={
+                'message_id': 'code-budget-2',
+                'note_kind': 'evidence',
+                'summary': 'Second no-save response remains cheap.',
+                'priority': 0.88,
+            },
+            evidence={
+                'estimated_runtime': 'subsecond',
+                'mutates_runtime_memory': False,
+                'priority': 0.88,
+            },
+            tags=['evidence', 'local_safe', 'budget'],
+        ),
+        build_module_chat_message(
+            sender='funfun',
+            recipient='broadcast',
+            topic='evidence.typed_discovery.capability',
+            body={
+                'message_id': 'funfun-typed-2',
+                'note_kind': 'evidence',
+                'summary': 'Concept utility memory ranks reusable typed concepts.',
+                'priority': 0.76,
+            },
+            evidence={
+                'capability': 'concept_utility_memory',
+                'transfer_relevance': 'cross_surface_abstraction',
+                'priority': 0.76,
+            },
+            tags=['evidence', 'typed_discovery'],
+        ),
+    ]
+    prior_outgoing = build_module_chat_message(
+        sender='ai_different',
+        recipient='orchestrator',
+        topic='ai_different.module_family_response',
+        body={
+            'message_id': 'ai-different-prior-response',
+            'response_kind': 'module_family_coordination_response',
+            'ledger_id': 'ledger_prior',
+            'label_clean': True,
+        },
+        evidence={'ledger_hash': 'prior-hash', 'label_clean': True},
+        tags=['module_family_response', 'label_clean'],
+    )
+    return first + [prior_outgoing] + second
+
+
+def append_language_request(path, message_id='lang-digest-3'):
+    message = build_module_chat_message(
+        sender='language_model_2',
+        recipient='ai_different',
+        topic='digest.abstraction_transfer.coordination',
+        body={
+            'message_id': message_id,
+            'request_kind': 'abstraction_transfer_followup',
+            'question': 'Plan a follow-up without fresh budget evidence.',
+            'outcome_mode': 'weak',
+            'priority': 0.66,
+        },
+        evidence={'digest_kind': 'coordination', 'priority': 0.66},
+        tags=['abstraction_transfer', 'coordination'],
+    )
+    with Path(path).open('a', encoding='utf-8') as handle:
+        handle.write(json.dumps(message) + '\n')
+    return message
 
 
 def _write_messages(tmpdir, messages):
@@ -602,6 +696,155 @@ class ModuleChatAdapterTests(unittest.TestCase):
         self.assertEqual(1, message['body']['evidence_counts_by_sender']['funfun'])
         self.assertEqual(message['body']['ledger_id'], ledger['ledger_id'])
         self.assertEqual(message['topic'], saved['topic'])
+
+    def test_two_round_family_log_parsing_includes_prior_outgoing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = _write_messages(tmpdir, two_round_family_log_messages())
+            summary = read_module_chat_log(log_path)
+
+        self.assertEqual(7, len(summary['messages']))
+        self.assertEqual(6, len(summary['inbound_messages']))
+        self.assertEqual(1, len(summary['outgoing_messages']))
+        self.assertEqual(2, len(summary['experiment_requests']))
+        self.assertEqual(4, len(summary['evidence_notes']))
+        self.assertEqual(
+            'ai-different-prior-response',
+            summary['outgoing_messages'][0]['body']['message_id'],
+        )
+
+    def test_rolling_family_response_is_idempotent_on_second_pass(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = _write_messages(tmpdir, two_round_family_log_messages())
+            runtime_memory = Path(tmpdir) / 'theory-memory.json'
+            output_file = Path(tmpdir) / 'rolling-output.json'
+            ledger_file = Path(tmpdir) / 'ledger.json'
+            rolling_memory_file = Path(tmpdir) / 'rolling-memory.json'
+            with contextlib.redirect_stdout(io.StringIO()):
+                first = run_module_chat_rolling_family_response(
+                    memory_data=memory_fixture(),
+                    runtime_memory_path=str(runtime_memory),
+                    recipient='auto',
+                    chat_log_file=log_path,
+                    output_file=output_file,
+                    ledger_file=ledger_file,
+                    rolling_memory_file=rolling_memory_file,
+                    response_mode='run',
+                    git_status_text='',
+                    git_ignored_text='',
+                )
+            first_memory = load_rolling_family_memory(rolling_memory_file)
+            with contextlib.redirect_stdout(io.StringIO()):
+                second = run_module_chat_rolling_family_response(
+                    memory_data=memory_fixture(),
+                    runtime_memory_path=str(runtime_memory),
+                    recipient='auto',
+                    chat_log_file=log_path,
+                    output_file=output_file,
+                    ledger_file=ledger_file,
+                    rolling_memory_file=rolling_memory_file,
+                    response_mode='run',
+                    git_status_text='',
+                    git_ignored_text='',
+                )
+            second_memory = load_rolling_family_memory(rolling_memory_file)
+
+        self.assertEqual(6, first['new_message_count'])
+        self.assertEqual(0, first['skipped_message_count'])
+        self.assertEqual(6, first['processed_message_count'])
+        self.assertIsNotNone(first['response_message'])
+        self.assertIn('ai-different-prior-response', first['outgoing_response_ids'])
+        self.assertEqual(0, second['new_message_count'])
+        self.assertEqual(6, second['skipped_message_count'])
+        self.assertIsNone(second['response_message'])
+        self.assertEqual(first['selected_recipient'], second['selected_recipient'])
+        self.assertEqual(first_memory['processed_message_ids'], second_memory['processed_message_ids'])
+        self.assertFalse(second['runtime_memory_mutated'])
+        self.assertTrue(second['label_clean'])
+
+    def test_rolling_family_response_append_only_update_plans_without_budget(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = _write_messages(tmpdir, two_round_family_log_messages())
+            runtime_memory = Path(tmpdir) / 'theory-memory.json'
+            ledger_file = Path(tmpdir) / 'ledger.json'
+            rolling_memory_file = Path(tmpdir) / 'rolling-memory.json'
+            with contextlib.redirect_stdout(io.StringIO()):
+                run_module_chat_rolling_family_response(
+                    memory_data=memory_fixture(),
+                    runtime_memory_path=str(runtime_memory),
+                    recipient='auto',
+                    chat_log_file=log_path,
+                    ledger_file=ledger_file,
+                    rolling_memory_file=rolling_memory_file,
+                    response_mode='run',
+                    git_status_text='',
+                    git_ignored_text='',
+                )
+            append_language_request(log_path)
+            with contextlib.redirect_stdout(io.StringIO()):
+                update = run_module_chat_rolling_family_response(
+                    memory_data=memory_fixture(),
+                    runtime_memory_path=str(runtime_memory),
+                    recipient='auto',
+                    chat_log_file=log_path,
+                    ledger_file=ledger_file,
+                    rolling_memory_file=rolling_memory_file,
+                    response_mode='run',
+                    git_status_text='',
+                    git_ignored_text='',
+                )
+            memory = load_rolling_family_memory(rolling_memory_file)
+
+        self.assertEqual(1, update['new_message_count'])
+        self.assertEqual(6, update['skipped_message_count'])
+        self.assertEqual(7, update['processed_message_count'])
+        self.assertIsNotNone(update['response_message'])
+        self.assertEqual('plan', update['outcome_or_plan']['mode'])
+        self.assertEqual(
+            'plan_only_missing_cheap_no_save_evidence',
+            update['outcome_or_plan']['plan_reason'],
+        )
+        self.assertEqual(2, len(memory['response_records']))
+        self.assertEqual(['lang-digest-3'], update['new_message_ids'])
+        self.assertFalse(update['runtime_memory_mutated'])
+
+    def test_rolling_family_response_fallback_when_new_round_has_no_request(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = _write_messages(
+                tmpdir,
+                three_module_messages(include_request=False),
+            )
+            runtime_memory = Path(tmpdir) / 'theory-memory.json'
+            rolling_memory_file = Path(tmpdir) / 'rolling-memory.json'
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = run_module_chat_rolling_family_response(
+                    memory_data=memory_fixture(),
+                    runtime_memory_path=str(runtime_memory),
+                    recipient='auto',
+                    chat_log_file=log_path,
+                    rolling_memory_file=rolling_memory_file,
+                    response_mode='run',
+                    git_status_text='',
+                    git_ignored_text='',
+                )
+
+        self.assertEqual(3, result['new_message_count'])
+        self.assertEqual('plan', result['outcome_or_plan']['mode'])
+        self.assertEqual(
+            'plan_only_no_runnable_inbox_request',
+            result['outcome_or_plan']['plan_reason'],
+        )
+        self.assertEqual('language_model_2', result['selected_recipient'])
+        self.assertTrue(result['label_clean'])
+
+    def test_malformed_rolling_memory_rejected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            memory_path = Path(tmpdir) / 'rolling-memory.json'
+            memory_path.write_text(
+                json.dumps({'memory_kind': 'wrong', 'processed_message_ids': []}),
+                encoding='utf-8',
+            )
+            with self.assertRaisesRegex(ValueError, 'wrong memory_kind'):
+                load_rolling_family_memory(memory_path)
 
     def test_run_module_chat_export_prints_label_clean_bridge_without_mutating_memory(self):
         with tempfile.TemporaryDirectory() as tmpdir:

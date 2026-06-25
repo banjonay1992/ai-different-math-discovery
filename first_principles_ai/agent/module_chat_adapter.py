@@ -219,6 +219,236 @@ def read_module_chat_inbox(
     }
 
 
+def read_module_chat_log(
+    path: str | Path | None,
+    *,
+    participant: str = 'ai_different',
+) -> dict[str, Any]:
+    """Read a JSONL bus log, keeping inbound and prior outgoing AI Different rows."""
+    validate_participant(participant)
+    if not path:
+        return _module_chat_log_summary(None, [], [], participant)
+    log_path = Path(path)
+    messages = []
+    invalid_messages = []
+    if not log_path.exists():
+        return _module_chat_log_summary(str(log_path), [], [], participant)
+    with log_path.open('r', encoding='utf-8') as handle:
+        for line_number, line in enumerate(handle, start=1):
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                message = validate_module_chat_message(json.loads(text))
+            except (json.JSONDecodeError, ValueError) as error:
+                invalid_messages.append({
+                    'line': line_number,
+                    'error': str(error),
+                    'raw': text,
+                })
+                continue
+            if (
+                message['recipient'] in {participant, 'broadcast'}
+                or message['sender'] == participant
+            ):
+                messages.append(message)
+    return _module_chat_log_summary(
+        str(log_path),
+        messages,
+        invalid_messages,
+        participant,
+    )
+
+
+def module_chat_summary_from_messages(
+    messages: list[dict[str, Any]],
+    *,
+    path: str | None = None,
+    invalid_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        'path': path,
+        'messages': list(messages),
+        'invalid_messages': list(invalid_messages or []),
+        'handoff_questions': extract_handoff_questions(messages),
+        'experiment_requests': extract_experiment_requests(messages),
+        'evidence_notes': extract_evidence_notes(messages),
+    }
+
+
+def load_rolling_family_memory(path: str | Path | None) -> dict[str, Any]:
+    if not path or not Path(path).exists():
+        return empty_rolling_family_memory()
+    with Path(path).open('r', encoding='utf-8') as handle:
+        memory = json.load(handle)
+    return validate_rolling_family_memory(memory)
+
+
+def write_rolling_family_memory(path: str | Path, memory: dict[str, Any]) -> Path:
+    validated = validate_rolling_family_memory(memory)
+    memory_path = Path(path)
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_path.write_text(
+        json.dumps(validated, indent=2, sort_keys=True) + '\n',
+        encoding='utf-8',
+    )
+    return memory_path
+
+
+def empty_rolling_family_memory() -> dict[str, Any]:
+    return {
+        'schema_version': 1,
+        'memory_kind': 'ai_different.rolling_family_response_memory',
+        'processed_message_ids': [],
+        'outgoing_response_ids': [],
+        'response_records': [],
+        'latest': {},
+    }
+
+
+def validate_rolling_family_memory(memory: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(memory, dict):
+        raise ValueError('rolling family memory must be a JSON object')
+    if memory.get('memory_kind') != 'ai_different.rolling_family_response_memory':
+        raise ValueError('rolling family memory has wrong memory_kind')
+    processed = memory.get('processed_message_ids')
+    outgoing = memory.get('outgoing_response_ids')
+    records = memory.get('response_records')
+    latest = memory.get('latest', {})
+    if not isinstance(processed, list) or not all(
+        isinstance(item, str) for item in processed
+    ):
+        raise ValueError('rolling family memory processed_message_ids must be strings')
+    if not isinstance(outgoing, list) or not all(
+        isinstance(item, str) for item in outgoing
+    ):
+        raise ValueError('rolling family memory outgoing_response_ids must be strings')
+    if not isinstance(records, list) or not all(
+        isinstance(item, dict) for item in records
+    ):
+        raise ValueError('rolling family memory response_records must be objects')
+    if not isinstance(latest, dict):
+        raise ValueError('rolling family memory latest must be an object')
+    validated = {
+        'schema_version': int(memory.get('schema_version', 1) or 1),
+        'memory_kind': 'ai_different.rolling_family_response_memory',
+        'processed_message_ids': _unique_strings(processed),
+        'outgoing_response_ids': _unique_strings(outgoing),
+        'response_records': list(records),
+        'latest': dict(latest),
+    }
+    if memory.get('memory_hash'):
+        validated['memory_hash'] = str(memory.get('memory_hash'))
+    return validated
+
+
+def rolling_unprocessed_inbound_messages(
+    log_summary: dict[str, Any],
+    rolling_memory: dict[str, Any],
+    *,
+    participant: str = 'ai_different',
+) -> dict[str, Any]:
+    processed = set(rolling_memory.get('processed_message_ids') or [])
+    inbound = list(log_summary.get('inbound_messages') or [])
+    new_messages = [
+        message for message in inbound
+        if module_chat_message_id(message) not in processed
+    ]
+    skipped_messages = [
+        message for message in inbound
+        if module_chat_message_id(message) in processed
+    ]
+    outgoing = [
+        message for message in log_summary.get('outgoing_messages') or []
+        if message.get('sender') == participant
+    ]
+    return {
+        'new_messages': new_messages,
+        'skipped_messages': skipped_messages,
+        'new_message_ids': [module_chat_message_id(message) for message in new_messages],
+        'skipped_message_ids': [
+            module_chat_message_id(message) for message in skipped_messages
+        ],
+        'prior_outgoing_response_ids': [
+            module_chat_message_id(message) for message in outgoing
+        ],
+    }
+
+
+def append_rolling_family_record(
+    rolling_memory: dict[str, Any],
+    *,
+    processed_messages: list[dict[str, Any]],
+    ledger: dict[str, Any],
+    response_message: dict[str, Any] | None,
+    skipped_count: int,
+    runtime_memory_hash_state: dict[str, Any],
+    observed_outgoing_response_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    updated = validate_rolling_family_memory(rolling_memory)
+    processed_ids = _unique_strings(
+        list(updated['processed_message_ids'])
+        + [module_chat_message_id(message) for message in processed_messages]
+    )
+    response_id = (
+        module_chat_message_id(response_message)
+        if response_message is not None
+        else None
+    )
+    outgoing_ids = _unique_strings(
+        list(updated['outgoing_response_ids'])
+        + list(observed_outgoing_response_ids or [])
+        + ([response_id] if response_id else [])
+    )
+    record = {
+        'record_id': 'record_' + stable_digest({
+            'processed_message_ids': [
+                module_chat_message_id(message) for message in processed_messages
+            ],
+            'ledger_id': ledger.get('ledger_id'),
+            'response_id': response_id,
+        })[:16],
+        'processed_message_ids': [
+            module_chat_message_id(message) for message in processed_messages
+        ],
+        'processed_message_count': len(processed_messages),
+        'skipped_message_count': skipped_count,
+        'response_ledger_id': ledger.get('ledger_id'),
+        'response_ledger_hash': ledger.get('ledger_hash'),
+        'response_ledger_path': ledger.get('artifact_path'),
+        'selected_recipient': ledger.get('selected_recipient'),
+        'evidence_counts_by_sender': dict(
+            ledger.get('evidence_counts_by_sender') or {}
+        ),
+        'evidence_rationale': list(ledger.get('evidence_rationale') or []),
+        'outcome_or_plan': dict(ledger.get('outcome_or_plan') or {}),
+        'runtime_memory_hash_state': dict(runtime_memory_hash_state),
+        'runtime_memory_mutated': bool(ledger.get('runtime_memory_mutated')),
+        'outgoing_response_id': response_id,
+        'label_clean': bool(ledger.get('label_clean')),
+    }
+    updated['processed_message_ids'] = processed_ids
+    updated['outgoing_response_ids'] = outgoing_ids
+    updated['response_records'] = list(updated['response_records']) + [record]
+    updated['latest'] = {
+        'selected_recipient': record['selected_recipient'],
+        'evidence_counts_by_sender': record['evidence_counts_by_sender'],
+        'outcome_or_plan': record['outcome_or_plan'],
+        'response_ledger_id': record['response_ledger_id'],
+        'response_ledger_hash': record['response_ledger_hash'],
+        'response_ledger_path': record['response_ledger_path'],
+        'outgoing_response_id': response_id,
+        'label_clean': record['label_clean'],
+        'runtime_memory_hash_state': record['runtime_memory_hash_state'],
+        'runtime_memory_mutated': record['runtime_memory_mutated'],
+    }
+    updated['memory_hash'] = stable_digest({
+        key: value for key, value in updated.items()
+        if key != 'memory_hash'
+    })
+    return updated
+
+
 def extract_handoff_questions(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     questions = []
     for message in messages:
@@ -918,6 +1148,45 @@ def _count_by_sender(items: list[dict[str, Any]]) -> dict[str, int]:
 def _three_module_response_available(inbox_summary: dict[str, Any]) -> bool:
     senders = {message.get('sender') for message in inbox_summary.get('messages') or []}
     return {'language_model_2', 'code_module', 'funfun'} <= senders
+
+
+def _module_chat_log_summary(
+    path: str | None,
+    messages: list[dict[str, Any]],
+    invalid_messages: list[dict[str, Any]],
+    participant: str,
+) -> dict[str, Any]:
+    inbound = [
+        message for message in messages
+        if message.get('sender') != participant
+        and message.get('recipient') in {participant, 'broadcast'}
+    ]
+    outgoing = [
+        message for message in messages
+        if message.get('sender') == participant
+    ]
+    return {
+        'path': path,
+        'messages': list(messages),
+        'inbound_messages': inbound,
+        'outgoing_messages': outgoing,
+        'invalid_messages': list(invalid_messages),
+        'handoff_questions': extract_handoff_questions(inbound),
+        'experiment_requests': extract_experiment_requests(inbound),
+        'evidence_notes': extract_evidence_notes(inbound),
+    }
+
+
+def _unique_strings(values: list[Any]) -> list[str]:
+    seen = set()
+    unique = []
+    for value in values:
+        text = str(value)
+        if text in seen:
+            continue
+        seen.add(text)
+        unique.append(text)
+    return unique
 
 
 def label_leak_terms(payload: Any) -> list[str]:
