@@ -20,6 +20,7 @@ import sys
 import os
 import concurrent.futures
 import contextlib
+import hashlib
 import io
 import json
 import base64
@@ -76,9 +77,14 @@ from agent.status_capsule import (
     load_capsule_memory_data,
 )
 from agent.module_chat_adapter import (
+    build_module_family_response_ledger,
+    choose_module_family_followup,
+    choose_module_family_recipient,
     export_chat_driven_response_message,
     export_capsule_chat_message,
+    export_module_family_response_message,
     read_module_chat_inbox,
+    write_response_ledger,
 )
 from agent.explorer import (
     ExplorationPlanner,
@@ -6087,6 +6093,31 @@ def _write_json_artifact(path: str | Path, artifact: dict):
     return output_path
 
 
+def _file_sha256(path: str | Path) -> str | None:
+    file_path = Path(path)
+    if not file_path.exists():
+        return None
+    digest = hashlib.sha256()
+    with file_path.open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _runtime_memory_hash_state(
+    path: str | Path,
+    before_hash: str | None,
+) -> dict:
+    after_hash = _file_sha256(path)
+    return {
+        'path': str(path),
+        'exists': Path(path).exists(),
+        'before_hash': before_hash,
+        'after_hash': after_hash,
+        'unchanged': before_hash == after_hash,
+    }
+
+
 def run_status_capsule(
     theory_memory: CumulativeTheoryMemory | None = None,
     *,
@@ -6277,6 +6308,125 @@ def run_module_chat_response_loop(
         _write_json_artifact(output_file, message)
     print(
         "AI_DIFFERENT_MODULE_CHAT_RESPONSE "
+        + json.dumps(message, sort_keys=True),
+        flush=True,
+    )
+    return message
+
+
+def run_module_chat_family_response(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    recipient: str = 'auto',
+    topic: str = 'ai_different.module_family_response',
+    inbox_file: str | Path | None = None,
+    output_file: str | Path | None = None,
+    ledger_file: str | Path = 'tmp/module-chat-response-ledger.json',
+    response_mode: str = 'plan',
+    fallback_outcome_mode: str = 'confirmed',
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Run the richer three-module coordination response workflow."""
+    if response_mode not in {'plan', 'run'}:
+        raise ValueError('response_mode must be plan or run')
+    if fallback_outcome_mode not in {'confirmed', 'weak', 'absent'}:
+        raise ValueError('fallback_outcome_mode must be confirmed, weak, or absent')
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+        working_memory = CumulativeTheoryMemory.from_dict(loaded_memory)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+        working_memory = CumulativeTheoryMemory.from_dict(loaded_memory)
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+        working_memory = CumulativeTheoryMemory.from_dict(loaded_memory)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=runtime_memory_path,
+    )
+    inbox_summary = read_module_chat_inbox(inbox_file, participant='ai_different')
+    selected = choose_module_family_followup(capsule, inbox_summary)
+    selected_recipient = choose_module_family_recipient(
+        inbox_summary,
+        selected,
+        requested_recipient=recipient,
+    )
+    before_hash = _file_sha256(runtime_memory_path)
+    initial_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+    preview_ledger = build_module_family_response_ledger(
+        capsule,
+        inbox_summary,
+        selected_recipient=selected_recipient,
+        response_mode=response_mode,
+        runtime_memory_hash_state=initial_hash_state,
+        ledger_path=ledger_file,
+    )
+    campaign_summary = None
+    ran_campaign = False
+    if preview_ledger['run_decision']['should_run_no_save_campaign']:
+        outcome_mode = (
+            selected.get('outcome_mode')
+            if selected.get('outcome_mode') in {'confirmed', 'weak', 'absent'}
+            else fallback_outcome_mode
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            campaign_summary = run_abstraction_transfer_campaign(
+                theory_memory=working_memory,
+                seed_start=0,
+                steps=90,
+                object_count=5,
+                target_world_types=[
+                    'standard',
+                    'time_varying',
+                    'hidden_procedural',
+                ],
+                outcome_mode=outcome_mode,
+                emit_hf_artifact_summary=False,
+            )
+        capsule = build_ai_different_status_capsule(
+            working_memory.to_dict(),
+            git_status_text=status_text,
+            git_ignored_text=ignored_text,
+            runtime_memory_path=runtime_memory_path,
+        )
+        ran_campaign = True
+    runtime_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+    ledger = build_module_family_response_ledger(
+        capsule,
+        inbox_summary,
+        selected_recipient=selected_recipient,
+        response_mode=response_mode,
+        campaign_summary=campaign_summary,
+        ran_campaign=ran_campaign,
+        runtime_memory_hash_state=runtime_hash_state,
+        ledger_path=ledger_file,
+    )
+    write_response_ledger(ledger_file, ledger)
+    message = export_module_family_response_message(
+        ledger,
+        recipient=selected_recipient,
+        topic=topic,
+    )
+    if output_file:
+        _write_json_artifact(output_file, message)
+    print(
+        "AI_DIFFERENT_MODULE_FAMILY_RESPONSE "
         + json.dumps(message, sort_keys=True),
         flush=True,
     )
@@ -7384,6 +7534,8 @@ if __name__ == '__main__':
                         help='Export the AI Different capsule as a module-chat JSON message')
     parser.add_argument('--module-chat-response-loop', action='store_true',
                         help='Read module-chat inbox and emit an abstraction-transfer response message')
+    parser.add_argument('--module-chat-family-response', action='store_true',
+                        help='Read a richer module-family inbox, persist a ledger, and emit a response')
     parser.add_argument('--module-chat-response-mode', type=str, default='plan',
                         choices=['plan', 'run'],
                         help='Plan or run the cheap no-save abstraction-transfer response')
@@ -7395,6 +7547,9 @@ if __name__ == '__main__':
                         help='Optional module-chat inbox JSONL file to read')
     parser.add_argument('--module-chat-output-file', type=str, default=None,
                         help='Optional JSON path for the exported module-chat message')
+    parser.add_argument('--module-chat-ledger-file', type=str,
+                        default='tmp/module-chat-response-ledger.json',
+                        help='JSON path for the persisted module-chat response ledger')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -7578,6 +7733,30 @@ if __name__ == '__main__':
             topic=response_topic,
             inbox_file=args.module_chat_inbox,
             output_file=args.module_chat_output_file or args.hf_output_file,
+            response_mode=args.module_chat_response_mode,
+            fallback_outcome_mode=args.abstraction_transfer_outcome,
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_family_response:
+        response_topic = (
+            args.module_chat_topic
+            if args.module_chat_topic != 'ai_different.status_capsule'
+            else 'ai_different.module_family_response'
+        )
+        recipient = (
+            'auto'
+            if args.module_chat_recipient == 'orchestrator'
+            else args.module_chat_recipient
+        )
+        run_module_chat_family_response(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            recipient=recipient,
+            topic=response_topic,
+            inbox_file=args.module_chat_inbox,
+            output_file=args.module_chat_output_file or args.hf_output_file,
+            ledger_file=args.module_chat_ledger_file,
             response_mode=args.module_chat_response_mode,
             fallback_outcome_mode=args.abstraction_transfer_outcome,
         )

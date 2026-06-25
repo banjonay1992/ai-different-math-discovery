@@ -12,17 +12,27 @@ PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'fir
 sys.path.insert(0, PROJECT_DIR)
 
 from agent.module_chat_adapter import (  # noqa: E402
+    build_module_family_response_ledger,
     build_module_chat_message,
     build_chat_driven_response_payload,
+    choose_module_family_followup,
+    choose_module_family_recipient,
     choose_next_non_final_request,
+    export_module_family_response_message,
     export_chat_driven_response_message,
     export_capsule_chat_message,
+    load_response_ledger,
     read_module_chat_inbox,
     validate_module_chat_message,
     validate_participant,
+    write_response_ledger,
 )
 from agent.status_capsule import build_ai_different_status_capsule  # noqa: E402
-from main import run_module_chat_export, run_module_chat_response_loop  # noqa: E402
+from main import (  # noqa: E402
+    run_module_chat_export,
+    run_module_chat_family_response,
+    run_module_chat_response_loop,
+)
 
 
 def memory_fixture():
@@ -96,6 +106,83 @@ def capsule_fixture():
         git_status_text=' M tmp/theory-memory.json\n',
         runtime_memory_path='tmp/theory-memory.json',
     )
+
+
+def three_module_messages(include_request=True):
+    messages = []
+    if include_request:
+        messages.append(build_module_chat_message(
+            sender='language_model_2',
+            recipient='ai_different',
+            topic='digest.abstraction_transfer.coordination',
+            body={
+                'message_id': 'lang-digest-1',
+                'request_kind': 'abstraction_transfer_followup',
+                'question': 'Use typed evidence to pick a safe transfer follow-up.',
+                'outcome_mode': 'weak',
+                'priority': 0.7,
+            },
+            evidence={'digest_kind': 'coordination', 'priority': 0.7},
+            tags=['abstraction_transfer', 'coordination'],
+        ))
+    else:
+        messages.append(build_module_chat_message(
+            sender='language_model_2',
+            recipient='ai_different',
+            topic='digest.coordination',
+            body={
+                'message_id': 'lang-digest-1',
+                'question': 'Which safe follow-up should we plan next?',
+            },
+            evidence={'digest_kind': 'coordination'},
+            tags=['coordination'],
+        ))
+    messages.extend([
+        build_module_chat_message(
+            sender='code_module',
+            recipient='ai_different',
+            topic='evidence.abstraction_transfer.budget',
+            body={
+                'message_id': 'code-budget-1',
+                'note_kind': 'evidence',
+                'summary': 'No-save abstraction response is cheap enough locally.',
+                'priority': 0.95,
+            },
+            evidence={
+                'estimated_runtime': 'subsecond',
+                'mutates_runtime_memory': False,
+                'priority': 0.95,
+            },
+            tags=['evidence', 'local_safe', 'budget'],
+        ),
+        build_module_chat_message(
+            sender='funfun',
+            recipient='broadcast',
+            topic='evidence.typed_discovery.capability',
+            body={
+                'message_id': 'funfun-typed-1',
+                'note_kind': 'evidence',
+                'summary': 'Typed discovery can expose reusable multiplicative structure.',
+                'priority': 0.82,
+            },
+            evidence={
+                'capability': 'typed_discovery',
+                'transfer_relevance': 'cross_surface_abstraction',
+                'priority': 0.82,
+            },
+            tags=['evidence', 'typed_discovery'],
+        ),
+    ])
+    return messages
+
+
+def _write_messages(tmpdir, messages):
+    inbox = Path(tmpdir) / 'inbox.jsonl'
+    inbox.write_text(
+        '\n'.join(json.dumps(message) for message in messages) + '\n',
+        encoding='utf-8',
+    )
+    return inbox
 
 
 class ModuleChatAdapterTests(unittest.TestCase):
@@ -348,6 +435,174 @@ class ModuleChatAdapterTests(unittest.TestCase):
         self.assertTrue(message['body']['label_clean'])
         self.assertEqual(message['topic'], saved['topic'])
 
+    def test_three_module_inbox_builds_family_ledger_with_funfun_evidence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inbox = Path(tmpdir) / 'inbox.jsonl'
+            inbox.write_text(
+                '\n'.join(json.dumps(message) for message in three_module_messages())
+                + '\n',
+                encoding='utf-8',
+            )
+            summary = read_module_chat_inbox(inbox)
+
+        selected = choose_module_family_followup(capsule_fixture(), summary)
+        selected_recipient = choose_module_family_recipient(
+            summary,
+            selected,
+            requested_recipient='auto',
+        )
+        ledger = build_module_family_response_ledger(
+            capsule_fixture(),
+            summary,
+            selected_recipient=selected_recipient,
+            response_mode='run',
+            runtime_memory_hash_state={
+                'path': 'tmp/theory-memory.json',
+                'exists': True,
+                'before_hash': 'same',
+                'after_hash': 'same',
+                'unchanged': True,
+            },
+            ledger_path='tmp/module-chat-response-ledger.json',
+        )
+
+        self.assertEqual(3, len(summary['messages']))
+        self.assertEqual(1, len(summary['experiment_requests']))
+        self.assertEqual(2, len(summary['evidence_notes']))
+        self.assertEqual('language_model_2', selected['requested_by'])
+        self.assertEqual('language_model_2', selected_recipient)
+        self.assertTrue(selected['selection_basis']['cheap_no_save_supported'])
+        self.assertTrue(selected['selection_basis']['typed_discovery_supported'])
+        self.assertTrue(ledger['three_module_response_available'])
+        self.assertEqual(1, ledger['evidence_counts_by_sender']['code_module'])
+        self.assertEqual(1, ledger['evidence_counts_by_sender']['funfun'])
+        self.assertEqual('funfun-typed-1', ledger['selected_evidence'][1]['message_id'])
+        self.assertTrue(ledger['run_decision']['should_run_no_save_campaign'])
+        self.assertTrue(ledger['label_clean'])
+        self.assertFalse(ledger['runtime_memory_mutated'])
+
+    def test_family_ledger_uses_deterministic_fallback_without_runnable_request(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inbox = Path(tmpdir) / 'inbox.jsonl'
+            inbox.write_text(
+                '\n'.join(
+                    json.dumps(message)
+                    for message in three_module_messages(include_request=False)
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+            summary = read_module_chat_inbox(inbox)
+
+        selected = choose_module_family_followup(capsule_fixture(), summary)
+        ledger = build_module_family_response_ledger(
+            capsule_fixture(),
+            summary,
+            selected_recipient='language_model_2',
+            response_mode='run',
+            runtime_memory_hash_state={'unchanged': True},
+        )
+
+        self.assertEqual(0, len(summary['experiment_requests']))
+        self.assertEqual('deterministic_fallback', selected['source'])
+        self.assertTrue(selected['selection_basis']['fallback_used'])
+        self.assertFalse(ledger['run_decision']['should_run_no_save_campaign'])
+        self.assertEqual('plan', ledger['outcome_or_plan']['mode'])
+        self.assertEqual(
+            'plan_only_no_runnable_inbox_request',
+            ledger['outcome_or_plan']['plan_reason'],
+        )
+
+    def test_family_response_ledger_persists_and_exports_schema(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ledger_path = Path(tmpdir) / 'ledger.json'
+            ledger = build_module_family_response_ledger(
+                capsule_fixture(),
+                {
+                    'path': 'synthetic.jsonl',
+                    'messages': three_module_messages(),
+                    'invalid_messages': [],
+                    'handoff_questions': [],
+                    'experiment_requests': [{
+                        'message_id': 'lang-digest-1',
+                        'sender': 'language_model_2',
+                        'topic': 'digest.abstraction_transfer.coordination',
+                        'request_kind': 'abstraction_transfer_followup',
+                        'experiment_kind': 'abstraction_transfer_probe',
+                        'question': 'Use typed evidence to pick a safe transfer follow-up.',
+                        'outcome_mode': 'weak',
+                        'priority': 0.7,
+                        'tags': ['abstraction_transfer', 'coordination'],
+                        'label_clean': True,
+                    }],
+                    'evidence_notes': [
+                        note for note in read_module_chat_inbox(
+                            _write_messages(tmpdir, three_module_messages())
+                        )['evidence_notes']
+                    ],
+                },
+                selected_recipient='language_model_2',
+                response_mode='plan',
+                runtime_memory_hash_state={'path': 'tmp/theory-memory.json', 'unchanged': True},
+                ledger_path=ledger_path,
+            )
+            write_response_ledger(ledger_path, ledger)
+            loaded = load_response_ledger(ledger_path)
+            message = export_module_family_response_message(loaded)
+
+        self.assertEqual(ledger['ledger_id'], loaded['ledger_id'])
+        self.assertEqual(ledger['ledger_hash'], loaded['ledger_hash'])
+        self.assertEqual('ai_different', message['sender'])
+        self.assertEqual('language_model_2', message['recipient'])
+        self.assertEqual('ai_different.module_family_response', message['topic'])
+        self.assertEqual(ledger['ledger_id'], message['body']['ledger_id'])
+        self.assertTrue(message['body']['label_clean'])
+        self.assertFalse(message['body']['runtime_memory_mutated'])
+        self.assertFalse(
+            message['body']['project_owned_boundary']['third_party_checkpoint_used']
+        )
+
+    def test_run_module_chat_family_response_preserves_runtime_memory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inbox = Path(tmpdir) / 'inbox.jsonl'
+            runtime_memory = Path(tmpdir) / 'theory-memory.json'
+            output_file = Path(tmpdir) / 'response.json'
+            ledger_file = Path(tmpdir) / 'ledger.json'
+            inbox.write_text(
+                '\n'.join(json.dumps(message) for message in three_module_messages())
+                + '\n',
+                encoding='utf-8',
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                message = run_module_chat_family_response(
+                    memory_data=memory_fixture(),
+                    runtime_memory_path=str(runtime_memory),
+                    recipient='auto',
+                    inbox_file=inbox,
+                    output_file=output_file,
+                    ledger_file=ledger_file,
+                    response_mode='run',
+                    git_status_text='',
+                    git_ignored_text='',
+                )
+            saved = json.loads(output_file.read_text(encoding='utf-8'))
+            ledger = load_response_ledger(ledger_file)
+
+        self.assertIn('AI_DIFFERENT_MODULE_FAMILY_RESPONSE ', output.getvalue())
+        self.assertFalse(runtime_memory.exists())
+        self.assertEqual('language_model_2', message['recipient'])
+        self.assertEqual('campaign_result', message['body']['outcome_or_plan']['mode'])
+        self.assertTrue(message['body']['outcome_or_plan']['ran_campaign'])
+        self.assertFalse(message['body']['outcome_or_plan']['memory_saved'])
+        self.assertTrue(message['body']['runtime_memory_hash_state']['unchanged'])
+        self.assertFalse(message['body']['runtime_memory_mutated'])
+        self.assertTrue(message['body']['three_module_response_available'])
+        self.assertEqual(1, message['body']['evidence_counts_by_sender']['code_module'])
+        self.assertEqual(1, message['body']['evidence_counts_by_sender']['funfun'])
+        self.assertEqual(message['body']['ledger_id'], ledger['ledger_id'])
+        self.assertEqual(message['topic'], saved['topic'])
+
     def test_run_module_chat_export_prints_label_clean_bridge_without_mutating_memory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             inbox = Path(tmpdir) / 'inbox.jsonl'
@@ -394,11 +649,15 @@ class ModuleChatAdapterTests(unittest.TestCase):
             'agent',
             'module_chat_adapter.py',
         ).read_text(encoding='utf-8')
+        main_source = Path(PROJECT_DIR, 'main.py').read_text(encoding='utf-8')
 
         self.assertNotIn('Language model 2.0', source)
         self.assertNotIn('orchastratorrrr', source)
         self.assertNotIn('Code Module', source)
         self.assertNotIn('sys.path', source)
+        self.assertNotIn('Language model 2.0', main_source)
+        self.assertNotIn('orchastratorrrr', main_source)
+        self.assertNotIn('Code Module', main_source)
 
 
 if __name__ == '__main__':
