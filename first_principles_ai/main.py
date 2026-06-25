@@ -2014,6 +2014,261 @@ def run_abstraction_transfer_campaign(
     return summary
 
 
+def _abstraction_replay_score(outcome: str) -> int:
+    if outcome == 'abstraction_transfer_confirmed':
+        return 3
+    if outcome == 'abstraction_reused_same_context':
+        return 2
+    if outcome == 'abstraction_transfer_weak':
+        return 1
+    return 0
+
+
+def _abstraction_replay_class(candidate_outcome: str, control_outcome: str) -> str:
+    candidate_score = _abstraction_replay_score(candidate_outcome)
+    control_score = _abstraction_replay_score(control_outcome)
+    if candidate_score >= 3 and candidate_score > control_score:
+        return 'candidate_win'
+    if candidate_score == control_score:
+        return 'control_no_gain'
+    if candidate_outcome in {
+        'abstraction_transfer_weak',
+        'abstraction_transfer_absent',
+    }:
+        return 'weak_or_absent_bridge'
+    if control_score > candidate_score:
+        return 'control_win'
+    return 'candidate_margin'
+
+
+def _abstraction_replay_comparison(
+    *,
+    loop: AutonomousDiscoveryLoop,
+    theory_memory: CumulativeTheoryMemory,
+    plan: dict,
+    scenario_id: str,
+    seed: int,
+    steps: int,
+    object_count: int,
+    candidate_mode: str,
+    control_mode: str,
+) -> dict:
+    held_out_world = str(plan.get('world_type') or plan.get('unrelated_world') or 'hidden_procedural')
+    candidate_report = loop.build_report(
+        [_abstraction_transfer_target_equation(plan, candidate_mode)],
+        step=steps,
+        current_count=object_count,
+    )
+    control_report = loop.build_report(
+        [_abstraction_transfer_target_equation(plan, control_mode)],
+        step=steps,
+        current_count=object_count,
+    )
+    candidate_outcome = theory_memory.evaluate_planned_result(
+        plan,
+        context=held_out_world,
+        seed=seed,
+        report=candidate_report,
+    )
+    control_outcome = theory_memory.evaluate_planned_result(
+        plan,
+        context=held_out_world,
+        seed=seed + 10_000,
+        report=control_report,
+    )
+    candidate_score = _abstraction_replay_score(str(candidate_outcome.get('outcome')))
+    control_score = _abstraction_replay_score(str(control_outcome.get('outcome')))
+    replay_class = _abstraction_replay_class(
+        str(candidate_outcome.get('outcome')),
+        str(control_outcome.get('outcome')),
+    )
+    return {
+        'scenario_id': scenario_id,
+        'held_out_world_id': held_out_world,
+        'source_bridge_id': plan.get('abstraction_key'),
+        'source_bridge_kind': plan.get('abstraction_kind'),
+        'target_probe_id': (
+            f"{scenario_id}:{plan.get('abstraction_key')}:"
+            f"{held_out_world}:seed{seed}"
+        ),
+        'candidate_mode': candidate_mode,
+        'control_mode': control_mode,
+        'candidate_outcome': candidate_outcome,
+        'control_outcome': control_outcome,
+        'candidate_evidence_score': candidate_score,
+        'control_evidence_score': control_score,
+        'selected_replay_class': replay_class,
+        'evidence_counts': {
+            'candidate_win': 1 if replay_class == 'candidate_win' else 0,
+            'control_no_gain': 1 if replay_class == 'control_no_gain' else 0,
+            'weak_or_absent_bridge': 1 if replay_class == 'weak_or_absent_bridge' else 0,
+            'control_win': 1 if replay_class == 'control_win' else 0,
+        },
+        'candidate_not_causal_wording': (
+            'Bounded replay pack evidence only: candidate/control comparisons '
+            'show replay_candidate_benefit on synthetic held-out probes, not '
+            'causal proof or a science benchmark.'
+        ),
+    }
+
+
+def run_bounded_abstraction_transfer_replay_pack(
+    *,
+    seed_start: int = 0,
+    steps: int = 120,
+    object_count: int = 5,
+    target_world_types: list[str] | None = None,
+    output_file: str | Path | None = None,
+    emit_hf_artifact_summary: bool = False,
+) -> dict:
+    """Run a tiny non-final candidate-vs-control abstraction transfer replay pack."""
+    target_world_types = target_world_types or [
+        'standard',
+        'time_varying',
+        'inverse_square_repulsion',
+        'localized_gravity',
+        'hidden_procedural',
+    ]
+    theory_memory = CumulativeTheoryMemory()
+    loop = AutonomousDiscoveryLoop()
+    source_results = []
+    for case in _abstraction_transfer_source_cases(seed_start=seed_start):
+        report = loop.build_report(
+            case['equations'],
+            step=case['step'],
+            current_count=case['current_count'],
+        )
+        theory_memory.record_result(case['context'], case['seed'], report)
+        packed_report = report.to_dict()
+        source_results.append({
+            'context': case['context'],
+            'seed': case['seed'],
+            'bridge_count': len(packed_report.get('abstraction_bridges') or []),
+            'bridge_kinds': [
+                bridge.get('abstraction_kind')
+                for bridge in packed_report.get('abstraction_bridges') or []
+            ],
+        })
+    plan = _abstraction_transfer_campaign_plan(
+        theory_memory,
+        world_types=target_world_types,
+        object_count=object_count,
+        steps=steps,
+        seed_start=seed_start + 100,
+    )
+    comparisons = []
+    if plan:
+        for index, scenario in enumerate([
+            ('candidate_win', 'confirmed', 'absent'),
+            ('control_no_gain', 'absent', 'absent'),
+            ('weak_or_absent_bridge', 'weak', 'absent'),
+        ]):
+            scenario_id, candidate_mode, control_mode = scenario
+            comparisons.append(_abstraction_replay_comparison(
+                loop=loop,
+                theory_memory=theory_memory,
+                plan=plan,
+                scenario_id=scenario_id,
+                seed=seed_start + 200 + index,
+                steps=steps,
+                object_count=object_count,
+                candidate_mode=candidate_mode,
+                control_mode=control_mode,
+            ))
+    evidence_counts = {
+        'candidate_win': sum(
+            int(row['evidence_counts'].get('candidate_win', 0))
+            for row in comparisons
+        ),
+        'control_no_gain': sum(
+            int(row['evidence_counts'].get('control_no_gain', 0))
+            for row in comparisons
+        ),
+        'weak_or_absent_bridge': sum(
+            int(row['evidence_counts'].get('weak_or_absent_bridge', 0))
+            for row in comparisons
+        ),
+        'control_win': sum(
+            int(row['evidence_counts'].get('control_win', 0))
+            for row in comparisons
+        ),
+    }
+    config = {
+        'seed_start': int(seed_start),
+        'steps': int(steps),
+        'object_count': int(object_count),
+        'target_world_types': list(target_world_types),
+        'scenario_modes': [
+            {'scenario_id': 'candidate_win', 'candidate_mode': 'confirmed', 'control_mode': 'absent'},
+            {'scenario_id': 'control_no_gain', 'candidate_mode': 'absent', 'control_mode': 'absent'},
+            {'scenario_id': 'weak_or_absent_bridge', 'candidate_mode': 'weak', 'control_mode': 'absent'},
+        ],
+    }
+    artifact = {
+        'run_kind': 'bounded_abstraction_transfer_replay_pack',
+        'runs_final': False,
+        'mutates_runtime_theory_memory': False,
+        'candidate_not_causal': True,
+        'candidate_not_causal_wording': (
+            'Bounded replay pack evidence only: replay_candidate_benefit is '
+            'not causal proof, not live AGI, and not a science benchmark.'
+        ),
+        'project_owned_checkpoint_claimed': False,
+        'third_party_checkpoint_used': False,
+        'hf_validation_used': False,
+        'config': config,
+        'source_results': source_results,
+        'bridge_count': len(theory_memory.abstraction_bridges(limit=8)),
+        'selected_plan': dict(plan or {}),
+        'comparisons': comparisons,
+        'evidence_counts': evidence_counts,
+        'label_leaks': [],
+    }
+    artifact['artifact_content_hash'] = hashlib.sha256(
+        json.dumps(artifact, sort_keys=True).encode('utf-8')
+    ).hexdigest()
+    artifact_path = None
+    artifact_file_hash = None
+    if output_file:
+        artifact_path = _write_json_artifact(output_file, artifact)
+        artifact_file_hash = _file_sha256(artifact_path)
+    result = {
+        'run_kind': artifact['run_kind'],
+        'runs_final': False,
+        'artifact_path': str(artifact_path) if artifact_path else None,
+        'artifact_sha256': artifact_file_hash,
+        'artifact_content_hash': artifact['artifact_content_hash'],
+        'comparison_count': len(comparisons),
+        'evidence_counts': evidence_counts,
+        'selected_candidate_control_outcomes': [
+            {
+                'scenario_id': row['scenario_id'],
+                'selected_replay_class': row['selected_replay_class'],
+                'candidate_outcome': row['candidate_outcome'].get('outcome'),
+                'control_outcome': row['control_outcome'].get('outcome'),
+            }
+            for row in comparisons
+        ],
+        'candidate_not_causal': True,
+        'project_owned_checkpoint_claimed': False,
+        'third_party_checkpoint_used': False,
+        'hf_validation_used': False,
+        'label_leaks': [],
+    }
+    print(
+        "AI_DIFFERENT_ABSTRACTION_TRANSFER_REPLAY_PACK "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    if emit_hf_artifact_summary:
+        print(
+            "HF_ARTIFACT_SUMMARY "
+            + json.dumps(artifact, sort_keys=True),
+            flush=True,
+        )
+    return result
+
+
 def _hf_upload_requires_create_pr(error: Exception) -> bool:
     message = str(error).lower()
     if '403' in message or 'forbidden' in message:
@@ -12011,6 +12266,10 @@ if __name__ == '__main__':
     parser.add_argument('--abstraction-transfer-outcome', type=str, default='confirmed',
                         choices=['confirmed', 'weak', 'absent'],
                         help='Simulated transfer outcome for the non-final abstraction campaign')
+    parser.add_argument('--abstraction-transfer-replay-pack', action='store_true',
+                        help='Run a bounded candidate-vs-control abstraction transfer replay pack')
+    parser.add_argument('--abstraction-transfer-replay-output-file', type=str, default=None,
+                        help='Optional JSON artifact path for the bounded abstraction transfer replay pack')
     parser.add_argument('--math-foundation-prep', action='store_true',
                         help='Run readiness checks before the final watched math discovery run')
     parser.add_argument('--discovery-readiness', action='store_true',
@@ -13465,6 +13724,20 @@ if __name__ == '__main__':
             and not args.no_save_theory_memory
         ):
             theory_memory.save(args.theory_memory_file)
+        raise SystemExit(0)
+
+    if args.abstraction_transfer_replay_pack:
+        run_bounded_abstraction_transfer_replay_pack(
+            seed_start=args.seed,
+            steps=args.benchmark_steps,
+            object_count=_parse_csv_ints(args.object_counts)[0],
+            target_world_types=_parse_abstraction_transfer_worlds(args.world_types),
+            output_file=(
+                args.abstraction_transfer_replay_output_file
+                or args.hf_output_file
+            ),
+            emit_hf_artifact_summary=args.hf_log_artifact_summary,
+        )
         raise SystemExit(0)
 
     if args.equation_campaign:

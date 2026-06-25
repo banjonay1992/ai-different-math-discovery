@@ -108,6 +108,9 @@ python3 main.py --math-benchmark --seeds 3 --benchmark-steps 160 --world-types s
 # Build equation review packs from a starter-kit equation workbench
 python3 main.py --equation-campaign --seeds 1 --benchmark-steps 220 --world-types standard,sideways_wind,vortex --equation-hidden-worlds 2
 
+# Replay abstraction bridges against held-out unrelated-world controls
+python3 main.py --abstraction-transfer-replay-pack --seed 7 --benchmark-steps 90 --world-types standard,time_varying,hidden_procedural --abstraction-transfer-replay-output-file tmp/abstraction-transfer-replay-pack.json
+
 # Check whether the math-foundation gates are ready before the final watched run
 python3 main.py --math-foundation-prep --seeds 1 --benchmark-steps 220 --world-types standard,sideways_wind,vortex --equation-hidden-worlds 2
 

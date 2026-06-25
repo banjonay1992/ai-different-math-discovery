@@ -1,9 +1,11 @@
 import contextlib
 import io
+import json
 import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'first_principles_ai'))
@@ -21,6 +23,7 @@ from main import (
     _run_equation_followup_cases,
     parse_live_progress_line,
     run_abstraction_transfer_campaign,
+    run_bounded_abstraction_transfer_replay_pack,
     run_live_progress_viewer,
     run_memory_efficiency_review,
     run_rediscovery_goal_progress_audit,
@@ -375,6 +378,121 @@ class DiscoveryLoopTests(unittest.TestCase):
                 ]
                 self.assertGreaterEqual(progress_gate['score'], 0.9)
                 self.assertIn('Abstraction discovery', memory.summary())
+
+    def test_bounded_abstraction_transfer_replay_pack_artifact_schema(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_path = Path(tmpdir) / 'replay-pack.json'
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                result = run_bounded_abstraction_transfer_replay_pack(
+                    seed_start=7,
+                    steps=90,
+                    object_count=5,
+                    target_world_types=[
+                        'standard',
+                        'time_varying',
+                        'hidden_procedural',
+                    ],
+                    output_file=artifact_path,
+                )
+            artifact = json.loads(artifact_path.read_text(encoding='utf-8'))
+
+        self.assertIn('AI_DIFFERENT_ABSTRACTION_TRANSFER_REPLAY_PACK', stream.getvalue())
+        self.assertEqual('bounded_abstraction_transfer_replay_pack', result['run_kind'])
+        self.assertEqual(64, len(result['artifact_sha256']))
+        self.assertEqual(3, result['comparison_count'])
+        self.assertFalse(artifact['runs_final'])
+        self.assertFalse(artifact['mutates_runtime_theory_memory'])
+        self.assertFalse(artifact['project_owned_checkpoint_claimed'])
+        self.assertFalse(artifact['third_party_checkpoint_used'])
+        self.assertFalse(artifact['hf_validation_used'])
+        self.assertEqual([], artifact['label_leaks'])
+        self.assertIn('not causal proof', artifact['candidate_not_causal_wording'])
+        self.assertEqual(7, artifact['config']['seed_start'])
+        self.assertEqual(90, artifact['config']['steps'])
+        self.assertEqual(1, artifact['evidence_counts']['candidate_win'])
+        self.assertEqual(1, artifact['evidence_counts']['control_no_gain'])
+        self.assertEqual(1, artifact['evidence_counts']['weak_or_absent_bridge'])
+        classes = {
+            row['selected_replay_class']
+            for row in artifact['comparisons']
+        }
+        self.assertEqual(
+            {
+                'candidate_win',
+                'control_no_gain',
+                'weak_or_absent_bridge',
+            },
+            classes,
+        )
+        for row in artifact['comparisons']:
+            self.assertTrue(row['held_out_world_id'])
+            self.assertTrue(row['source_bridge_id'])
+            self.assertTrue(row['target_probe_id'])
+            self.assertNotIn(
+                row['held_out_world_id'],
+                set(row['candidate_outcome'].get('target_theory_kinds') or []),
+            )
+
+    def test_bounded_abstraction_transfer_replay_pack_is_deterministic(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_path = Path(tmpdir) / 'replay-pack.json'
+            first = run_bounded_abstraction_transfer_replay_pack(
+                seed_start=3,
+                steps=90,
+                object_count=5,
+                target_world_types=[
+                    'standard',
+                    'time_varying',
+                    'hidden_procedural',
+                ],
+                output_file=artifact_path,
+            )
+            first_artifact = json.loads(artifact_path.read_text(encoding='utf-8'))
+            second = run_bounded_abstraction_transfer_replay_pack(
+                seed_start=3,
+                steps=90,
+                object_count=5,
+                target_world_types=[
+                    'standard',
+                    'time_varying',
+                    'hidden_procedural',
+                ],
+                output_file=artifact_path,
+            )
+            second_artifact = json.loads(artifact_path.read_text(encoding='utf-8'))
+
+        self.assertEqual(first['artifact_content_hash'], second['artifact_content_hash'])
+        self.assertEqual(first['artifact_sha256'], second['artifact_sha256'])
+        self.assertEqual(first_artifact, second_artifact)
+        outcomes = {
+            item['scenario_id']: (
+                item['candidate_outcome'],
+                item['control_outcome'],
+            )
+            for item in first['selected_candidate_control_outcomes']
+        }
+        self.assertEqual(
+            (
+                'abstraction_transfer_confirmed',
+                'abstraction_transfer_absent',
+            ),
+            outcomes['candidate_win'],
+        )
+        self.assertEqual(
+            (
+                'abstraction_transfer_absent',
+                'abstraction_transfer_absent',
+            ),
+            outcomes['control_no_gain'],
+        )
+        self.assertEqual(
+            (
+                'abstraction_transfer_weak',
+                'abstraction_transfer_absent',
+            ),
+            outcomes['weak_or_absent_bridge'],
+        )
 
     def test_distance_scaled_residual_generates_strength_law_concept(self):
         loop = AutonomousDiscoveryLoop()
