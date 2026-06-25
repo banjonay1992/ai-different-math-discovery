@@ -69,6 +69,12 @@ from agent.super_system import (
     super_system_summary_lines,
     theory_beliefs_from_plan,
 )
+from agent.status_capsule import (
+    build_ai_different_status_capsule,
+    git_check_ignore_for_path,
+    git_status_for_path,
+    load_capsule_memory_data,
+)
 from agent.explorer import (
     ExplorationPlanner,
     explain_exploration_outcome,
@@ -6076,6 +6082,50 @@ def _write_json_artifact(path: str | Path, artifact: dict):
     return output_path
 
 
+def run_status_capsule(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    output_file: str | Path | None = None,
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Print an orchestrator-facing status capsule without running discovery."""
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=runtime_memory_path,
+    )
+    if output_file:
+        capsule['artifact_path'] = str(Path(output_file))
+        _write_json_artifact(output_file, capsule)
+    print(
+        "AI_DIFFERENT_STATUS_CAPSULE "
+        + json.dumps(capsule, sort_keys=True),
+        flush=True,
+    )
+    return capsule
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -7169,6 +7219,10 @@ if __name__ == '__main__':
                         help='Optional JSON path for the connected super-system audit')
     parser.add_argument('--super-system-limit', type=int, default=5,
                         help='Rows per subsystem to include in the super-system audit')
+    parser.add_argument('--status-capsule', action='store_true',
+                        help='Print an orchestrator-facing AI Different status capsule')
+    parser.add_argument('--status-capsule-output-file', type=str, default=None,
+                        help='Optional JSON path for the status capsule')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -7319,6 +7373,14 @@ if __name__ == '__main__':
         if args.theory_memory_file
         else None
     )
+
+    if args.status_capsule:
+        run_status_capsule(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            output_file=args.status_capsule_output_file or args.hf_output_file,
+        )
+        raise SystemExit(0)
 
     if args.live_progress_view:
         run_live_progress_viewer(
