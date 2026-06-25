@@ -57,7 +57,7 @@ from agent.math_discovery import EmergentMathDiscovery
 from agent.equation_workbench import EquationWorkbench
 from agent.equation_tensor_backend import available_equation_scoring_backends
 from agent.compute_budget import plan_adaptive_compute_budget
-from agent.discovery_loop import CumulativeTheoryMemory
+from agent.discovery_loop import AutonomousDiscoveryLoop, CumulativeTheoryMemory
 from agent.math_foundation import MathFoundationWorkbench
 from agent.resource_efficiency import estimate_json_bytes
 from agent.super_system import (
@@ -1377,6 +1377,393 @@ def _equation_campaign_artifact_summary(
         ),
         'planned_outcomes_tail': list(theory_memory.planned_outcomes[-12:]),
     }
+
+
+def _abstraction_equation(
+    *,
+    key: str,
+    role: str,
+    score: float = 0.84,
+    target: str = 'baseline_adjusted_delta_velocity',
+    expression: str = 'candidate_expression',
+    parameters: dict | None = None,
+    mse: float = 0.02,
+    baseline_mse: float = 0.30,
+) -> dict:
+    return {
+        'key': key,
+        'target': target,
+        'expression': expression,
+        'description': 'label-clean abstraction campaign candidate',
+        'score': score,
+        'mse': mse,
+        'baseline_mse': baseline_mse,
+        'complexity': 5,
+        'sample_count': 120,
+        'parameters': dict(parameters or {}),
+        'role': role,
+    }
+
+
+def _abstraction_transfer_source_cases(seed_start: int = 0) -> list[dict]:
+    return [
+        {
+            'context': 'surface_form_local_domain',
+            'seed': int(seed_start),
+            'step': 180,
+            'current_count': 4,
+            'equations': [
+                _abstraction_equation(
+                    key='abs_source_local_direction',
+                    role='local_residual_direction_equation',
+                    score=0.80,
+                    expression='unit(candidate_center - position)',
+                    parameters={'center_x': 8.0, 'center_y': 12.0, 'k': 0.2},
+                ),
+                _abstraction_equation(
+                    key='abs_source_cutoff_direction',
+                    role='generated_operator_cutoff_direction_equation',
+                    score=0.84,
+                    expression='inside(separation <= r) * unit_vector',
+                    parameters={
+                        'center_x': 8.0,
+                        'center_y': 12.0,
+                        'cutoff_radius': 6.0,
+                        'cutoff_mse_improvement': 0.12,
+                        'cutoff_vs_smooth_improvement': 0.08,
+                    },
+                ),
+                _abstraction_equation(
+                    key='abs_source_tapered_direction',
+                    role='generated_operator_tapered_distance_direction_equation',
+                    score=0.90,
+                    expression='domain_weight * unit_vector / separation^2',
+                    parameters={
+                        'center_x': 8.0,
+                        'center_y': 12.0,
+                        'cutoff_radius': 6.0,
+                        'distance_exponent': 2.0,
+                        'distance_mse_improvement': 0.16,
+                        'tapered_vs_cutoff_improvement': 0.06,
+                        'tapered_vs_smooth_improvement': 0.10,
+                    },
+                ),
+            ],
+        },
+        {
+            'context': 'surface_form_cyclic_residual',
+            'seed': int(seed_start) + 1,
+            'step': 181,
+            'current_count': 4,
+            'equations': [
+                _abstraction_equation(
+                    key='abs_source_periodic_residual',
+                    role='residual_periodic_equation',
+                    score=0.82,
+                    target='baseline_adjusted_delta_vx',
+                    expression='a * sin(step / period) + b * cos(step / period)',
+                    parameters={'period_steps': 40, 'amplitude': 0.18},
+                ),
+                _abstraction_equation(
+                    key='abs_source_generated_periodic_residual',
+                    role='generated_operator_periodic_equation',
+                    score=0.86,
+                    target='baseline_adjusted_delta_vy',
+                    expression='phase_basis(step, period) dot residual_channel',
+                    parameters={'period_steps': 40, 'amplitude': 0.16},
+                ),
+            ],
+        },
+    ]
+
+
+def _target_family_for_abstraction_plan(plan: dict) -> str:
+    families = list(plan.get('target_theory_kinds') or [])
+    preferred = [
+        'tapered_distance_direction_residual',
+        'cutoff_direction_residual',
+        'distance_scaled_direction_residual',
+        'periodic_residual',
+        'direction_residual',
+    ]
+    for family in preferred:
+        if family in families:
+            return family
+    return str(families[0]) if families else 'distance_scaled_direction_residual'
+
+
+def _abstraction_transfer_target_equation(
+    plan: dict,
+    outcome_mode: str,
+) -> dict:
+    if outcome_mode == 'absent':
+        return _abstraction_equation(
+            key='abs_target_absent_transition',
+            role='constant_change_equation',
+            score=0.72,
+            target='delta_position',
+            expression='constant_delta',
+            parameters={'dx': 0.1, 'dy': 0.0},
+        )
+
+    family = _target_family_for_abstraction_plan(plan)
+    strong = outcome_mode == 'confirmed'
+    if family == 'periodic_residual':
+        period = 48 if strong else None
+        return _abstraction_equation(
+            key='abs_target_periodic_transfer',
+            role='generated_operator_periodic_equation',
+            score=0.84 if strong else 0.58,
+            target='baseline_adjusted_delta_vx',
+            expression='phase_basis(step, period) dot residual_channel',
+            parameters={'period_steps': period, 'amplitude': 0.13},
+        )
+    if family == 'cutoff_direction_residual':
+        return _abstraction_equation(
+            key='abs_target_cutoff_transfer',
+            role='generated_operator_cutoff_direction_equation',
+            score=0.84 if strong else 0.61,
+            expression='inside(separation <= r) * unit_vector',
+            parameters={
+                'center_x': 10.0,
+                'center_y': 10.0,
+                'cutoff_radius': 5.0,
+                'cutoff_mse_improvement': 0.10 if strong else 0.01,
+                'cutoff_vs_smooth_improvement': 0.08 if strong else 0.0,
+            },
+        )
+    if family == 'direction_residual':
+        return _abstraction_equation(
+            key='abs_target_direction_transfer',
+            role='local_residual_direction_equation',
+            score=0.80 if strong else 0.55,
+            expression='unit(candidate_center - position)',
+            parameters={
+                'center_x': 10.0 if strong else None,
+                'center_y': 10.0 if strong else None,
+            },
+        )
+    if family == 'distance_scaled_direction_residual':
+        return _abstraction_equation(
+            key='abs_target_distance_transfer',
+            role='generated_operator_distance_scaled_direction_equation',
+            score=0.85 if strong else 0.60,
+            expression='unit_vector / separation^2',
+            parameters={
+                'center_x': 10.0,
+                'center_y': 10.0,
+                'distance_exponent': 2.0,
+                'distance_mse_improvement': 0.13 if strong else 0.01,
+            },
+        )
+    return _abstraction_equation(
+        key='abs_target_tapered_transfer',
+        role='generated_operator_tapered_distance_direction_equation',
+        score=0.88 if strong else 0.62,
+        expression='domain_weight * unit_vector / separation^2',
+        parameters={
+            'center_x': 10.0,
+            'center_y': 10.0,
+            'cutoff_radius': 5.0,
+            'distance_exponent': 2.0,
+            'distance_mse_improvement': 0.14 if strong else 0.01,
+            'tapered_vs_cutoff_improvement': 0.06 if strong else 0.0,
+            'tapered_vs_smooth_improvement': 0.09 if strong else 0.0,
+        },
+    )
+
+
+def _abstraction_transfer_campaign_plan(
+    theory_memory: CumulativeTheoryMemory,
+    *,
+    world_types: list[str],
+    object_count: int,
+    steps: int,
+    seed_start: int,
+) -> dict:
+    plans = theory_memory.planned_experiments(
+        world_types=world_types,
+        object_counts=[object_count],
+        steps=steps,
+        seed_start=seed_start,
+        limit=10,
+    )
+    for plan in plans:
+        if plan.get('experiment_kind') == 'abstraction_transfer_probe':
+            return plan
+    experiments = theory_memory.abstraction_transfer_experiments(limit=1)
+    if not experiments:
+        return {}
+    recommendation = experiments[0]
+    context = theory_memory._select_plan_context(recommendation, world_types)
+    return {
+        'theory_kind': recommendation['theory_kind'],
+        'experiment_kind': recommendation['experiment_kind'],
+        'priority': recommendation['priority'],
+        'world_type': context,
+        'seed': seed_start,
+        'object_count': object_count,
+        'steps': steps,
+        'hidden_holdout': context == 'hidden_procedural',
+        'reason': recommendation['reason'],
+        'expected_result': recommendation['expected_result'],
+        'falsifies_if': recommendation['falsifies_if'],
+        'source_status': recommendation.get('family_status'),
+        'target_context': recommendation.get('target_context'),
+        'abstraction_key': recommendation.get('abstraction_key'),
+        'abstraction_kind': recommendation.get('abstraction_kind'),
+        'canonical_name': recommendation.get('canonical_name'),
+        'compressed_expression': recommendation.get('compressed_expression'),
+        'compression_rule': recommendation.get('compression_rule'),
+        'transfer_target': recommendation.get('transfer_target'),
+        'unrelated_world': recommendation.get('unrelated_world'),
+        'solve_hint': recommendation.get('solve_hint'),
+        'source_contexts': list(recommendation.get('source_contexts') or []),
+        'target_theory_kinds': list(recommendation.get('target_theory_kinds') or []),
+        'abstraction_bridge': dict(recommendation.get('abstraction_bridge') or {}),
+    }
+
+
+def run_abstraction_transfer_campaign(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    seed_start: int = 0,
+    steps: int = 120,
+    object_count: int = 5,
+    target_world_types: list[str] | None = None,
+    outcome_mode: str = 'confirmed',
+    emit_hf_artifact_summary: bool = False,
+) -> dict:
+    """Run a tiny non-final abstraction-transfer campaign."""
+    if outcome_mode not in {'confirmed', 'weak', 'absent'}:
+        raise ValueError('outcome_mode must be confirmed, weak, or absent')
+    theory_memory = theory_memory or CumulativeTheoryMemory()
+    target_world_types = target_world_types or [
+        'standard',
+        'time_varying',
+        'inverse_square_repulsion',
+        'localized_gravity',
+        'hidden_procedural',
+    ]
+    starting_memory_summary = theory_memory.memory_checkpoint_summary()
+    loop = AutonomousDiscoveryLoop()
+    source_results = []
+
+    print("=" * 70)
+    print("ABSTRACTION TRANSFER CAMPAIGN")
+    print("=" * 70)
+    print(f"Outcome mode: {outcome_mode}")
+    print(f"Target worlds: {', '.join(target_world_types)}")
+    print()
+
+    for case in _abstraction_transfer_source_cases(seed_start=seed_start):
+        report = loop.build_report(
+            case['equations'],
+            step=case['step'],
+            current_count=case['current_count'],
+        )
+        theory_memory.record_result(case['context'], case['seed'], report)
+        packed_report = report.to_dict()
+        source_results.append({
+            'context': case['context'],
+            'seed': case['seed'],
+            'bridge_count': len(packed_report.get('abstraction_bridges') or []),
+            'bridge_kinds': [
+                bridge.get('abstraction_kind')
+                for bridge in packed_report.get('abstraction_bridges') or []
+            ],
+            'concept_kinds': [
+                concept.get('concept_kind')
+                for concept in packed_report.get('concept_proposals') or []
+            ],
+        })
+        print(
+            f"{case['context']:28s} seed={case['seed']:3d} "
+            f"bridges={source_results[-1]['bridge_count']:2d} "
+            f"kinds={','.join(source_results[-1]['bridge_kinds'][:4])}"
+        )
+
+    bridges = theory_memory.abstraction_bridges(limit=8)
+    plan = _abstraction_transfer_campaign_plan(
+        theory_memory,
+        world_types=target_world_types,
+        object_count=object_count,
+        steps=steps,
+        seed_start=seed_start + 100,
+    )
+    transfer_result = {}
+    if plan:
+        target_context = str(plan.get('world_type') or 'hidden_procedural')
+        target_equation = _abstraction_transfer_target_equation(plan, outcome_mode)
+        target_report = loop.build_report(
+            [target_equation],
+            step=steps,
+            current_count=object_count,
+        )
+        outcome = theory_memory.record_planned_result(
+            plan,
+            context=target_context,
+            seed=int(plan.get('seed', seed_start + 100) or seed_start + 100),
+            report=target_report,
+        )
+        transfer_result = {
+            'context': target_context,
+            'seed': int(plan.get('seed', seed_start + 100) or seed_start + 100),
+            'target_equation_role': target_equation.get('role'),
+            'plan': dict(plan),
+            'outcome': outcome,
+            'report': target_report.to_dict(),
+        }
+        print()
+        print(
+            "Transfer probe: "
+            f"{plan.get('abstraction_kind')} -> {target_context} "
+            f"outcome={outcome.get('outcome')}"
+        )
+    else:
+        print()
+        print("Transfer probe: no abstraction transfer plan was available")
+
+    memory_delta = theory_memory.memory_delta_since(starting_memory_summary)
+    summary = {
+        'run_kind': 'abstraction_transfer_campaign',
+        'runs_final': False,
+        'outcome_mode': outcome_mode,
+        'source_results': source_results,
+        'bridge_count': len(bridges),
+        'bridges': bridges,
+        'selected_plan': dict(plan or {}),
+        'transfer_result': transfer_result,
+        'abstraction_discovery_evidence': theory_memory.abstraction_discovery_evidence(),
+        'readiness': theory_memory.discovery_readiness_report(),
+        'rediscovery_goal_progress': theory_memory.rediscovery_goal_progress_report(),
+        'starting_memory': dict(starting_memory_summary or {}),
+        'ending_memory': theory_memory.memory_checkpoint_summary(),
+        'memory_delta': memory_delta,
+    }
+    print()
+    evidence = summary['abstraction_discovery_evidence']
+    print(
+        "Abstraction transfer evidence: "
+        f"bridges={evidence['bridge_count']} "
+        f"outcomes={evidence['transfer_outcome_count']} "
+        f"confirmed={evidence['transfer_confirmed_count']} "
+        f"weak={evidence['transfer_weak_count']} "
+        f"absent={evidence['transfer_absent_count']}"
+    )
+    print(
+        "Theory memory delta: "
+        f"records={memory_delta['new_records']}, "
+        f"planned_outcomes={memory_delta['new_planned_outcomes']}, "
+        f"readiness_delta={memory_delta['readiness_score_delta']:.3f}"
+    )
+    if emit_hf_artifact_summary:
+        print(
+            "HF_ARTIFACT_SUMMARY "
+            + json.dumps(summary, sort_keys=True),
+            flush=True,
+        )
+    return summary
 
 
 def _hf_upload_requires_create_pr(error: Exception) -> bool:
@@ -6701,6 +7088,15 @@ def _parse_csv_worlds(value: str) -> list[str]:
     return worlds
 
 
+def _parse_abstraction_transfer_worlds(value: str) -> list[str]:
+    worlds = [part.strip() for part in value.split(',') if part.strip()]
+    allowed = set(WORLD_TYPES) | {'hidden_procedural'}
+    unknown = [world for world in worlds if world not in allowed]
+    if unknown:
+        raise ValueError(f"Unknown abstraction target world(s): {', '.join(unknown)}")
+    return worlds
+
+
 def _report_discovery(log_entry: dict, step: int):
     """Print a discovery notification in real-time."""
     dtype = log_entry['type']
@@ -6756,6 +7152,11 @@ if __name__ == '__main__':
                         help='Benchmark emergent math comparison coverage across repeated runs')
     parser.add_argument('--equation-campaign', action='store_true',
                         help='Run an equation-discovery review campaign')
+    parser.add_argument('--abstraction-transfer-campaign', action='store_true',
+                        help='Run a tiny non-final abstraction transfer campaign')
+    parser.add_argument('--abstraction-transfer-outcome', type=str, default='confirmed',
+                        choices=['confirmed', 'weak', 'absent'],
+                        help='Simulated transfer outcome for the non-final abstraction campaign')
     parser.add_argument('--math-foundation-prep', action='store_true',
                         help='Run readiness checks before the final watched math discovery run')
     parser.add_argument('--discovery-readiness', action='store_true',
@@ -7171,6 +7572,24 @@ if __name__ == '__main__':
             max_adaptive_hidden_worlds=args.hf_max_adaptive_hidden_worlds,
             force_backend=args.physics_force_backend,
             equation_scoring_backend=args.equation_scoring_backend,
+        )
+        if (
+            args.theory_memory_file
+            and theory_memory is not None
+            and not args.no_save_theory_memory
+        ):
+            theory_memory.save(args.theory_memory_file)
+        raise SystemExit(0)
+
+    if args.abstraction_transfer_campaign:
+        run_abstraction_transfer_campaign(
+            theory_memory=theory_memory,
+            seed_start=args.seed,
+            steps=args.benchmark_steps,
+            object_count=_parse_csv_ints(args.object_counts)[0],
+            target_world_types=_parse_abstraction_transfer_worlds(args.world_types),
+            outcome_mode=args.abstraction_transfer_outcome,
+            emit_hf_artifact_summary=args.hf_log_artifact_summary,
         )
         if (
             args.theory_memory_file

@@ -895,6 +895,41 @@ class OperatorProposal:
 
 
 @dataclass
+class AbstractionBridge:
+    """A compressed concept made from two or more surface concepts."""
+    key: str
+    abstraction_kind: str
+    canonical_name: str
+    source_concept_keys: list[str]
+    source_theory_keys: list[str]
+    compression_rule: str
+    compressed_expression: str
+    usefulness: float
+    transfer_target: str
+    unrelated_world: str
+    solve_hint: str
+    falsifies_if: str
+    evidence: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            'key': self.key,
+            'abstraction_kind': self.abstraction_kind,
+            'canonical_name': self.canonical_name,
+            'source_concept_keys': list(self.source_concept_keys),
+            'source_theory_keys': list(self.source_theory_keys),
+            'compression_rule': self.compression_rule,
+            'compressed_expression': self.compressed_expression,
+            'usefulness': round(self.usefulness, 3),
+            'transfer_target': self.transfer_target,
+            'unrelated_world': self.unrelated_world,
+            'solve_hint': self.solve_hint,
+            'falsifies_if': self.falsifies_if,
+            'evidence': _rounded_dict(self.evidence),
+        }
+
+
+@dataclass
 class ProofCheck:
     """A lightweight proof-like check for a generated theory."""
     key: str
@@ -1017,6 +1052,7 @@ class DiscoveryCycleReport:
     theories: list[TheoryRecord]
     concept_proposals: list[ConceptProposal]
     operator_proposals: list[OperatorProposal]
+    abstraction_bridges: list[AbstractionBridge]
     proof_checks: list[ProofCheck]
     probe_plan: DiscoveryProbePlan | None
     open_questions: list[str]
@@ -1039,6 +1075,9 @@ class DiscoveryCycleReport:
             ],
             'operator_proposals': [
                 proposal.to_dict() for proposal in self.operator_proposals
+            ],
+            'abstraction_bridges': [
+                bridge.to_dict() for bridge in self.abstraction_bridges
             ],
             'proof_checks': [check.to_dict() for check in self.proof_checks],
             'probe_plan': self.probe_plan.to_dict() if self.probe_plan else None,
@@ -1505,12 +1544,14 @@ class CumulativeTheoryMemory:
         self.arithmetic_rediscovery_records: list[dict] = []
         self.compressed_experience_shards: list[dict] = []
         self.canonical_law_shards: list[dict] = []
+        self.abstraction_records: list[dict] = []
 
     def record_result(self, context: str, seed: int, report) -> dict:
         report_dict = self._report_dict(report)
         theories = list(report_dict.get('theories', []))
         operator_proposals = list(report_dict.get('operator_proposals', []))
         concept_proposals = list(report_dict.get('concept_proposals', []))
+        abstraction_bridges = list(report_dict.get('abstraction_bridges', []))
         proof_checks = list(report_dict.get('proof_checks', []))
         probe_plan = report_dict.get('probe_plan') or {}
         disagreement_record = self._disagreement_record(
@@ -1524,12 +1565,18 @@ class CumulativeTheoryMemory:
             'phase': report_dict.get('phase', 'unknown'),
             'theory_count': len(theories),
             'operator_count': len(operator_proposals),
+            'abstraction_bridge_count': len(abstraction_bridges),
             'proof_check_count': len(proof_checks),
             'disagreement_mode': (
                 disagreement_record.get('mode') if disagreement_record else None
             ),
         }
         self.records.append(record)
+        self._record_abstraction_bridges(
+            context=context,
+            seed=seed,
+            bridges=abstraction_bridges,
+        )
         if disagreement_record:
             self.disagreement_records.append(disagreement_record)
             if len(self.disagreement_records) > 20:
@@ -1555,6 +1602,40 @@ class CumulativeTheoryMemory:
                 proof_checks=relevant_checks,
             )
         return record
+
+    def _record_abstraction_bridges(
+        self,
+        context: str,
+        seed: int,
+        bridges: list[dict[str, Any]],
+    ):
+        for bridge in bridges:
+            abstraction_kind = str(bridge.get('abstraction_kind') or '')
+            if not abstraction_kind:
+                continue
+            evidence = dict(bridge.get('evidence') or {})
+            record = {
+                'context': context,
+                'seed': int(seed),
+                'key': bridge.get('key'),
+                'abstraction_kind': abstraction_kind,
+                'canonical_name': bridge.get('canonical_name'),
+                'source_concept_keys': list(bridge.get('source_concept_keys') or []),
+                'source_theory_keys': list(bridge.get('source_theory_keys') or []),
+                'source_concept_kinds': list(evidence.get('concept_kinds') or []),
+                'source_theory_kinds': list(evidence.get('theory_kinds') or []),
+                'compression_rule': bridge.get('compression_rule'),
+                'compressed_expression': bridge.get('compressed_expression'),
+                'usefulness': round(float(bridge.get('usefulness', 0.0) or 0.0), 3),
+                'transfer_target': bridge.get('transfer_target'),
+                'unrelated_world': bridge.get('unrelated_world'),
+                'solve_hint': bridge.get('solve_hint'),
+                'falsifies_if': bridge.get('falsifies_if'),
+                'operator_kinds': list(evidence.get('operator_kinds') or []),
+            }
+            self.abstraction_records.append(_rounded_dict(record))
+        if len(self.abstraction_records) > 96:
+            self.abstraction_records = self.abstraction_records[-96:]
 
     def evaluate_planned_result(
         self,
@@ -1705,6 +1786,10 @@ class CumulativeTheoryMemory:
             'primary_theory_label': plan.get('primary_theory_label'),
             'target_theory_kinds': list(plan.get('target_theory_kinds') or []),
             'rival_theory_labels': list(plan.get('rival_theory_labels') or []),
+            'abstraction_key': plan.get('abstraction_key'),
+            'abstraction_kind': plan.get('abstraction_kind'),
+            'compressed_expression': plan.get('compressed_expression'),
+            'unrelated_world': plan.get('unrelated_world'),
             'selected_multi_parameter_variant': dict(
                 plan.get('selected_multi_parameter_variant') or {}
             ),
@@ -2137,6 +2222,272 @@ class CumulativeTheoryMemory:
             'operator_prior_refined_parameters': _rounded_dict(refined_parameters),
             'operator_prior_refinement_detected': refinement_detected,
         }
+
+    def abstraction_bridges(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Consolidate surface concept equivalences into reusable abstractions."""
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for record in self.abstraction_records:
+            kind = str(record.get('abstraction_kind') or '')
+            if not kind:
+                continue
+            groups.setdefault(kind, []).append(record)
+
+        summaries = []
+        for kind, records in groups.items():
+            contexts = sorted({
+                str(record.get('context'))
+                for record in records
+                if record.get('context')
+            })
+            seeds = sorted({
+                int(record.get('seed', 0) or 0)
+                for record in records
+            })
+            concept_kinds = sorted({
+                str(kind_item)
+                for record in records
+                for kind_item in list(record.get('source_concept_kinds') or [])
+                if kind_item
+            })
+            concept_keys = sorted({
+                str(key)
+                for record in records
+                for key in list(record.get('source_concept_keys') or [])
+                if key
+            })
+            theory_kinds = sorted({
+                self._family_key(str(theory_kind))
+                for record in records
+                for theory_kind in list(record.get('source_theory_kinds') or [])
+                if theory_kind
+            })
+            support_count = len(records)
+            context_count = len(contexts)
+            usefulness_values = [
+                float(record.get('usefulness', 0.0) or 0.0)
+                for record in records
+            ]
+            mean_usefulness = (
+                sum(usefulness_values) / len(usefulness_values)
+                if usefulness_values else 0.0
+            )
+            compression_score = min(
+                1.0,
+                0.72 * mean_usefulness
+                + 0.16 * min(1.0, len(concept_kinds) / 3.0)
+                + 0.12 * min(1.0, context_count / 2.0),
+            )
+            if context_count >= 2 and support_count >= 2:
+                status = 'transfer_ready'
+            elif support_count >= 2 or len(concept_kinds) >= 2:
+                status = 'reusable_abstraction'
+            else:
+                status = 'local_abstraction'
+            unrelated_world = self._best_unrelated_world(records, contexts)
+            summaries.append({
+                'key': f'abstraction:{kind}:memory',
+                'abstraction_kind': kind,
+                'canonical_name': self._most_frequent_text(
+                    [record.get('canonical_name') for record in records],
+                    fallback=kind,
+                ),
+                'status': status,
+                'support_count': support_count,
+                'source_contexts': contexts,
+                'source_seeds': seeds,
+                'source_concept_kinds': concept_kinds,
+                'source_concept_keys': concept_keys[:12],
+                'source_theory_kinds': theory_kinds,
+                'compression_score': round(compression_score, 3),
+                'mean_usefulness': round(mean_usefulness, 3),
+                'compression_rule': self._most_frequent_text(
+                    [record.get('compression_rule') for record in records],
+                    fallback='compress equivalent concepts into one reusable role',
+                ),
+                'compressed_expression': self._most_frequent_text(
+                    [record.get('compressed_expression') for record in records],
+                    fallback=f'{kind}(observation)',
+                ),
+                'transfer_target': self._most_frequent_text(
+                    [record.get('transfer_target') for record in records],
+                    fallback='unrelated context transfer',
+                ),
+                'unrelated_world': unrelated_world,
+                'solve_hint': self._most_frequent_text(
+                    [record.get('solve_hint') for record in records],
+                    fallback='try the compressed concept before fitting a larger equation',
+                ),
+                'falsifies_if': self._most_frequent_text(
+                    [record.get('falsifies_if') for record in records],
+                    fallback='the compressed concept does not improve held-out residuals',
+                ),
+                'evidence': {
+                    'context_count': context_count,
+                    'concept_kind_count': len(concept_kinds),
+                    'theory_kind_count': len(theory_kinds),
+                    'operator_kinds': sorted({
+                        str(operator_kind)
+                        for record in records
+                        for operator_kind in list(record.get('operator_kinds') or [])
+                        if operator_kind
+                    }),
+                },
+            })
+        status_priority = {
+            'transfer_ready': 3,
+            'reusable_abstraction': 2,
+            'local_abstraction': 1,
+        }
+        summaries.sort(
+            key=lambda item: (
+                status_priority.get(str(item.get('status')), 0),
+                float(item.get('compression_score', 0.0) or 0.0),
+                int(item.get('support_count', 0) or 0),
+                str(item.get('abstraction_kind')),
+            ),
+            reverse=True,
+        )
+        return summaries[:limit]
+
+    def abstraction_transfer_experiments(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Ask whether a compressed concept solves a structurally unrelated world."""
+        recommendations = []
+        for bridge in self.abstraction_bridges(limit=max(limit * 2, 6)):
+            evidence = dict(bridge.get('evidence') or {})
+            target_theory_kinds = list(bridge.get('source_theory_kinds') or [])
+            priority = min(
+                0.99,
+                0.58
+                + 0.22 * float(bridge.get('compression_score', 0.0) or 0.0)
+                + 0.06 * min(3, int(bridge.get('support_count', 0) or 0))
+                + 0.04 * min(2, int(evidence.get('context_count', 0) or 0)),
+            )
+            recommendations.append({
+                'theory_kind': f"abstraction:{bridge['abstraction_kind']}",
+                'experiment_kind': 'abstraction_transfer_probe',
+                'priority': round(priority, 3),
+                'target_context': 'abstraction_unrelated_world',
+                'family_status': bridge.get('status'),
+                'reason': (
+                    f"test compressed abstraction {bridge['canonical_name']} "
+                    f"in unrelated world {bridge['unrelated_world']}"
+                ),
+                'expected_result': (
+                    f"{bridge['compressed_expression']} should reduce search "
+                    'or residual error before a larger equation is tried'
+                ),
+                'falsifies_if': bridge.get('falsifies_if'),
+                'proof_evidence': {
+                    'support_count': int(bridge.get('support_count', 0) or 0),
+                    'context_count': int(evidence.get('context_count', 0) or 0),
+                    'compression_score': bridge.get('compression_score', 0.0),
+                },
+                'abstraction_key': bridge.get('key'),
+                'abstraction_kind': bridge.get('abstraction_kind'),
+                'canonical_name': bridge.get('canonical_name'),
+                'compressed_expression': bridge.get('compressed_expression'),
+                'compression_rule': bridge.get('compression_rule'),
+                'transfer_target': bridge.get('transfer_target'),
+                'unrelated_world': bridge.get('unrelated_world'),
+                'solve_hint': bridge.get('solve_hint'),
+                'source_contexts': list(bridge.get('source_contexts') or []),
+                'avoid_contexts': list(bridge.get('source_contexts') or []),
+                'target_theory_kinds': target_theory_kinds,
+                'abstraction_bridge': bridge,
+            })
+        recommendations.sort(
+            key=lambda item: (
+                item['priority'],
+                item['proof_evidence']['context_count'],
+                item['proof_evidence']['support_count'],
+                item['abstraction_kind'],
+            ),
+            reverse=True,
+        )
+        return recommendations[:limit]
+
+    def abstraction_discovery_evidence(self) -> dict[str, Any]:
+        bridges = self.abstraction_bridges(limit=12)
+        experiments = self.abstraction_transfer_experiments(limit=12)
+        outcomes = [
+            outcome for outcome in self.planned_outcomes
+            if outcome.get('experiment_kind') == 'abstraction_transfer_probe'
+        ]
+        confirmed_count = sum(
+            1 for outcome in outcomes
+            if outcome.get('outcome') == 'abstraction_transfer_confirmed'
+        )
+        weak_count = sum(
+            1 for outcome in outcomes
+            if outcome.get('outcome') in {
+                'abstraction_transfer_weak',
+                'abstraction_reused_same_context',
+            }
+        )
+        absent_count = sum(
+            1 for outcome in outcomes
+            if outcome.get('outcome') == 'abstraction_transfer_absent'
+        )
+        return {
+            'record_count': len(self.abstraction_records),
+            'bridge_count': len(bridges),
+            'transfer_ready_count': sum(
+                1 for bridge in bridges
+                if bridge.get('status') == 'transfer_ready'
+            ),
+            'reusable_count': sum(
+                1 for bridge in bridges
+                if bridge.get('status') in {'reusable_abstraction', 'transfer_ready'}
+            ),
+            'transfer_experiment_count': len(experiments),
+            'transfer_outcome_count': len(outcomes),
+            'transfer_confirmed_count': confirmed_count,
+            'transfer_weak_count': weak_count,
+            'transfer_absent_count': absent_count,
+            'latest_transfer_outcome': outcomes[-1] if outcomes else {},
+            'top_abstraction_kind': (
+                bridges[0].get('abstraction_kind')
+                if bridges else None
+            ),
+        }
+
+    def _best_unrelated_world(
+        self,
+        records: list[dict[str, Any]],
+        source_contexts: list[str],
+    ) -> str:
+        source_set = set(source_contexts)
+        candidates = [
+            str(record.get('unrelated_world'))
+            for record in records
+            if record.get('unrelated_world')
+            and str(record.get('unrelated_world')) not in source_set
+        ]
+        if candidates:
+            return self._most_frequent_text(candidates, fallback='hidden_procedural')
+        for fallback in (
+            'hidden_procedural',
+            'time_varying',
+            'inverse_square_repulsion',
+            'localized_gravity',
+            'standard',
+        ):
+            if fallback not in source_set:
+                return fallback
+        return 'hidden_procedural'
+
+    def _most_frequent_text(self, values, fallback: str = '') -> str:
+        counts: dict[str, int] = {}
+        for value in values:
+            if value is None:
+                continue
+            text = str(value)
+            if not text:
+                continue
+            counts[text] = counts.get(text, 0) + 1
+        if not counts:
+            return fallback
+        return max(counts, key=lambda text: (counts[text], text))
 
     def reusable_families(self, min_support: int = 2) -> list[dict]:
         families = [
@@ -2618,6 +2969,11 @@ class CumulativeTheoryMemory:
         autonomous_scientist = self.autonomous_scientist_evidence()
         arithmetic_rediscovery = self.arithmetic_rediscovery_evidence()
         canonical_law_compression = self.canonical_law_compression_report()
+        abstraction_bridges = self.abstraction_bridges(limit=5)
+        abstraction_transfer_experiments = self.abstraction_transfer_experiments(
+            limit=5,
+        )
+        abstraction_discovery = self.abstraction_discovery_evidence()
         repair_confirmed_count = sum(
             1 for outcome in self.planned_outcomes
             if outcome.get('outcome') == 'operator_prior_repair_confirmed'
@@ -2912,6 +3268,39 @@ class CumulativeTheoryMemory:
                 'derive transfer evidence from discovered domain-world relation bases',
             ),
             (
+                'abstraction_discovery_loop',
+                'equivalent invented concepts compress into reusable abstractions with unrelated-world probes',
+                (
+                    bool(abstraction_bridges)
+                    and bool(abstraction_transfer_experiments)
+                    and abstraction_discovery['reusable_count'] > 0
+                    and abstraction_discovery['transfer_outcome_count'] > 0
+                ),
+                1.0,
+                {
+                    'abstraction_record_count': abstraction_discovery['record_count'],
+                    'bridge_count': abstraction_discovery['bridge_count'],
+                    'reusable_count': abstraction_discovery['reusable_count'],
+                    'transfer_ready_count': abstraction_discovery[
+                        'transfer_ready_count'
+                    ],
+                    'transfer_experiment_count': abstraction_discovery[
+                        'transfer_experiment_count'
+                    ],
+                    'transfer_outcome_count': abstraction_discovery[
+                        'transfer_outcome_count'
+                    ],
+                    'transfer_confirmed_count': abstraction_discovery[
+                        'transfer_confirmed_count'
+                    ],
+                    'transfer_weak_count': abstraction_discovery['transfer_weak_count'],
+                    'transfer_absent_count': abstraction_discovery[
+                        'transfer_absent_count'
+                    ],
+                },
+                'run a non-final abstraction-transfer campaign and persist the transfer outcome',
+            ),
+            (
                 'arithmetic_rediscovery_probe',
                 'counting and unit arithmetic are rediscovered from public observations',
                 (
@@ -3087,6 +3476,8 @@ class CumulativeTheoryMemory:
                 domain_world_blueprints=domain_world_blueprints,
                 domain_world_discoveries=domain_world_discoveries,
                 domain_world_transfer_evidence=domain_world_transfer_evidence,
+                abstraction_bridges=abstraction_bridges,
+                abstraction_transfer_experiments=abstraction_transfer_experiments,
                 autonomous_scientist=self.latest_autonomous_scientist_report(),
             ),
             'first_principles_basis': first_principles,
@@ -3102,6 +3493,9 @@ class CumulativeTheoryMemory:
             'domain_world_transfer_evidence': domain_world_transfer_evidence,
             'domain_transfer_experiments': domain_transfer_experiments,
             'domain_rediscovery_experiments': domain_rediscovery_experiments,
+            'abstraction_bridges': abstraction_bridges,
+            'abstraction_transfer_experiments': abstraction_transfer_experiments,
+            'abstraction_discovery_evidence': abstraction_discovery,
             'autonomous_experiment_design_agenda': autonomous_design_agenda,
             'theorem_memory': theorem_memory,
             'blind_holdout_benchmark': blind_holdout_benchmark,
@@ -3190,6 +3584,7 @@ class CumulativeTheoryMemory:
         next_experiments = self.next_experiments(limit=8)
         resource = self.resource_efficiency_report()
         canonical = self.canonical_law_compression_report()
+        abstraction = self.abstraction_discovery_evidence()
 
         def clamp(value: float) -> float:
             return max(0.0, min(1.0, float(value or 0.0)))
@@ -3274,6 +3669,15 @@ class CumulativeTheoryMemory:
             + clamp(int(resource.get('compressed_shard_count', 0) or 0) / 2.0)
             + clamp(int(canonical.get('canonical_law_shard_count', 0) or 0) / 2.0)
         ) / 4.0
+        abstraction_score = (
+            0.25 * clamp(int(abstraction.get('record_count', 0) or 0) / 2.0)
+            + 0.25 * clamp(int(abstraction.get('reusable_count', 0) or 0))
+            + 0.20 * clamp(
+                int(abstraction.get('transfer_experiment_count', 0) or 0)
+            )
+            + 0.20 * clamp(int(abstraction.get('transfer_outcome_count', 0) or 0))
+            + 0.10 * clamp(int(abstraction.get('transfer_confirmed_count', 0) or 0))
+        )
 
         gate_specs = [
             (
@@ -3313,6 +3717,32 @@ class CumulativeTheoryMemory:
                     'best_confidence': round(best_authored_confidence, 3),
                 },
                 'collect repeated residual families until reusable templates emerge',
+            ),
+            (
+                'abstraction_discovery_transfer',
+                'invented concepts compress and become probes for unrelated worlds',
+                abstraction_score,
+                0.08,
+                {
+                    'abstraction_record_count': abstraction.get('record_count', 0),
+                    'bridge_count': abstraction.get('bridge_count', 0),
+                    'reusable_count': abstraction.get('reusable_count', 0),
+                    'transfer_ready_count': abstraction.get('transfer_ready_count', 0),
+                    'transfer_experiment_count': abstraction.get(
+                        'transfer_experiment_count',
+                        0,
+                    ),
+                    'transfer_outcome_count': abstraction.get(
+                        'transfer_outcome_count',
+                        0,
+                    ),
+                    'transfer_confirmed_count': abstraction.get(
+                        'transfer_confirmed_count',
+                        0,
+                    ),
+                    'top_abstraction_kind': abstraction.get('top_abstraction_kind'),
+                },
+                'run a non-final abstraction-transfer campaign and compare outcomes',
             ),
             (
                 'selected_law_parameterization',
@@ -3433,6 +3863,15 @@ class CumulativeTheoryMemory:
                 'blind_holdout_conflicted_count': blind_conflicted,
                 'blind_holdout_plan_count': blind_validation_plan_count,
                 'planned_outcome_count': len(self.planned_outcomes),
+                'abstraction_record_count': abstraction.get('record_count', 0),
+                'abstraction_transfer_experiment_count': abstraction.get(
+                    'transfer_experiment_count',
+                    0,
+                ),
+                'abstraction_transfer_outcome_count': abstraction.get(
+                    'transfer_outcome_count',
+                    0,
+                ),
             },
         }
 
@@ -3451,6 +3890,8 @@ class CumulativeTheoryMemory:
         domain_world_blueprints: list[dict[str, Any]] | None = None,
         domain_world_discoveries: list[dict[str, Any]] | None = None,
         domain_world_transfer_evidence: list[dict[str, Any]] | None = None,
+        abstraction_bridges: list[dict[str, Any]] | None = None,
+        abstraction_transfer_experiments: list[dict[str, Any]] | None = None,
         autonomous_scientist: dict[str, Any] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Compact evidence trail for the non-final readiness score."""
@@ -3523,6 +3964,16 @@ class CumulativeTheoryMemory:
             domain_world_transfer_evidence
             if domain_world_transfer_evidence is not None
             else self.domain_world_transfer_evidence(limit=limit)
+        )
+        abstraction_items = (
+            abstraction_bridges
+            if abstraction_bridges is not None
+            else self.abstraction_bridges(limit=limit)
+        )
+        abstraction_transfers = (
+            abstraction_transfer_experiments
+            if abstraction_transfer_experiments is not None
+            else self.abstraction_transfer_experiments(limit=limit)
         )
         scientist = (
             autonomous_scientist
@@ -3686,6 +4137,33 @@ class CumulativeTheoryMemory:
                 'falsifies_if': item.get('falsifies_if'),
             })
 
+        abstraction_summaries = []
+        for item in abstraction_items[:limit]:
+            abstraction_summaries.append({
+                'key': item.get('key'),
+                'abstraction_kind': item.get('abstraction_kind'),
+                'status': item.get('status'),
+                'compression_score': round(
+                    float(item.get('compression_score', 0.0) or 0.0),
+                    3,
+                ),
+                'source_contexts': list(item.get('source_contexts') or [])[:limit],
+                'compressed_expression': item.get('compressed_expression'),
+                'unrelated_world': item.get('unrelated_world'),
+            })
+
+        abstraction_transfer_summaries = []
+        for item in abstraction_transfers[:limit]:
+            abstraction_transfer_summaries.append({
+                'abstraction_kind': item.get('abstraction_kind'),
+                'experiment_kind': item.get('experiment_kind'),
+                'priority': round(float(item.get('priority', 0.0) or 0.0), 3),
+                'target_context': item.get('target_context'),
+                'unrelated_world': item.get('unrelated_world'),
+                'solve_hint': item.get('solve_hint'),
+                'falsifies_if': item.get('falsifies_if'),
+            })
+
         scientist_summaries = []
         if scientist:
             coverage = dict(scientist.get('coverage') or {})
@@ -3719,6 +4197,8 @@ class CumulativeTheoryMemory:
             'domain_world_blueprints': domain_world_summaries,
             'domain_world_discoveries': domain_discovery_summaries,
             'domain_world_transfer_evidence': domain_transfer_evidence_summaries,
+            'abstraction_bridges': abstraction_summaries,
+            'abstraction_transfer_probes': abstraction_transfer_summaries,
             'autonomous_scientist': scientist_summaries,
         }
 
@@ -3742,6 +4222,17 @@ class CumulativeTheoryMemory:
             return []
         actions = []
         missing = set(missing_gates)
+        if 'abstraction_discovery_loop' in missing:
+            actions.append({
+                'action_kind': 'non_final_abstraction_transfer_campaign',
+                'reason': 'collect concept bridges and persist an unrelated-world abstraction transfer outcome',
+                'command': (
+                    'python3 first_principles_ai/main.py '
+                    '--abstraction-transfer-campaign '
+                    '--theory-memory-file tmp/theory-memory.json'
+                ),
+                'runs_final': False,
+            })
         if missing & {
             'broad_domain_curriculum',
             'executable_domain_worlds',
@@ -3751,27 +4242,10 @@ class CumulativeTheoryMemory:
             'arithmetic_rediscovery_probe',
         }:
             actions.append({
-                'action_kind': 'non_final_domain_curriculum_review',
-                'reason': 'inspect domain coverage, arithmetic probes, and bridge probes before expanding simulator worlds',
+                'action_kind': 'non_final_abstraction_and_domain_review',
+                'reason': 'inspect domain coverage, arithmetic probes, relation bridges, and abstraction transfer probes',
                 'command': (
                     'python3 first_principles_ai/main.py --discovery-readiness '
-                    '--theory-memory-file tmp/theory-memory.json'
-                ),
-                'runs_final': False,
-            })
-        if missing & {
-            'scientist_invariant_consolidation',
-            'scientist_residual_experiment_loop',
-            'scientist_harder_hidden_worlds',
-            'scientist_richer_equation_writing',
-            'scientist_live_trace',
-        }:
-            actions.append({
-                'action_kind': 'non_final_autonomous_scientist_loop',
-                'reason': 'consolidate domain-world equations into invariants and next experiments',
-                'command': (
-                    'python3 first_principles_ai/main.py --autonomous-scientist-loop '
-                    '--scientist-seed-count 3 --scientist-variants 0,1 '
                     '--theory-memory-file tmp/theory-memory.json'
                 ),
                 'runs_final': False,
@@ -3794,6 +4268,23 @@ class CumulativeTheoryMemory:
                     '--seeds 1 --benchmark-steps 240 '
                     '--world-types standard,inverse_square_repulsion,localized_gravity '
                     '--equation-hidden-worlds 1 --theory-memory-file tmp/theory-memory.json'
+                ),
+                'runs_final': False,
+            })
+        if missing & {
+            'scientist_invariant_consolidation',
+            'scientist_residual_experiment_loop',
+            'scientist_harder_hidden_worlds',
+            'scientist_richer_equation_writing',
+            'scientist_live_trace',
+        }:
+            actions.append({
+                'action_kind': 'non_final_autonomous_scientist_loop',
+                'reason': 'consolidate domain-world equations into invariants and next experiments',
+                'command': (
+                    'python3 first_principles_ai/main.py --autonomous-scientist-loop '
+                    '--scientist-seed-count 3 --scientist-variants 0,1 '
+                    '--theory-memory-file tmp/theory-memory.json'
                 ),
                 'runs_final': False,
             })
@@ -3836,7 +4327,28 @@ class CumulativeTheoryMemory:
                 ),
                 'runs_final': False,
             })
-        return actions[:3]
+        preferred_order = [
+            'non_final_abstraction_transfer_campaign',
+            'non_final_equation_campaign',
+            'non_final_autonomous_scientist_loop',
+        ]
+        selected = []
+        for preferred in preferred_order:
+            match = next(
+                (
+                    action for action in actions
+                    if action.get('action_kind') == preferred
+                ),
+                None,
+            )
+            if match is not None and match not in selected:
+                selected.append(match)
+        for action in actions:
+            if action not in selected:
+                selected.append(action)
+            if len(selected) >= 3:
+                break
+        return selected[:3]
 
     def first_principles_basis(self) -> list[dict[str, Any]]:
         """Return the primitive moves the system may compose before naming laws."""
@@ -8071,6 +8583,7 @@ class CumulativeTheoryMemory:
         recommendations.extend(self.operator_prior_claim_experiments(limit=limit * 2))
         recommendations.extend(self.operator_prior_repair_experiments(limit=limit * 2))
         recommendations.extend(self.operator_prior_validation_experiments(limit=limit * 2))
+        recommendations.extend(self.abstraction_transfer_experiments(limit=limit * 2))
         recommendations.sort(
             key=lambda item: (
                 item['priority'],
@@ -8274,6 +8787,28 @@ class CumulativeTheoryMemory:
                         'operator_prior_claim',
                         {},
                     )
+            if recommendation.get('experiment_kind') == 'abstraction_transfer_probe':
+                plan['abstraction_key'] = recommendation.get('abstraction_key')
+                plan['abstraction_kind'] = recommendation.get('abstraction_kind')
+                plan['canonical_name'] = recommendation.get('canonical_name')
+                plan['compressed_expression'] = recommendation.get(
+                    'compressed_expression'
+                )
+                plan['compression_rule'] = recommendation.get('compression_rule')
+                plan['transfer_target'] = recommendation.get('transfer_target')
+                plan['unrelated_world'] = recommendation.get('unrelated_world')
+                plan['solve_hint'] = recommendation.get('solve_hint')
+                plan['source_contexts'] = list(
+                    recommendation.get('source_contexts') or []
+                )
+                plan['target_theory_kinds'] = recommendation.get(
+                    'target_theory_kinds',
+                    [],
+                )
+                plan['abstraction_bridge'] = recommendation.get(
+                    'abstraction_bridge',
+                    {},
+                )
             case_key = (plan['world_type'], plan['seed'], plan['object_count'])
             if case_key in used_cases:
                 continue
@@ -8428,6 +8963,7 @@ class CumulativeTheoryMemory:
             'autonomous_scientist_record_count': len(self.autonomous_scientist_records),
             'compressed_experience_shard_count': len(self.compressed_experience_shards),
             'canonical_law_shard_count': len(self.canonical_law_shards),
+            'abstraction_record_count': len(self.abstraction_records),
             'family_count': len(self.families),
             'theorem_count': len(self.theorem_memory()),
             'theorem_consolidation_count': len(self.theorem_consolidations()),
@@ -8476,12 +9012,18 @@ class CumulativeTheoryMemory:
             ),
             'compressed_experience_shards': list(self.compressed_experience_shards),
             'canonical_law_shards': list(self.canonical_law_shards),
+            'abstraction_records': list(self.abstraction_records),
             'families': {
                 key: family.to_dict()
                 for key, family in self.families.items()
             },
             'resource_efficiency': self.resource_efficiency_report(),
             'canonical_law_compression': self.canonical_law_compression_report(),
+            'abstraction_bridges': self.abstraction_bridges(),
+            'abstraction_transfer_experiments': (
+                self.abstraction_transfer_experiments()
+            ),
+            'abstraction_discovery_evidence': self.abstraction_discovery_evidence(),
             'memory_checkpoint': self.memory_checkpoint_summary(),
             'reusable_families': self.reusable_families(),
             'family_evaluations': self.family_evaluations(),
@@ -8582,6 +9124,7 @@ class CumulativeTheoryMemory:
             data.get('compressed_experience_shards', [])
         )
         memory.canonical_law_shards = list(data.get('canonical_law_shards', []))
+        memory.abstraction_records = list(data.get('abstraction_records', []))
         memory.families = {
             str(key): TheoryFamily.from_dict(family_data)
             for key, family_data in data.get('families', {}).items()
@@ -8907,6 +9450,16 @@ class CumulativeTheoryMemory:
                 if world_type not in avoid:
                     return world_type
             return 'hidden_procedural'
+        if target == 'abstraction_unrelated_world':
+            unrelated_world = recommendation.get('unrelated_world')
+            if unrelated_world and str(unrelated_world) in candidates:
+                return str(unrelated_world)
+            if unrelated_world and str(unrelated_world).startswith('hidden_'):
+                return str(unrelated_world)
+            for world_type in candidates:
+                if world_type not in avoid:
+                    return world_type
+            return 'hidden_procedural'
         if target == 'operator_prior_failure_context':
             failure_context = recommendation.get('failure_context')
             if failure_context:
@@ -8946,6 +9499,14 @@ class CumulativeTheoryMemory:
             if not found_family:
                 return 'transfer_absent'
             return 'transfer_weak'
+        if experiment_kind == 'abstraction_transfer_probe':
+            if found_family and proof_passed and new_context:
+                return 'abstraction_transfer_confirmed'
+            if found_family and proof_passed:
+                return 'abstraction_reused_same_context'
+            if found_family:
+                return 'abstraction_transfer_weak'
+            return 'abstraction_transfer_absent'
         if experiment_kind == 'disagreement_counterexample':
             if not found_family or not proof_passed:
                 return 'counterexample_found'
@@ -9352,6 +9913,15 @@ class CumulativeTheoryMemory:
             f"robust={canonical['robust_law_count']} "
             f"bytes_ratio={canonical['estimated_law_compression_ratio']:.2f}"
         )
+        abstraction_evidence = self.abstraction_discovery_evidence()
+        lines.append(
+            "  Abstraction discovery: "
+            f"records={abstraction_evidence['record_count']} "
+            f"bridges={abstraction_evidence['bridge_count']} "
+            f"reusable={abstraction_evidence['reusable_count']} "
+            f"transfer_probes={abstraction_evidence['transfer_experiment_count']} "
+            f"outcomes={abstraction_evidence['transfer_outcome_count']}"
+        )
         arithmetic = self.arithmetic_rediscovery_evidence()
         lines.append(
             "  Arithmetic rediscovery: "
@@ -9364,7 +9934,16 @@ class CumulativeTheoryMemory:
                 "      missing: " + ','.join(readiness['missing_gates'][:4])
             )
         dossier = dict(readiness.get('evidence_dossier') or {})
-        if any(dossier.get(key) for key in ('chains', 'claims', 'planned_tests')):
+        if any(
+            dossier.get(key)
+            for key in (
+                'chains',
+                'claims',
+                'planned_tests',
+                'abstraction_bridges',
+                'abstraction_transfer_probes',
+            )
+        ):
             lines.append("  Discovery evidence dossier:")
             for chain in dossier.get('chains', [])[:limit]:
                 lines.append(
@@ -9380,6 +9959,17 @@ class CumulativeTheoryMemory:
                 lines.append(
                     f"    planned {plan['experiment_kind']}: "
                     f"{plan['world_type']} seed={plan['seed']}"
+                )
+            for bridge in dossier.get('abstraction_bridges', [])[:limit]:
+                lines.append(
+                    f"    abstraction {bridge['abstraction_kind']}: "
+                    f"status={bridge['status']}, "
+                    f"target={bridge['unrelated_world']}"
+                )
+            for probe in dossier.get('abstraction_transfer_probes', [])[:limit]:
+                lines.append(
+                    f"    abstraction probe {probe['abstraction_kind']}: "
+                    f"{probe['unrelated_world']} priority={probe['priority']:.2f}"
                 )
         dimensions = self.adaptive_dimension_agenda(limit=limit)
         if dimensions:
@@ -11928,6 +12518,11 @@ class AutonomousDiscoveryLoop:
         theories = self._build_theories(equations)
         concept_proposals = self._concept_proposals(theories)
         operator_proposals = self._operator_proposals(theories, concept_proposals)
+        abstraction_bridges = self._abstraction_bridges(
+            theories,
+            concept_proposals,
+            operator_proposals,
+        )
         proof_checks = self._proof_checks(theories, operator_proposals)
         probe_plan = self._choose_probe(
             theories,
@@ -11940,6 +12535,7 @@ class AutonomousDiscoveryLoop:
             theories=theories,
             concept_proposals=concept_proposals,
             operator_proposals=operator_proposals,
+            abstraction_bridges=abstraction_bridges,
             proof_checks=proof_checks,
             probe_plan=probe_plan,
             open_questions=self._open_questions(theories, probe_plan),
@@ -12503,6 +13099,230 @@ class AutonomousDiscoveryLoop:
             reverse=True,
         )
         return ranked[:10]
+
+    def _abstraction_bridges(
+        self,
+        theories: list[TheoryRecord],
+        concepts: list[ConceptProposal],
+        operators: list[OperatorProposal],
+    ) -> list[AbstractionBridge]:
+        concepts_by_kind: dict[str, list[ConceptProposal]] = {}
+        for concept in concepts:
+            concepts_by_kind.setdefault(concept.concept_kind, []).append(concept)
+        theory_by_key = {theory.key: theory for theory in theories}
+        operator_kinds = sorted({operator.operator_kind for operator in operators})
+
+        bridge_specs = [
+            {
+                'abstraction_kind': 'localized_context',
+                'canonical_name': 'active local context',
+                'concept_kinds': ['local_center', 'residual_cluster'],
+                'compression_rule': (
+                    'treat center inference and residual clustering as the same '
+                    'operation: find the active subset before fitting a rule'
+                ),
+                'compressed_expression': (
+                    'active_context(observation) := subset with shared residual center'
+                ),
+                'transfer_target': 'context gating',
+                'unrelated_world': 'time_varying',
+                'solve_hint': (
+                    'look for the active subset first, then fit the residual law only '
+                    'inside that subset'
+                ),
+                'falsifies_if': (
+                    'the compressed active subset fails to improve held-out residuals '
+                    'over fitting every observation together'
+                ),
+            },
+            {
+                'abstraction_kind': 'domain_boundary',
+                'canonical_name': 'finite rule domain',
+                'concept_kinds': ['localized_cutoff_region', 'boundary_taper'],
+                'compression_rule': (
+                    'treat hard inside/outside regions and smooth tapers as variants '
+                    'of one domain-weight concept'
+                ),
+                'compressed_expression': (
+                    'domain_weight(x) := boundary_or_taper(distance_to_context)'
+                ),
+                'transfer_target': 'piecewise domain discovery',
+                'unrelated_world': 'hidden_procedural',
+                'solve_hint': (
+                    'search for where a rule applies before deciding whether the '
+                    'boundary is hard or graded'
+                ),
+                'falsifies_if': (
+                    'boundary probes do not change prediction quality relative to a '
+                    'single global rule'
+                ),
+            },
+            {
+                'abstraction_kind': 'relative_vector_basis',
+                'canonical_name': 'relative vector basis',
+                'concept_kinds': ['direction_axis', 'orthogonal_direction'],
+                'compression_rule': (
+                    'treat aligned and quarter-turned axes as basis choices inside '
+                    'one relative-coordinate system'
+                ),
+                'compressed_expression': (
+                    'relative_basis := {unit(context - state), rotate90(unit(context - state))}'
+                ),
+                'transfer_target': 'coordinate reuse',
+                'unrelated_world': 'inverse_square_repulsion',
+                'solve_hint': (
+                    'try a reusable basis first, then let evidence select which axis '
+                    'or mixture predicts the new world'
+                ),
+                'falsifies_if': (
+                    'new samples are predicted better by absolute coordinates than by '
+                    'relative axes'
+                ),
+            },
+            {
+                'abstraction_kind': 'scaled_domain_effect',
+                'canonical_name': 'weighted scale law',
+                'concept_kinds': [
+                    'distance_strength_law',
+                    'localized_cutoff_region',
+                    'boundary_taper',
+                ],
+                'compression_rule': (
+                    'merge strength scaling and domain weighting into one reusable '
+                    'effect expression'
+                ),
+                'compressed_expression': (
+                    'effect := domain_weight * relative_basis / scale^p'
+                ),
+                'transfer_target': 'composite law decomposition',
+                'unrelated_world': 'hidden_procedural',
+                'solve_hint': (
+                    'decompose the world into domain weight, relative basis, and scale '
+                    'before fitting a large equation'
+                ),
+                'falsifies_if': (
+                    'removing any compressed part gives the same held-out error as the '
+                    'whole expression'
+                ),
+            },
+            {
+                'abstraction_kind': 'cyclic_residual_state',
+                'canonical_name': 'phase-indexed residual state',
+                'concept_kinds': ['phase', 'residual_channel'],
+                'compression_rule': (
+                    'treat phase and residual channel as one latent state variable '
+                    'when residuals repeat'
+                ),
+                'compressed_expression': (
+                    'latent_state := residual_channel indexed by phase(step)'
+                ),
+                'transfer_target': 'latent state reuse',
+                'unrelated_world': 'localized_gravity',
+                'solve_hint': (
+                    'test whether unexplained residuals are better grouped by latent '
+                    'state than by position alone'
+                ),
+                'falsifies_if': (
+                    'phase-indexed residual buckets do not beat ungrouped residuals on '
+                    'future samples'
+                ),
+            },
+            {
+                'abstraction_kind': 'residualized_transition',
+                'canonical_name': 'baseline plus reusable residual',
+                'concept_kinds': ['transition_abstraction', 'residual_channel'],
+                'compression_rule': (
+                    'treat a simple transition and its residual channel as a reusable '
+                    'two-part solver'
+                ),
+                'compressed_expression': (
+                    'next_state := baseline_transition + reusable_residual_channel'
+                ),
+                'transfer_target': 'baseline residual decomposition',
+                'unrelated_world': 'hidden_procedural',
+                'solve_hint': (
+                    'fit the smallest transition first, then search only the leftover '
+                    'residual channel'
+                ),
+                'falsifies_if': (
+                    'the residual channel does not transfer after the baseline is held '
+                    'fixed'
+                ),
+            },
+        ]
+
+        bridges: list[AbstractionBridge] = []
+        for spec in bridge_specs:
+            selected = self._select_bridge_concepts(
+                spec['concept_kinds'],
+                concepts_by_kind,
+            )
+            if len(selected) < 2:
+                continue
+            source_keys = {concept.key for concept in selected}
+            source_theories = [
+                theory for theory in theories
+                if source_keys & set(theory.concept_keys)
+            ]
+            avg_usefulness = sum(concept.usefulness for concept in selected) / len(selected)
+            theory_bonus = min(0.12, 0.03 * len(source_theories))
+            operator_bonus = 0.03 if operator_kinds else 0.0
+            usefulness = max(0.0, min(0.99, avg_usefulness + theory_bonus + operator_bonus))
+            concept_kinds = sorted({concept.concept_kind for concept in selected})
+            key = (
+                'abstraction:'
+                f"{spec['abstraction_kind']}:"
+                + ':'.join(concept_kinds)
+            )
+            bridges.append(AbstractionBridge(
+                key=key,
+                abstraction_kind=str(spec['abstraction_kind']),
+                canonical_name=str(spec['canonical_name']),
+                source_concept_keys=[concept.key for concept in selected],
+                source_theory_keys=[theory.key for theory in source_theories],
+                compression_rule=str(spec['compression_rule']),
+                compressed_expression=str(spec['compressed_expression']),
+                usefulness=usefulness,
+                transfer_target=str(spec['transfer_target']),
+                unrelated_world=str(spec['unrelated_world']),
+                solve_hint=str(spec['solve_hint']),
+                falsifies_if=str(spec['falsifies_if']),
+                evidence={
+                    'concept_kinds': concept_kinds,
+                    'concept_kind_count': len(concept_kinds),
+                    'theory_kinds': sorted({
+                        theory_by_key.get(theory.key, theory).theory_kind
+                        for theory in source_theories
+                    }),
+                    'theory_count': len(source_theories),
+                    'operator_kinds': operator_kinds,
+                },
+            ))
+        bridges.sort(
+            key=lambda item: (
+                item.usefulness,
+                len(item.source_concept_keys),
+                item.abstraction_kind,
+            ),
+            reverse=True,
+        )
+        return bridges[:6]
+
+    def _select_bridge_concepts(
+        self,
+        concept_kinds: list[str],
+        concepts_by_kind: dict[str, list[ConceptProposal]],
+    ) -> list[ConceptProposal]:
+        selected = []
+        for kind in concept_kinds:
+            candidates = sorted(
+                concepts_by_kind.get(kind, []),
+                key=lambda item: (item.usefulness, item.key),
+                reverse=True,
+            )
+            if candidates:
+                selected.append(candidates[0])
+        return selected
 
     def _operator_priority(self, operator_kind: str) -> float:
         priorities = {

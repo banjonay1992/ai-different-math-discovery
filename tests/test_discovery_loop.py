@@ -16,9 +16,11 @@ from main import (
     _equation_campaign_artifact_summary,
     _equation_metrics_from_knowledge,
     _planned_probe_actions,
+    _parse_abstraction_transfer_worlds,
     _print_cumulative_theory_review,
     _run_equation_followup_cases,
     parse_live_progress_line,
+    run_abstraction_transfer_campaign,
     run_live_progress_viewer,
     run_memory_efficiency_review,
     run_rediscovery_goal_progress_audit,
@@ -128,6 +130,251 @@ class DiscoveryLoopTests(unittest.TestCase):
             and item['parameters']['center_x'] == 7.0
             for item in packed['operator_proposals']
         ))
+
+    def test_discovery_loop_builds_abstraction_bridge_from_equivalent_concepts(self):
+        loop = AutonomousDiscoveryLoop()
+        equations = [
+            equation(
+                key='raw_eq:local_direction',
+                role='local_residual_direction_equation',
+                score=0.78,
+                parameters={'center_x': 7.0, 'center_y': 13.0, 'k': 0.2},
+            ),
+            equation(
+                key='raw_eq:cutoff_direction',
+                role='generated_operator_cutoff_direction_equation',
+                score=0.82,
+                parameters={
+                    'center_x': 7.0,
+                    'center_y': 13.0,
+                    'cutoff_radius': 5.5,
+                    'cutoff_mse_improvement': 0.12,
+                    'cutoff_vs_smooth_improvement': 0.09,
+                },
+            ),
+            equation(
+                key='raw_eq:tapered_direction',
+                role='generated_operator_tapered_distance_direction_equation',
+                score=0.88,
+                parameters={
+                    'center_x': 7.0,
+                    'center_y': 13.0,
+                    'cutoff_radius': 5.5,
+                    'distance_exponent': 2.0,
+                    'distance_mse_improvement': 0.15,
+                    'tapered_vs_cutoff_improvement': 0.07,
+                    'tapered_vs_smooth_improvement': 0.11,
+                },
+            ),
+        ]
+
+        report = loop.build_report(equations, step=240, current_count=4)
+        bridges = report.to_dict()['abstraction_bridges']
+
+        self.assertTrue(bridges)
+        bridge_kinds = {bridge['abstraction_kind'] for bridge in bridges}
+        self.assertTrue({
+            'localized_context',
+            'domain_boundary',
+            'scaled_domain_effect',
+        } & bridge_kinds)
+        top_bridge = bridges[0]
+        self.assertGreaterEqual(len(top_bridge['source_concept_keys']), 2)
+        self.assertTrue(top_bridge['compressed_expression'])
+        self.assertTrue(top_bridge['unrelated_world'])
+        self.assertTrue(top_bridge['solve_hint'])
+
+    def test_cumulative_memory_promotes_abstraction_to_unrelated_transfer_plan(self):
+        loop = AutonomousDiscoveryLoop()
+        memory = CumulativeTheoryMemory()
+        equations = [
+            equation(
+                key='raw_eq:local_direction',
+                role='local_residual_direction_equation',
+                score=0.80,
+                parameters={'center_x': 8.0, 'center_y': 12.0, 'k': 0.2},
+            ),
+            equation(
+                key='raw_eq:cutoff_direction',
+                role='generated_operator_cutoff_direction_equation',
+                score=0.84,
+                parameters={
+                    'center_x': 8.0,
+                    'center_y': 12.0,
+                    'cutoff_radius': 6.0,
+                    'cutoff_mse_improvement': 0.12,
+                    'cutoff_vs_smooth_improvement': 0.08,
+                },
+            ),
+            equation(
+                key='raw_eq:tapered_direction',
+                role='generated_operator_tapered_distance_direction_equation',
+                score=0.90,
+                parameters={
+                    'center_x': 8.0,
+                    'center_y': 12.0,
+                    'cutoff_radius': 6.0,
+                    'distance_exponent': 2.0,
+                    'distance_mse_improvement': 0.16,
+                    'tapered_vs_cutoff_improvement': 0.06,
+                    'tapered_vs_smooth_improvement': 0.10,
+                },
+            ),
+        ]
+
+        for seed, context in enumerate(('localized_gravity', 'time_varying')):
+            report = loop.build_report(equations, step=200 + seed, current_count=4)
+            memory.record_result(context, seed, report)
+
+        bridges = memory.abstraction_bridges(limit=5)
+        self.assertTrue(bridges)
+        self.assertIn(
+            bridges[0]['status'],
+            {'reusable_abstraction', 'transfer_ready'},
+        )
+        self.assertGreaterEqual(bridges[0]['support_count'], 2)
+
+        probes = memory.abstraction_transfer_experiments(limit=5)
+        self.assertTrue(probes)
+        self.assertEqual('abstraction_transfer_probe', probes[0]['experiment_kind'])
+        self.assertEqual('abstraction_unrelated_world', probes[0]['target_context'])
+        self.assertTrue(probes[0]['compressed_expression'])
+        self.assertNotIn(
+            probes[0]['unrelated_world'],
+            set(probes[0]['source_contexts']),
+        )
+
+        plans = memory.planned_experiments(
+            world_types=[
+                'standard',
+                'localized_gravity',
+                'time_varying',
+                'hidden_procedural',
+            ],
+            object_counts=[5],
+            steps=240,
+            limit=8,
+        )
+        abstraction_plans = [
+            plan for plan in plans
+            if plan['experiment_kind'] == 'abstraction_transfer_probe'
+        ]
+        self.assertTrue(abstraction_plans)
+        self.assertTrue(abstraction_plans[0]['compressed_expression'])
+        self.assertEqual(
+            abstraction_plans[0]['world_type'],
+            abstraction_plans[0]['unrelated_world'],
+        )
+
+    def test_abstraction_records_roundtrip_readiness_and_summary(self):
+        loop = AutonomousDiscoveryLoop()
+        memory = CumulativeTheoryMemory()
+        report = loop.build_report([
+            equation(
+                key='raw_eq:local_direction',
+                role='local_residual_direction_equation',
+                parameters={'center_x': 9.0, 'center_y': 11.0, 'k': 0.2},
+            ),
+            equation(
+                key='raw_eq:tapered_direction',
+                role='generated_operator_tapered_distance_direction_equation',
+                score=0.87,
+                parameters={
+                    'center_x': 9.0,
+                    'center_y': 11.0,
+                    'cutoff_radius': 5.0,
+                    'distance_exponent': 2.0,
+                    'distance_mse_improvement': 0.12,
+                    'tapered_vs_cutoff_improvement': 0.06,
+                    'tapered_vs_smooth_improvement': 0.09,
+                },
+            ),
+        ], step=160, current_count=3)
+        memory.record_result('localized_gravity', 0, report)
+
+        packed = memory.to_dict()
+        restored = CumulativeTheoryMemory.from_dict(packed)
+        readiness = restored.discovery_readiness_report()
+
+        self.assertTrue(restored.abstraction_records)
+        self.assertTrue(restored.abstraction_bridges())
+        self.assertIn('abstraction_discovery_loop', readiness['gates'])
+        self.assertIn('abstraction_bridges', packed)
+        self.assertIn('Abstraction discovery', restored.summary())
+
+    def test_abstraction_transfer_campaign_records_empirical_outcomes(self):
+        self.assertEqual(
+            ['standard', 'hidden_procedural'],
+            _parse_abstraction_transfer_worlds('standard,hidden_procedural'),
+        )
+        with self.assertRaisesRegex(ValueError, 'Unknown abstraction target'):
+            _parse_abstraction_transfer_worlds('standard,not_a_world')
+
+        expected_outcomes = {
+            'confirmed': 'abstraction_transfer_confirmed',
+            'weak': 'abstraction_transfer_weak',
+            'absent': 'abstraction_transfer_absent',
+        }
+        for mode, expected_outcome in expected_outcomes.items():
+            with self.subTest(mode=mode):
+                memory = CumulativeTheoryMemory()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    summary = run_abstraction_transfer_campaign(
+                        theory_memory=memory,
+                        seed_start=10,
+                        steps=90,
+                        target_world_types=[
+                            'standard',
+                            'time_varying',
+                            'hidden_procedural',
+                        ],
+                        outcome_mode=mode,
+                    )
+
+                self.assertEqual('abstraction_transfer_campaign', summary['run_kind'])
+                self.assertFalse(summary['runs_final'])
+                self.assertGreaterEqual(len(summary['source_results']), 2)
+                self.assertGreaterEqual(summary['bridge_count'], 2)
+                source_contexts = {
+                    item['context'] for item in summary['source_results']
+                }
+                self.assertGreaterEqual(len(source_contexts), 2)
+                self.assertEqual(
+                    'abstraction_transfer_probe',
+                    summary['selected_plan']['experiment_kind'],
+                )
+                transfer = summary['transfer_result']
+                self.assertEqual(
+                    expected_outcome,
+                    transfer['outcome']['outcome'],
+                )
+                evidence = summary['abstraction_discovery_evidence']
+                self.assertEqual(1, evidence['transfer_outcome_count'])
+                self.assertEqual(
+                    int(mode == 'confirmed'),
+                    evidence['transfer_confirmed_count'],
+                )
+                self.assertEqual(
+                    int(mode == 'weak'),
+                    evidence['transfer_weak_count'],
+                )
+                self.assertEqual(
+                    int(mode == 'absent'),
+                    evidence['transfer_absent_count'],
+                )
+                readiness_gate = summary['readiness']['gates'][
+                    'abstraction_discovery_loop'
+                ]
+                self.assertTrue(readiness_gate['passed'])
+                self.assertEqual(
+                    1,
+                    readiness_gate['evidence']['transfer_outcome_count'],
+                )
+                progress_gate = summary['rediscovery_goal_progress']['gates'][
+                    'abstraction_discovery_transfer'
+                ]
+                self.assertGreaterEqual(progress_gate['score'], 0.9)
+                self.assertIn('Abstraction discovery', memory.summary())
 
     def test_distance_scaled_residual_generates_strength_law_concept(self):
         loop = AutonomousDiscoveryLoop()
