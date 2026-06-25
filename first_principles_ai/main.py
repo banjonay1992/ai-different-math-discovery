@@ -75,6 +75,10 @@ from agent.status_capsule import (
     git_status_for_path,
     load_capsule_memory_data,
 )
+from agent.module_chat_adapter import (
+    export_capsule_chat_message,
+    read_module_chat_inbox,
+)
 from agent.explorer import (
     ExplorationPlanner,
     explain_exploration_outcome,
@@ -6126,6 +6130,59 @@ def run_status_capsule(
     return capsule
 
 
+def run_module_chat_export(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    recipient: str = 'orchestrator',
+    topic: str = 'ai_different.status_capsule',
+    inbox_file: str | Path | None = None,
+    output_file: str | Path | None = None,
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Export the status capsule as a plain module-chat JSON message."""
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=runtime_memory_path,
+    )
+    inbox_summary = read_module_chat_inbox(inbox_file, participant='ai_different')
+    message = export_capsule_chat_message(
+        capsule,
+        recipient=recipient,
+        topic=topic,
+        inbox_summary=inbox_summary,
+    )
+    if output_file:
+        _write_json_artifact(output_file, message)
+    print(
+        "AI_DIFFERENT_MODULE_CHAT_MESSAGE "
+        + json.dumps(message, sort_keys=True),
+        flush=True,
+    )
+    return message
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -7223,6 +7280,16 @@ if __name__ == '__main__':
                         help='Print an orchestrator-facing AI Different status capsule')
     parser.add_argument('--status-capsule-output-file', type=str, default=None,
                         help='Optional JSON path for the status capsule')
+    parser.add_argument('--module-chat-export', action='store_true',
+                        help='Export the AI Different capsule as a module-chat JSON message')
+    parser.add_argument('--module-chat-recipient', type=str, default='orchestrator',
+                        help='Recipient participant for module-chat export')
+    parser.add_argument('--module-chat-topic', type=str, default='ai_different.status_capsule',
+                        help='Topic for module-chat export')
+    parser.add_argument('--module-chat-inbox', type=str, default=None,
+                        help='Optional module-chat inbox JSONL file to read')
+    parser.add_argument('--module-chat-output-file', type=str, default=None,
+                        help='Optional JSON path for the exported module-chat message')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -7379,6 +7446,17 @@ if __name__ == '__main__':
             theory_memory=theory_memory,
             theory_memory_file=args.theory_memory_file,
             output_file=args.status_capsule_output_file or args.hf_output_file,
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_export:
+        run_module_chat_export(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            recipient=args.module_chat_recipient,
+            topic=args.module_chat_topic,
+            inbox_file=args.module_chat_inbox,
+            output_file=args.module_chat_output_file or args.hf_output_file,
         )
         raise SystemExit(0)
 
