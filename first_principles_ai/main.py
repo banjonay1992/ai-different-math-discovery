@@ -269,6 +269,14 @@ from agent.science_coordination_interaction_history import (
     write_science_coordination_interaction_history_ledger,
     write_science_coordination_interaction_history_outbox_jsonl,
 )
+from agent.science_history_guided_policy import (
+    build_science_history_guided_policy_plan,
+    load_plain_json as load_science_history_guided_policy_plain_json,
+    load_science_history_guided_policy_ledger,
+    read_science_history_guided_policy_transcript,
+    write_science_history_guided_policy_ledger,
+    write_science_history_guided_policy_outbox_jsonl,
+)
 from agent.module_chat_adapter import (
     append_rolling_family_record,
     build_module_family_response_ledger,
@@ -10244,6 +10252,175 @@ def run_science_coordination_interaction_history_scorecard(
     return result
 
 
+def run_science_history_guided_policy_planner(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    transcript_file: str | Path | None = None,
+    interaction_history_ledger_file: str | Path = 'tmp/module-chat-science-coordination-interaction-history-ledger.json',
+    ab_probe_outcome_ledger_file: str | Path = 'tmp/module-chat-science-coordination-ab-probe-outcome-ledger.json',
+    ab_probe_ledger_file: str | Path = 'tmp/module-chat-science-coordination-ab-probe-ledger.json',
+    policy_scorecard_ledger_file: str | Path = 'tmp/module-chat-science-coordination-policy-scorecard-ledger.json',
+    policy_outcome_ledger_file: str | Path = 'tmp/module-chat-science-coordination-policy-outcome-ledger.json',
+    history_ledger_file: str | Path = 'tmp/module-chat-science-coordination-history-ledger.json',
+    cycle_strategy_outcome_ledger_file: str | Path = 'tmp/module-chat-science-campaign-cycle-strategy-outcome-ledger.json',
+    theory_memory_ledger_file: str | Path | None = None,
+    campaign_ledger_file: str | Path | None = None,
+    hypothesis_ledger_file: str | Path | None = None,
+    experiment_ledger_file: str | Path | None = None,
+    module_chat_ledger_file: str | Path | None = None,
+    history_guided_policy_ledger_file: str | Path = 'tmp/module-chat-science-history-guided-policy-ledger.json',
+    prior_history_guided_policy_ledger_file: str | Path | None = None,
+    outbox_file: str | Path | None = None,
+    output_file: str | Path | None = None,
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+    hf_validation_used: bool = False,
+) -> dict:
+    """Plan the next science policy from local interaction-history evidence."""
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=str(runtime_memory_path),
+    )
+    transcript = read_science_history_guided_policy_transcript(transcript_file)
+    interaction_history_ledger = load_science_history_guided_policy_plain_json(interaction_history_ledger_file)
+    ab_probe_outcome_ledger = load_science_history_guided_policy_plain_json(ab_probe_outcome_ledger_file)
+    ab_probe_ledger = load_science_history_guided_policy_plain_json(ab_probe_ledger_file)
+    policy_scorecard_ledger = load_science_history_guided_policy_plain_json(policy_scorecard_ledger_file)
+    policy_outcome_ledger = load_science_history_guided_policy_plain_json(policy_outcome_ledger_file)
+    history_ledger = load_science_history_guided_policy_plain_json(history_ledger_file)
+    cycle_strategy_outcome_ledger = load_science_history_guided_policy_plain_json(cycle_strategy_outcome_ledger_file)
+    theory_memory_ledger = (
+        load_science_history_guided_policy_plain_json(theory_memory_ledger_file)
+        if theory_memory_ledger_file
+        else {}
+    )
+    campaign_ledger = (
+        load_science_history_guided_policy_plain_json(campaign_ledger_file)
+        if campaign_ledger_file
+        else {}
+    )
+    hypothesis_ledger = (
+        load_science_history_guided_policy_plain_json(hypothesis_ledger_file)
+        if hypothesis_ledger_file
+        else {}
+    )
+    experiment_ledger = (
+        load_science_history_guided_policy_plain_json(experiment_ledger_file)
+        if experiment_ledger_file
+        else {}
+    )
+    module_chat_ledger = (
+        load_science_history_guided_policy_plain_json(module_chat_ledger_file)
+        if module_chat_ledger_file
+        else {}
+    )
+    history_guided_policy_ledger = load_science_history_guided_policy_ledger(history_guided_policy_ledger_file)
+    prior_history_guided_policy_ledger = (
+        load_science_history_guided_policy_plain_json(prior_history_guided_policy_ledger_file)
+        if prior_history_guided_policy_ledger_file
+        else {}
+    )
+    before_hash = _file_sha256(runtime_memory_path)
+    runtime_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+    hf_status = {'hf_validation_used': bool(hf_validation_used)}
+    updated_ledger, message = build_science_history_guided_policy_plan(
+        transcript_messages=list(transcript.get('messages') or []),
+        history_guided_policy_ledger=history_guided_policy_ledger,
+        interaction_history_ledger=interaction_history_ledger,
+        ab_probe_outcome_ledger=ab_probe_outcome_ledger,
+        ab_probe_ledger=ab_probe_ledger,
+        policy_scorecard_ledger=policy_scorecard_ledger,
+        policy_outcome_ledger=policy_outcome_ledger,
+        history_ledger=history_ledger,
+        cycle_strategy_outcome_ledger=cycle_strategy_outcome_ledger,
+        theory_memory_ledger=theory_memory_ledger,
+        campaign_ledger=campaign_ledger,
+        hypothesis_ledger=hypothesis_ledger,
+        experiment_ledger=experiment_ledger,
+        module_chat_ledger=module_chat_ledger,
+        prior_history_guided_policy_ledger=prior_history_guided_policy_ledger,
+        runtime_memory_data=loaded_memory,
+        runtime_memory_hash_state=runtime_hash_state,
+        project_owned_boundary=dict(capsule.get('project_owned_boundary') or {}),
+        hf_use_status=hf_status,
+        artifact_path=history_guided_policy_ledger_file,
+    )
+    write_science_history_guided_policy_ledger(history_guided_policy_ledger_file, updated_ledger)
+    if outbox_file:
+        write_science_history_guided_policy_outbox_jsonl(outbox_file, message)
+    latest = dict(updated_ledger.get('latest') or {})
+    state_counts = dict(latest.get('state_counts') or {})
+    result = {
+        'science_history_guided_policy_capability': True,
+        'history_guided_policy_ledger_path': str(history_guided_policy_ledger_file),
+        'history_guided_policy_ledger_hash': updated_ledger.get('ledger_hash'),
+        'science_history_guided_policy_id': latest.get('science_history_guided_policy_id'),
+        'processed_message_count': len(updated_ledger.get('processed_message_ids') or []),
+        'new_message_count': int(latest.get('new_message_count', 0) or 0),
+        'skipped_message_count': int(latest.get('skipped_message_count', 0) or 0),
+        'applied_count': int(state_counts.get('applied', 0) or 0),
+        'weakened_count': int(state_counts.get('weakened', 0) or 0),
+        'retired_count': int(state_counts.get('retired', 0) or 0),
+        'waiting_count': int(state_counts.get('waiting', 0) or 0),
+        'boundary_count': int(state_counts.get('boundary', 0) or 0),
+        'no_gain_count': int(state_counts.get('no_gain', 0) or 0),
+        'selected_decision': latest.get('selected_policy_decision'),
+        'selected_action': latest.get('selected_action'),
+        'chosen_recipient': latest.get('chosen_recipient'),
+        'outbox_count': int(latest.get('outbox_count', 0) or 0),
+        'outbox_file': str(outbox_file) if outbox_file else None,
+        'response_message': message,
+        'runtime_memory_hash_state': runtime_hash_state,
+        'runtime_memory_mutated': not bool(runtime_hash_state.get('unchanged', True)),
+        'label_leaks': list(latest.get('label_leaks') or []),
+        'label_leaks_count': len(latest.get('label_leaks') or []),
+        'checkpoint_boundary_state': latest.get('checkpoint_boundary_state'),
+        'project_owned_boundary': dict(capsule.get('project_owned_boundary') or {}),
+        'third_party_checkpoint_used': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'third_party_checkpoint_used'
+            )
+        ),
+        'invalid_message_count': len(transcript.get('invalid_messages') or []),
+        'no_sibling_imports': True,
+        'project_owned_checkpoint_claimed': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'project_owned_checkpoint_verified'
+            )
+        ),
+        'hf_validation_used': bool(hf_validation_used),
+    }
+    if output_file:
+        _write_json_artifact(output_file, result)
+    print(
+        "AI_DIFFERENT_SCIENCE_HISTORY_GUIDED_POLICY "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    return result
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -11397,6 +11574,8 @@ if __name__ == '__main__':
                         help='Assess whether a science coordination A/B probe produced useful evidence')
     parser.add_argument('--module-chat-science-coordination-interaction-history', action='store_true',
                         help='Aggregate repeated science coordination A/B outcomes into interaction-history memory')
+    parser.add_argument('--module-chat-science-history-guided-policy', action='store_true',
+                        help='Plan the next science coordination policy from local interaction-history evidence')
     parser.add_argument('--module-chat-response-mode', type=str, default='plan',
                         choices=['plan', 'run'],
                         help='Plan or run the cheap no-save abstraction-transfer response')
@@ -11632,6 +11811,15 @@ if __name__ == '__main__':
     parser.add_argument('--module-chat-science-interaction-history-outbox-file', type=str,
                         default='tmp/module-chat-science-coordination-interaction-history-outbox.jsonl',
                         help='JSONL path for at most one science coordination interaction-history message')
+    parser.add_argument('--module-chat-science-history-guided-policy-ledger-file', type=str,
+                        default='tmp/module-chat-science-history-guided-policy-ledger.json',
+                        help='JSON path for science history-guided policy state')
+    parser.add_argument('--module-chat-prior-science-history-guided-policy-ledger-file', type=str,
+                        default=None,
+                        help='Optional prior science history-guided policy ledger JSON path')
+    parser.add_argument('--module-chat-science-history-guided-policy-outbox-file', type=str,
+                        default='tmp/module-chat-science-history-guided-policy-outbox.jsonl',
+                        help='JSONL path for at most one science history-guided policy message')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -12366,6 +12554,30 @@ if __name__ == '__main__':
             interaction_history_ledger_file=args.module_chat_science_interaction_history_ledger_file,
             prior_interaction_history_ledger_file=args.module_chat_prior_science_interaction_history_ledger_file,
             outbox_file=args.module_chat_science_interaction_history_outbox_file,
+            output_file=args.module_chat_output_file or args.hf_output_file,
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_science_history_guided_policy:
+        run_science_history_guided_policy_planner(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            transcript_file=args.module_chat_inbox,
+            interaction_history_ledger_file=args.module_chat_science_interaction_history_ledger_file,
+            ab_probe_outcome_ledger_file=args.module_chat_science_ab_probe_outcome_ledger_file,
+            ab_probe_ledger_file=args.module_chat_science_ab_probe_ledger_file,
+            policy_scorecard_ledger_file=args.module_chat_science_policy_scorecard_ledger_file,
+            policy_outcome_ledger_file=args.module_chat_science_policy_outcome_ledger_file,
+            history_ledger_file=args.module_chat_science_history_ledger_file,
+            cycle_strategy_outcome_ledger_file=args.module_chat_campaign_cycle_strategy_outcome_ledger_file,
+            theory_memory_ledger_file=args.module_chat_theory_memory_ledger_file,
+            campaign_ledger_file=args.module_chat_campaign_ledger_file,
+            hypothesis_ledger_file=args.module_chat_hypothesis_ledger_file,
+            experiment_ledger_file=args.module_chat_experiment_ledger_file,
+            module_chat_ledger_file=args.module_chat_module_ledger_file,
+            history_guided_policy_ledger_file=args.module_chat_science_history_guided_policy_ledger_file,
+            prior_history_guided_policy_ledger_file=args.module_chat_prior_science_history_guided_policy_ledger_file,
+            outbox_file=args.module_chat_science_history_guided_policy_outbox_file,
             output_file=args.module_chat_output_file or args.hf_output_file,
         )
         raise SystemExit(0)
