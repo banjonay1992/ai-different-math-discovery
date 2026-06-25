@@ -1,0 +1,404 @@
+import contextlib
+import io
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'first_principles_ai'))
+sys.path.insert(0, PROJECT_DIR)
+
+from agent.evidence_scorecard import (  # noqa: E402
+    SCORECARD_LEDGER_KIND,
+    build_evidence_scorecard,
+    empty_scorecard_ledger,
+    load_scorecard_ledger,
+    read_scorecard_transcript,
+    validate_scorecard_ledger,
+    write_scorecard_ledger,
+    write_scorecard_outbox_jsonl,
+)
+from agent.experiment_contracts import (  # noqa: E402
+    CONTRACT_LEDGER_KIND,
+    build_experiment_contract_from_evaluator,
+    export_experiment_contract_message,
+)
+from agent.module_chat_adapter import build_module_chat_message  # noqa: E402
+from main import run_evidence_scorecard_runner  # noqa: E402
+
+
+def memory_fixture():
+    return {
+        'discovery_readiness': {'readiness_score': 0.86, 'status': 'nearly_ready'},
+        'abstraction_discovery_evidence': {'transfer_outcome_count': 4},
+    }
+
+
+def evaluator_ledger_fixture():
+    selected = {
+        'experiment_kind': 'abstraction_transfer_probe',
+        'action_kind': 'non_final_abstraction_transfer_campaign',
+        'world': 'hidden_procedural',
+        'probe': 'abstraction_transfer_probe',
+        'runs_final': False,
+        'expected_transfer_signal': 'compressed abstraction should improve held-out residuals',
+    }
+    return {
+        'schema_version': 1,
+        'ledger_kind': 'ai_different.family_outcome_evaluator_ledger',
+        'ledger_id': 'scorecard-eval-one',
+        'ledger_hash': 'scorecard-eval-hash-one',
+        'chosen_evidence_ids': ['scorecard-evidence-one'],
+        'chosen_evidence_senders': ['language_model_2'],
+        'decision': {'decision_kind': 'run_next_safe_experiment', 'selected_experiment': selected},
+        'selected_experiment': selected,
+        'expected_transfer_signal': selected['expected_transfer_signal'],
+        'runtime_memory_hash_state': {'unchanged': True},
+        'project_owned_boundary': {'third_party_checkpoint_used': False},
+        'third_party_checkpoint_used': False,
+        'label_clean': True,
+        'leak_terms': [],
+    }
+
+
+def contract_fixture():
+    return build_experiment_contract_from_evaluator(evaluator_ledger_fixture())
+
+
+def contract_message(contract):
+    return export_experiment_contract_message(
+        contract,
+        runtime_memory_hash_state={'unchanged': True},
+        project_owned_boundary={'third_party_checkpoint_used': False},
+    )
+
+
+def evidence_message(contract_id, *, sender, status='satisfied', gate=None, leak=False):
+    if gate is None:
+        gate = 'math_proof' if sender == 'funfun' else 'code_proof'
+    summary = f'{gate} {status} scorecard evidence'
+    if leak:
+        summary = 'gravity label leaked into scorecard evidence'
+    return build_module_chat_message(
+        sender=sender,
+        recipient='ai_different',
+        topic=f'{sender}.{gate}.{status}',
+        body={
+            'evidence_id': f'{contract_id}-{sender}-{gate}-{status}',
+            'contract_id': contract_id,
+            'evidence_gate': gate,
+            'status': status,
+            'summary': summary,
+        },
+        evidence={'contract_id': contract_id, 'evidence_gate': gate, 'status': status},
+        tags=['scorecard', gate, status],
+    )
+
+
+def language_message(contract_id, *, status='satisfied'):
+    return evidence_message(
+        contract_id,
+        sender='language_model_2',
+        status=status,
+        gate='language_epoch_plan',
+    )
+
+
+def scorecard_message(hypothesis_id):
+    return build_module_chat_message(
+        sender='ai_different',
+        recipient='broadcast',
+        topic='ai_different.experiment_evidence_scorecard',
+        body={
+            'response_kind': 'experiment_evidence_scorecard',
+            'scorecard_id': 'prior-scorecard-one',
+            'hypothesis_id': hypothesis_id,
+            'readiness_state': 'resolved',
+            'selected_action': 'mark_scorecard_resolved',
+            'accepted_evidence': ['math_proof', 'code_proof', 'language_epoch_plan'],
+            'missing_evidence': [],
+            'rejected_evidence': [],
+        },
+        evidence={'hypothesis_id': hypothesis_id, 'status': 'resolved'},
+        tags=['scorecard', 'resolved'],
+    )
+
+
+def build_once(messages, *, ledger=None, project_boundary=None):
+    updated, message = build_evidence_scorecard(
+        transcript_messages=messages,
+        scorecard_ledger=ledger or empty_scorecard_ledger(),
+        evaluator_ledger=evaluator_ledger_fixture(),
+        outcome_ledger={},
+        contract_ledger={},
+        adjudicator_ledger={},
+        agenda_ledger={},
+        lifecycle_ledger={},
+        runtime_memory_data=memory_fixture(),
+        runtime_memory_hash_state={'unchanged': True, 'before': 'same', 'after': 'same'},
+        project_owned_boundary=project_boundary or {'third_party_checkpoint_used': False},
+    )
+    return updated, message
+
+
+class EvidenceScorecardTests(unittest.TestCase):
+    def test_scorecard_ledger_persistence_load_and_malformed_rejection(self):
+        contract = contract_fixture()
+        ledger, message = build_once([contract_message(contract)])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ledger_path = Path(tmpdir) / 'scorecard.json'
+            outbox = Path(tmpdir) / 'outbox.jsonl'
+            write_scorecard_ledger(ledger_path, ledger)
+            loaded = load_scorecard_ledger(ledger_path)
+            write_scorecard_outbox_jsonl(outbox, message)
+            rows = [json.loads(line) for line in outbox.read_text(encoding='utf-8').splitlines()]
+
+        self.assertEqual(SCORECARD_LEDGER_KIND, loaded['ledger_kind'])
+        self.assertEqual('experiment_evidence_scorecard', rows[0]['body']['response_kind'])
+        with self.assertRaisesRegex(ValueError, 'wrong ledger_kind'):
+            validate_scorecard_ledger({'ledger_kind': 'wrong'})
+
+    def test_hypothesis_evidence_extraction_and_invalids(self):
+        contract = contract_fixture()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transcript = Path(tmpdir) / 'scorecard.jsonl'
+            transcript.write_text(
+                json.dumps(contract_message(contract), sort_keys=True) + '\n'
+                + json.dumps(evidence_message(contract['contract_id'], sender='funfun'), sort_keys=True) + '\n'
+                + '{"sender":"bad"}\n',
+                encoding='utf-8',
+            )
+            parsed = read_scorecard_transcript(transcript)
+        ledger, _ = build_once(parsed['messages'])
+
+        self.assertEqual(2, len(parsed['messages']))
+        self.assertEqual(1, len(parsed['invalid_messages']))
+        card = ledger['scorecards'][0]
+        self.assertEqual('hypothesis:' + contract['contract_id'], card['hypothesis_id'])
+        self.assertIn('math_proof', card['accepted_evidence_gates'])
+        self.assertIn('code_proof', card['missing_evidence_gates'])
+
+    def test_priority_protocol_math_code_then_resolve(self):
+        contract = contract_fixture()
+        protocol_ledger, protocol_message = build_once([
+            contract_message(contract),
+            language_message(contract['contract_id'], status='missing'),
+        ])
+        self.assertEqual('protocol_or_handoff_repair', protocol_ledger['latest']['selected_action'])
+        self.assertEqual('language_model_2', protocol_message['recipient'])
+
+        first_ledger, first_message = build_once([contract_message(contract)])
+        self.assertEqual('request_missing_math_evidence', first_ledger['latest']['selected_action'])
+        self.assertEqual('funfun', first_message['recipient'])
+
+        second_ledger, second_message = build_once(
+            [evidence_message(contract['contract_id'], sender='funfun')],
+            ledger=first_ledger,
+        )
+        self.assertEqual('request_missing_code_evidence', second_ledger['latest']['selected_action'])
+        self.assertEqual('code_module', second_message['recipient'])
+
+        third_ledger, third_message = build_once(
+            [
+                evidence_message(contract['contract_id'], sender='code_module'),
+                language_message(contract['contract_id']),
+            ],
+            ledger=second_ledger,
+        )
+        self.assertEqual('mark_scorecard_resolved', third_ledger['latest']['selected_action'])
+        self.assertEqual('broadcast', third_message['recipient'])
+
+    def test_retired_label_boundary_and_refinement_once(self):
+        contract = contract_fixture()
+        base, _ = build_once([
+            contract_message(contract),
+            evidence_message(contract['contract_id'], sender='funfun'),
+            language_message(contract['contract_id']),
+        ])
+        retired, retired_message = build_once(
+            [evidence_message(contract['contract_id'], sender='code_module', status='failed')],
+            ledger=base,
+        )
+        self.assertEqual('retire_unsatisfied_hypothesis', retired['latest']['selected_action'])
+        self.assertEqual('broadcast', retired_message['recipient'])
+
+        leak_ledger, leak_message = build_once([
+            contract_message(contract),
+            evidence_message(contract['contract_id'], sender='funfun', leak=True),
+        ])
+        self.assertEqual('safety_label_or_project_owned_repair', leak_ledger['latest']['selected_action'])
+        self.assertEqual('code_module', leak_message['recipient'])
+        self.assertIn('gravity', leak_message['body']['label_leaks'])
+
+        boundary_ledger, boundary_message = build_once(
+            [contract_message(contract)],
+            project_boundary={'third_party_checkpoint_used': True},
+        )
+        self.assertEqual('safety_label_or_project_owned_repair', boundary_ledger['latest']['selected_action'])
+        self.assertEqual('code_module', boundary_message['recipient'])
+
+        resolved, resolved_message = build_once([
+            contract_message(contract),
+            evidence_message(contract['contract_id'], sender='funfun'),
+            evidence_message(contract['contract_id'], sender='code_module'),
+            language_message(contract['contract_id']),
+        ])
+        hypothesis_id = resolved_message['body']['hypothesis_id']
+        refined, refined_message = build_once([scorecard_message(hypothesis_id)], ledger=resolved)
+        repeated, repeated_message = build_once([scorecard_message(hypothesis_id)], ledger=refined)
+        self.assertEqual('refine_next_hypothesis', refined['latest']['selected_action'])
+        self.assertEqual('broadcast', refined_message['recipient'])
+        self.assertEqual('summarize_noop', repeated['latest']['selected_action'])
+        self.assertIsNone(repeated_message)
+
+    def test_duplicate_idempotence(self):
+        contract = contract_fixture()
+        ledger, message = build_once([contract_message(contract)])
+        repeat, repeat_message = build_once([contract_message(contract)], ledger=ledger)
+
+        self.assertIsNotNone(message)
+        self.assertIsNone(repeat_message)
+        self.assertEqual('summarize_noop', repeat['latest']['selected_action'])
+
+    def test_cli_status_proof_preserves_runtime_memory(self):
+        contract = contract_fixture()
+        rows = [
+            contract_message(contract),
+            evidence_message(contract['contract_id'], sender='funfun'),
+            evidence_message(contract['contract_id'], sender='code_module'),
+            language_message(contract['contract_id']),
+            evidence_message(contract['contract_id'], sender='code_module'),
+        ]
+        contract_ledger = {
+            'schema_version': 1,
+            'ledger_kind': CONTRACT_LEDGER_KIND,
+            'contracts': [contract],
+            'processed_downstream_evidence_ids': [],
+            'emitted_evaluator_ledger_ids': ['scorecard-eval-one'],
+            'outgoing_message_ids': [],
+            'latest': {},
+            'ledger_hash': 'scorecard-contract-ledger-hash-one',
+        }
+        empty_adjudicator = {
+            'schema_version': 1,
+            'ledger_kind': 'ai_different.cross_module_adjudicator_ledger',
+            'processed_message_ids': [],
+            'processed_evaluator_ledger_ids': [],
+            'contract_states': [],
+            'adjudication_records': [],
+            'outgoing_response_ids': [],
+            'latest': {},
+            'ledger_hash': 'scorecard-adjudicator-hash-one',
+        }
+        empty_agenda = {
+            'schema_version': 1,
+            'ledger_kind': 'ai_different.experiment_agenda_ledger',
+            'processed_message_ids': [],
+            'processed_source_hashes': [],
+            'scheduled_candidate_ids': [],
+            'hypotheses': [],
+            'agenda_records': [],
+            'outgoing_response_ids': [],
+            'latest': {},
+            'ledger_hash': 'scorecard-agenda-hash-one',
+        }
+        empty_lifecycle = {
+            'schema_version': 1,
+            'ledger_kind': 'ai_different.hypothesis_lifecycle_ledger',
+            'processed_message_ids': [],
+            'processed_source_hashes': [],
+            'resolved_hypothesis_ids': [],
+            'retired_hypothesis_ids': [],
+            'refined_hypothesis_ids': [],
+            'hypotheses': [],
+            'lifecycle_records': [],
+            'outgoing_response_ids': [],
+            'latest': {},
+            'ledger_hash': 'scorecard-lifecycle-hash-one',
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            memory_path = tmp / 'runtime-memory.json'
+            transcript = tmp / 'family.jsonl'
+            evaluator_path = tmp / 'evaluator.json'
+            contract_path = tmp / 'contract.json'
+            adjudicator_path = tmp / 'adjudicator.json'
+            agenda_path = tmp / 'agenda.json'
+            lifecycle_path = tmp / 'lifecycle.json'
+            scorecard_path = tmp / 'scorecard.json'
+            outbox = tmp / 'outbox.jsonl'
+            memory_path.write_text(json.dumps(memory_fixture()), encoding='utf-8')
+            transcript.write_text(''.join(json.dumps(row, sort_keys=True) + '\n' for row in rows), encoding='utf-8')
+            evaluator_path.write_text(json.dumps(evaluator_ledger_fixture()), encoding='utf-8')
+            contract_path.write_text(json.dumps(contract_ledger), encoding='utf-8')
+            adjudicator_path.write_text(json.dumps(empty_adjudicator), encoding='utf-8')
+            agenda_path.write_text(json.dumps(empty_agenda), encoding='utf-8')
+            lifecycle_path.write_text(json.dumps(empty_lifecycle), encoding='utf-8')
+            before = memory_path.read_text(encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                first = run_evidence_scorecard_runner(
+                    memory_data=memory_fixture(),
+                    runtime_memory_path=memory_path,
+                    transcript_file=transcript,
+                    evaluator_ledger_file=evaluator_path,
+                    contract_ledger_file=contract_path,
+                    adjudicator_ledger_file=adjudicator_path,
+                    agenda_ledger_file=agenda_path,
+                    lifecycle_ledger_file=lifecycle_path,
+                    scorecard_ledger_file=scorecard_path,
+                    outbox_file=outbox,
+                    git_status_text='',
+                    git_ignored_text='',
+                )
+            with contextlib.redirect_stdout(io.StringIO()):
+                second = run_evidence_scorecard_runner(
+                    memory_data=memory_fixture(),
+                    runtime_memory_path=memory_path,
+                    transcript_file=transcript,
+                    evaluator_ledger_file=evaluator_path,
+                    contract_ledger_file=contract_path,
+                    adjudicator_ledger_file=adjudicator_path,
+                    agenda_ledger_file=agenda_path,
+                    lifecycle_ledger_file=lifecycle_path,
+                    scorecard_ledger_file=scorecard_path,
+                    outbox_file=outbox,
+                    git_status_text='',
+                    git_ignored_text='',
+                )
+            after = memory_path.read_text(encoding='utf-8')
+
+        self.assertEqual('mark_scorecard_resolved', first['selected_action'])
+        self.assertEqual(1, first['outbox_count'])
+        self.assertEqual('summarize_noop', second['selected_action'])
+        self.assertEqual(0, second['outbox_count'])
+        self.assertTrue(first['runtime_memory_hash_state']['unchanged'])
+        self.assertEqual(before, after)
+        self.assertEqual([], first['label_leaks'])
+        self.assertFalse(first['third_party_checkpoint_used'])
+        self.assertTrue(first['no_sibling_imports'])
+        self.assertFalse(first['project_owned_checkpoint_claimed'])
+
+    def test_no_sibling_project_imports_are_introduced(self):
+        root = Path(PROJECT_DIR)
+        checked = [
+            root / 'agent' / 'evidence_scorecard.py',
+            root / 'main.py',
+        ]
+        forbidden = [
+            'Language model 2.0',
+            'Code Module',
+            'orchastratorrrr',
+            'from funfun',
+            'import funfun',
+        ]
+        for path in checked:
+            text = path.read_text(encoding='utf-8')
+            for token in forbidden:
+                self.assertNotIn(token, text)
+
+
+if __name__ == '__main__':
+    unittest.main()
