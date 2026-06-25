@@ -123,6 +123,9 @@ python3 main.py --module-chat-family-response --module-chat-response-mode run --
 # Process a rolling module-chat log idempotently, skipping old inbound messages
 python3 main.py --module-chat-rolling-family-response --module-chat-response-mode run --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-rolling-memory-file tmp/module-chat-family-memory.json --module-chat-ledger-file tmp/module-chat-response-ledger.json --theory-memory-file tmp/theory-memory.json
 
+# Evaluate accumulated rolling family evidence into one next science experiment/defer decision
+python3 main.py --module-chat-outcome-evaluator --module-chat-rolling-memory-file tmp/module-chat-family-memory.json --module-chat-evaluator-ledger-files tmp/module-chat-response-ledger.json --module-chat-outcome-memory-file tmp/module-chat-outcome-evaluator-memory.json --module-chat-outcome-ledger-file tmp/module-chat-outcome-evaluator-ledger.json --theory-memory-file tmp/theory-memory.json
+
 # Inspect long-run memory growth and quantized compression state
 python3 main.py --memory-efficiency-review --theory-memory-file tmp/theory-memory.json
 

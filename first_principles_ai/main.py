@@ -76,6 +76,15 @@ from agent.status_capsule import (
     git_status_for_path,
     load_capsule_memory_data,
 )
+from agent.family_outcome_evaluator import (
+    append_outcome_evaluator_memory,
+    build_outcome_evaluator_ledger,
+    export_outcome_evaluator_message,
+    load_outcome_evaluator_memory,
+    load_response_ledgers,
+    write_outcome_evaluator_ledger,
+    write_outcome_evaluator_memory,
+)
 from agent.module_chat_adapter import (
     append_rolling_family_record,
     build_module_family_response_ledger,
@@ -6634,6 +6643,110 @@ def run_module_chat_rolling_family_response(
     return result
 
 
+def run_family_outcome_evaluator(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    recipient: str = 'orchestrator',
+    topic: str = 'ai_different.family_outcome_evaluation',
+    rolling_memory_file: str | Path = 'tmp/module-chat-family-memory.json',
+    response_ledger_files: list[str | Path] | None = None,
+    output_file: str | Path | None = None,
+    evaluator_ledger_file: str | Path = 'tmp/module-chat-outcome-evaluator-ledger.json',
+    evaluator_memory_file: str | Path = 'tmp/module-chat-outcome-evaluator-memory.json',
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Evaluate accumulated module-family evidence into the next science step."""
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=runtime_memory_path,
+    )
+    rolling_memory = load_rolling_family_memory(rolling_memory_file)
+    evaluator_memory = load_outcome_evaluator_memory(evaluator_memory_file)
+    response_ledgers = load_response_ledgers(list(response_ledger_files or []))
+    before_hash = _file_sha256(runtime_memory_path)
+    runtime_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+    ledger = build_outcome_evaluator_ledger(
+        rolling_memory=rolling_memory,
+        response_ledgers=response_ledgers,
+        evaluator_memory=evaluator_memory,
+        runtime_memory_hash_state=runtime_hash_state,
+        project_owned_boundary=dict(capsule.get('project_owned_boundary') or {}),
+        ledger_path=evaluator_ledger_file,
+    )
+    if ledger.get('decision', {}).get('decision_kind') != 'no_op':
+        ledger['outgoing_module_chat_response_ids'] = [str(ledger.get('ledger_id'))]
+        ledger['ledger_hash'] = hashlib.sha256(
+            json.dumps(ledger, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        ).hexdigest()
+    message = export_outcome_evaluator_message(
+        ledger,
+        recipient=recipient,
+        topic=topic,
+    )
+    write_outcome_evaluator_ledger(evaluator_ledger_file, ledger)
+    evaluator_memory = append_outcome_evaluator_memory(
+        evaluator_memory,
+        ledger,
+        message,
+    )
+    write_outcome_evaluator_memory(evaluator_memory_file, evaluator_memory)
+    result = {
+        'family_outcome_evaluator_available': True,
+        'rolling_memory_path': str(rolling_memory_file),
+        'response_ledger_count': len(response_ledgers),
+        'evaluator_memory_path': str(evaluator_memory_file),
+        'evaluator_ledger_path': str(evaluator_ledger_file),
+        'evaluator_ledger_id': ledger.get('ledger_id'),
+        'evaluator_ledger_hash': ledger.get('ledger_hash'),
+        'processed_ledger_ids': list(ledger.get('processed_ledger_ids') or []),
+        'processed_evidence_ids': list(ledger.get('processed_evidence_ids') or []),
+        'classification_counts': dict(ledger.get('classification_counts') or {}),
+        'decision': dict(ledger.get('decision') or {}),
+        'selected_experiment': dict(ledger.get('selected_experiment') or {}),
+        'expected_transfer_signal': ledger.get('expected_transfer_signal'),
+        'unresolved_blockers': list(ledger.get('unresolved_blockers') or []),
+        'response_message': message,
+        'outgoing_response_ids': list(
+            evaluator_memory.get('outgoing_response_ids') or []
+        ),
+        'label_clean': bool(ledger.get('label_clean')),
+        'project_owned_boundary': dict(capsule.get('project_owned_boundary') or {}),
+        'third_party_checkpoint_used': bool(ledger.get('third_party_checkpoint_used')),
+        'runtime_memory_hash_state': runtime_hash_state,
+        'runtime_memory_mutated': not bool(runtime_hash_state.get('unchanged', True)),
+    }
+    if output_file:
+        _write_json_artifact(output_file, result)
+    print(
+        "AI_DIFFERENT_FAMILY_OUTCOME_EVALUATOR "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    return result
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -7739,6 +7852,8 @@ if __name__ == '__main__':
                         help='Read a richer module-family inbox, persist a ledger, and emit a response')
     parser.add_argument('--module-chat-rolling-family-response', action='store_true',
                         help='Run idempotent rolling module-family response over a chat JSONL log')
+    parser.add_argument('--module-chat-outcome-evaluator', action='store_true',
+                        help='Evaluate rolling family evidence and choose the next science experiment')
     parser.add_argument('--module-chat-response-mode', type=str, default='plan',
                         choices=['plan', 'run'],
                         help='Plan or run the cheap no-save abstraction-transfer response')
@@ -7756,6 +7871,14 @@ if __name__ == '__main__':
     parser.add_argument('--module-chat-rolling-memory-file', type=str,
                         default='tmp/module-chat-family-memory.json',
                         help='JSON path for rolling module-family response memory')
+    parser.add_argument('--module-chat-evaluator-ledger-files', type=str, default=None,
+                        help='Comma-separated response ledger JSON files for the outcome evaluator')
+    parser.add_argument('--module-chat-outcome-ledger-file', type=str,
+                        default='tmp/module-chat-outcome-evaluator-ledger.json',
+                        help='JSON path for the persisted outcome-evaluator ledger')
+    parser.add_argument('--module-chat-outcome-memory-file', type=str,
+                        default='tmp/module-chat-outcome-evaluator-memory.json',
+                        help='JSON path for durable outcome-evaluator memory')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -7990,6 +8113,34 @@ if __name__ == '__main__':
             rolling_memory_file=args.module_chat_rolling_memory_file,
             response_mode=args.module_chat_response_mode,
             fallback_outcome_mode=args.abstraction_transfer_outcome,
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_outcome_evaluator:
+        response_topic = (
+            args.module_chat_topic
+            if args.module_chat_topic != 'ai_different.status_capsule'
+            else 'ai_different.family_outcome_evaluation'
+        )
+        ledger_files = (
+            [
+                item.strip()
+                for item in args.module_chat_evaluator_ledger_files.split(',')
+                if item.strip()
+            ]
+            if args.module_chat_evaluator_ledger_files
+            else [args.module_chat_ledger_file]
+        )
+        run_family_outcome_evaluator(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            recipient=args.module_chat_recipient,
+            topic=response_topic,
+            rolling_memory_file=args.module_chat_rolling_memory_file,
+            response_ledger_files=ledger_files,
+            output_file=args.module_chat_output_file or args.hf_output_file,
+            evaluator_ledger_file=args.module_chat_outcome_ledger_file,
+            evaluator_memory_file=args.module_chat_outcome_memory_file,
         )
         raise SystemExit(0)
 
