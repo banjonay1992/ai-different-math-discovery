@@ -133,6 +133,14 @@ from agent.campaign_planner import (
     write_campaign_ledger,
     write_campaign_outbox_jsonl,
 )
+from agent.campaign_outcome_assessor import (
+    build_campaign_outcome_assessment,
+    load_campaign_outcome_ledger,
+    load_plain_json as load_campaign_outcome_plain_json,
+    read_campaign_outcome_transcript,
+    write_campaign_outcome_ledger,
+    write_campaign_outcome_outbox_jsonl,
+)
 from agent.module_chat_adapter import (
     append_rolling_family_record,
     build_module_family_response_ledger,
@@ -7456,6 +7464,130 @@ def run_experiment_campaign_planner(
     return result
 
 
+def run_campaign_outcome_assessor(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    transcript_file: str | Path | None = None,
+    evaluator_ledger_file: str | Path = 'tmp/module-chat-outcome-evaluator-ledger.json',
+    outcome_ledger_file: str | Path | None = None,
+    contract_ledger_file: str | Path = 'tmp/module-chat-experiment-contract-ledger.json',
+    adjudicator_ledger_file: str | Path = 'tmp/module-chat-cross-module-adjudicator-ledger.json',
+    agenda_ledger_file: str | Path = 'tmp/module-chat-experiment-agenda-ledger.json',
+    lifecycle_ledger_file: str | Path = 'tmp/module-chat-hypothesis-lifecycle-ledger.json',
+    scorecard_ledger_file: str | Path = 'tmp/module-chat-evidence-scorecard-ledger.json',
+    campaign_ledger_file: str | Path = 'tmp/module-chat-experiment-campaign-ledger.json',
+    campaign_outcome_ledger_file: str | Path = 'tmp/module-chat-experiment-campaign-outcome-ledger.json',
+    outbox_file: str | Path | None = None,
+    output_file: str | Path | None = None,
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Assess campaign return evidence and plan a symbolic theory update."""
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=runtime_memory_path,
+    )
+    transcript = read_campaign_outcome_transcript(transcript_file)
+    evaluator_ledger = load_campaign_outcome_plain_json(evaluator_ledger_file)
+    outcome_ledger = load_campaign_outcome_plain_json(outcome_ledger_file) if outcome_ledger_file else {}
+    contract_ledger = load_campaign_outcome_plain_json(contract_ledger_file)
+    adjudicator_ledger = load_campaign_outcome_plain_json(adjudicator_ledger_file)
+    agenda_ledger = load_campaign_outcome_plain_json(agenda_ledger_file)
+    lifecycle_ledger = load_campaign_outcome_plain_json(lifecycle_ledger_file)
+    scorecard_ledger = load_campaign_outcome_plain_json(scorecard_ledger_file)
+    campaign_ledger = load_campaign_outcome_plain_json(campaign_ledger_file)
+    campaign_outcome_ledger = load_campaign_outcome_ledger(campaign_outcome_ledger_file)
+    before_hash = _file_sha256(runtime_memory_path)
+    runtime_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+    updated_ledger, message = build_campaign_outcome_assessment(
+        transcript_messages=list(transcript.get('messages') or []),
+        campaign_outcome_ledger=campaign_outcome_ledger,
+        evaluator_ledger=evaluator_ledger,
+        outcome_ledger=outcome_ledger,
+        contract_ledger=contract_ledger,
+        adjudicator_ledger=adjudicator_ledger,
+        agenda_ledger=agenda_ledger,
+        lifecycle_ledger=lifecycle_ledger,
+        scorecard_ledger=scorecard_ledger,
+        campaign_ledger=campaign_ledger,
+        runtime_memory_data=loaded_memory,
+        runtime_memory_hash_state=runtime_hash_state,
+        project_owned_boundary=dict(capsule.get('project_owned_boundary') or {}),
+        artifact_path=campaign_outcome_ledger_file,
+    )
+    write_campaign_outcome_ledger(campaign_outcome_ledger_file, updated_ledger)
+    if outbox_file:
+        write_campaign_outcome_outbox_jsonl(outbox_file, message)
+    latest = dict(updated_ledger.get('latest') or {})
+    status_counts = dict(latest.get('status_counts') or {})
+    result = {
+        'campaign_outcome_capability': True,
+        'campaign_outcome_ledger_path': str(campaign_outcome_ledger_file),
+        'campaign_outcome_ledger_hash': updated_ledger.get('ledger_hash'),
+        'outcome_id': latest.get('outcome_id'),
+        'processed_message_count': len(updated_ledger.get('processed_message_ids') or []),
+        'new_message_count': int(latest.get('new_message_count', 0) or 0),
+        'skipped_message_count': int(latest.get('skipped_message_count', 0) or 0),
+        'accepted_count': int(status_counts.get('accepted', 0) or 0),
+        'request_count': int(status_counts.get('request', 0) or 0),
+        'failed_count': int(status_counts.get('failed', 0) or 0),
+        'refined_count': int(status_counts.get('refined', 0) or 0),
+        'retired_count': int(status_counts.get('retired', 0) or 0),
+        'repair_count': int(status_counts.get('repair', 0) or 0),
+        'selected_action': latest.get('selected_action'),
+        'chosen_recipient': latest.get('chosen_recipient'),
+        'outbox_count': int(latest.get('outbox_count', 0) or 0),
+        'outbox_file': str(outbox_file) if outbox_file else None,
+        'response_message': message,
+        'runtime_memory_hash_state': runtime_hash_state,
+        'runtime_memory_mutated': not bool(runtime_hash_state.get('unchanged', True)),
+        'label_leaks': list(latest.get('label_leaks') or []),
+        'label_leaks_count': len(latest.get('label_leaks') or []),
+        'project_owned_boundary': dict(capsule.get('project_owned_boundary') or {}),
+        'third_party_checkpoint_used': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'third_party_checkpoint_used'
+            )
+        ),
+        'invalid_message_count': len(transcript.get('invalid_messages') or []),
+        'no_sibling_imports': True,
+        'project_owned_checkpoint_claimed': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'project_owned_checkpoint_verified'
+            )
+        ),
+    }
+    if output_file:
+        _write_json_artifact(output_file, result)
+    print(
+        "AI_DIFFERENT_CAMPAIGN_OUTCOME "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    return result
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -8575,6 +8707,8 @@ if __name__ == '__main__':
                         help='Score hypothesis evidence gates and choose a refinement/repair action')
     parser.add_argument('--module-chat-experiment-campaign', action='store_true',
                         help='Plan the next symbolic experiment campaign or acceptance bundle')
+    parser.add_argument('--module-chat-campaign-outcome', action='store_true',
+                        help='Assess campaign return evidence and plan a theory update')
     parser.add_argument('--module-chat-response-mode', type=str, default='plan',
                         choices=['plan', 'run'],
                         help='Plan or run the cheap no-save abstraction-transfer response')
@@ -8639,6 +8773,12 @@ if __name__ == '__main__':
     parser.add_argument('--module-chat-campaign-outbox-file', type=str,
                         default='tmp/module-chat-experiment-campaign-outbox.jsonl',
                         help='JSONL path for at most one experiment campaign response message')
+    parser.add_argument('--module-chat-campaign-outcome-ledger-file', type=str,
+                        default='tmp/module-chat-experiment-campaign-outcome-ledger.json',
+                        help='JSON path for campaign outcome assessment state')
+    parser.add_argument('--module-chat-campaign-outcome-outbox-file', type=str,
+                        default='tmp/module-chat-experiment-campaign-outcome-outbox.jsonl',
+                        help='JSONL path for at most one campaign outcome response message')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -8994,6 +9134,25 @@ if __name__ == '__main__':
             scorecard_ledger_file=args.module_chat_scorecard_ledger_file,
             campaign_ledger_file=args.module_chat_campaign_ledger_file,
             outbox_file=args.module_chat_campaign_outbox_file,
+            output_file=args.module_chat_output_file or args.hf_output_file,
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_campaign_outcome:
+        run_campaign_outcome_assessor(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            transcript_file=args.module_chat_inbox,
+            evaluator_ledger_file=args.module_chat_outcome_ledger_file,
+            outcome_ledger_file=args.module_chat_agenda_outcome_ledger_file,
+            contract_ledger_file=args.module_chat_contract_ledger_file,
+            adjudicator_ledger_file=args.module_chat_adjudicator_ledger_file,
+            agenda_ledger_file=args.module_chat_agenda_ledger_file,
+            lifecycle_ledger_file=args.module_chat_lifecycle_ledger_file,
+            scorecard_ledger_file=args.module_chat_scorecard_ledger_file,
+            campaign_ledger_file=args.module_chat_campaign_ledger_file,
+            campaign_outcome_ledger_file=args.module_chat_campaign_outcome_ledger_file,
+            outbox_file=args.module_chat_campaign_outcome_outbox_file,
             output_file=args.module_chat_output_file or args.hf_output_file,
         )
         raise SystemExit(0)
