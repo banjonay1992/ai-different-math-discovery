@@ -141,6 +141,9 @@ python3 main.py --module-chat-hypothesis-lifecycle --module-chat-inbox tmp/modul
 # Score hypothesis evidence gates and choose resolve, repair, retire, or one refinement
 python3 main.py --module-chat-evidence-scorecard --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-outcome-ledger-file tmp/module-chat-outcome-evaluator-ledger.json --module-chat-contract-ledger-file tmp/module-chat-experiment-contract-ledger.json --module-chat-adjudicator-ledger-file tmp/module-chat-cross-module-adjudicator-ledger.json --module-chat-agenda-ledger-file tmp/module-chat-experiment-agenda-ledger.json --module-chat-lifecycle-ledger-file tmp/module-chat-hypothesis-lifecycle-ledger.json --module-chat-scorecard-ledger-file tmp/module-chat-evidence-scorecard-ledger.json --module-chat-scorecard-outbox-file tmp/module-chat-evidence-scorecard-outbox.jsonl --theory-memory-file tmp/theory-memory.json
 
+# Plan the next symbolic campaign or acceptance bundle from scored hypothesis evidence
+python3 main.py --module-chat-experiment-campaign --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-outcome-ledger-file tmp/module-chat-outcome-evaluator-ledger.json --module-chat-contract-ledger-file tmp/module-chat-experiment-contract-ledger.json --module-chat-adjudicator-ledger-file tmp/module-chat-cross-module-adjudicator-ledger.json --module-chat-agenda-ledger-file tmp/module-chat-experiment-agenda-ledger.json --module-chat-lifecycle-ledger-file tmp/module-chat-hypothesis-lifecycle-ledger.json --module-chat-scorecard-ledger-file tmp/module-chat-evidence-scorecard-ledger.json --module-chat-campaign-ledger-file tmp/module-chat-experiment-campaign-ledger.json --module-chat-campaign-outbox-file tmp/module-chat-experiment-campaign-outbox.jsonl --theory-memory-file tmp/theory-memory.json
+
 # Inspect long-run memory growth and quantized compression state
 python3 main.py --memory-efficiency-review --theory-memory-file tmp/theory-memory.json
 
