@@ -19,6 +19,7 @@ ALLOWED_PARTICIPANTS = {
     'language_model_2',
     'code_module',
     'orchestrator',
+    'history',
     'broadcast',
 }
 
