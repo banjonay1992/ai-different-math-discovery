@@ -2269,6 +2269,237 @@ def run_bounded_abstraction_transfer_replay_pack(
     return result
 
 
+def _abstraction_replay_matrix_cases(seed_start: int, target_world_types: list[str]) -> list[dict]:
+    candidate_worlds = list(target_world_types or [])
+    if not candidate_worlds:
+        candidate_worlds = ['hidden_procedural']
+    while len(candidate_worlds) < 3:
+        candidate_worlds.append(candidate_worlds[-1])
+    return [
+        {
+            'scenario_id': 'matrix_candidate_win_primary',
+            'world_type': candidate_worlds[-1],
+            'seed': seed_start + 300,
+            'candidate_mode': 'confirmed',
+            'control_mode': 'absent',
+        },
+        {
+            'scenario_id': 'matrix_candidate_win_secondary',
+            'world_type': candidate_worlds[1],
+            'seed': seed_start + 301,
+            'candidate_mode': 'confirmed',
+            'control_mode': 'absent',
+        },
+        {
+            'scenario_id': 'matrix_control_no_gain',
+            'world_type': candidate_worlds[-1],
+            'seed': seed_start + 302,
+            'candidate_mode': 'absent',
+            'control_mode': 'absent',
+        },
+        {
+            'scenario_id': 'matrix_weak_bridge',
+            'world_type': candidate_worlds[-1],
+            'seed': seed_start + 303,
+            'candidate_mode': 'weak',
+            'control_mode': 'absent',
+        },
+        {
+            'scenario_id': 'matrix_absent_bridge',
+            'world_type': candidate_worlds[0],
+            'seed': seed_start + 304,
+            'candidate_mode': 'absent',
+            'control_mode': 'absent',
+        },
+    ]
+
+
+def _abstraction_replay_aggregate(comparisons: list[dict]) -> dict:
+    counts = {
+        'candidate_win': 0,
+        'control_no_gain': 0,
+        'weak_or_absent_bridge': 0,
+        'control_win': 0,
+        'candidate_margin': 0,
+    }
+    for row in comparisons:
+        replay_class = str(row.get('selected_replay_class') or '')
+        if replay_class in counts:
+            counts[replay_class] += 1
+    total = len(comparisons)
+    candidate_win_rate = round(
+        counts['candidate_win'] / total,
+        3,
+    ) if total else 0.0
+    return {
+        'comparison_count': total,
+        'candidate_win_count': counts['candidate_win'],
+        'control_no_gain_count': counts['control_no_gain'],
+        'weak_or_absent_count': counts['weak_or_absent_bridge'],
+        'control_win_count': counts['control_win'],
+        'candidate_margin_count': counts['candidate_margin'],
+        'candidate_win_rate': candidate_win_rate,
+        'class_counts': counts,
+    }
+
+
+def run_bounded_abstraction_transfer_replay_matrix(
+    *,
+    seed_start: int = 0,
+    steps: int = 120,
+    object_count: int = 5,
+    target_world_types: list[str] | None = None,
+    output_file: str | Path | None = None,
+    emit_hf_artifact_summary: bool = False,
+) -> dict:
+    """Run a tiny non-final matrix of abstraction transfer replays."""
+    target_world_types = target_world_types or [
+        'standard',
+        'time_varying',
+        'inverse_square_repulsion',
+        'localized_gravity',
+        'hidden_procedural',
+    ]
+    theory_memory = CumulativeTheoryMemory()
+    loop = AutonomousDiscoveryLoop()
+    source_results = []
+    for case in _abstraction_transfer_source_cases(seed_start=seed_start):
+        report = loop.build_report(
+            case['equations'],
+            step=case['step'],
+            current_count=case['current_count'],
+        )
+        theory_memory.record_result(case['context'], case['seed'], report)
+        packed_report = report.to_dict()
+        source_results.append({
+            'context': case['context'],
+            'seed': case['seed'],
+            'bridge_count': len(packed_report.get('abstraction_bridges') or []),
+            'bridge_kinds': [
+                bridge.get('abstraction_kind')
+                for bridge in packed_report.get('abstraction_bridges') or []
+            ],
+        })
+    base_plan = _abstraction_transfer_campaign_plan(
+        theory_memory,
+        world_types=target_world_types,
+        object_count=object_count,
+        steps=steps,
+        seed_start=seed_start + 100,
+    )
+    comparisons = []
+    matrix_cases = _abstraction_replay_matrix_cases(seed_start, target_world_types)
+    if base_plan:
+        for case in matrix_cases:
+            plan = dict(base_plan)
+            plan['world_type'] = case['world_type']
+            plan['unrelated_world'] = case['world_type']
+            plan['seed'] = case['seed']
+            comparisons.append(_abstraction_replay_comparison(
+                loop=loop,
+                theory_memory=theory_memory,
+                plan=plan,
+                scenario_id=case['scenario_id'],
+                seed=int(case['seed']),
+                steps=steps,
+                object_count=object_count,
+                candidate_mode=case['candidate_mode'],
+                control_mode=case['control_mode'],
+            ))
+    aggregate = _abstraction_replay_aggregate(comparisons)
+    matrix_id = 'abstraction_transfer_replay_matrix_' + hashlib.sha256(
+        json.dumps({
+            'seed_start': seed_start,
+            'steps': steps,
+            'object_count': object_count,
+            'target_world_types': target_world_types,
+            'matrix_cases': matrix_cases,
+            'bridge': base_plan.get('abstraction_key') if base_plan else None,
+        }, sort_keys=True).encode('utf-8')
+    ).hexdigest()[:16]
+    config = {
+        'seed_start': int(seed_start),
+        'steps': int(steps),
+        'object_count': int(object_count),
+        'target_world_types': list(target_world_types),
+        'matrix_cases': matrix_cases,
+    }
+    artifact = {
+        'run_kind': 'bounded_abstraction_transfer_replay_matrix',
+        'matrix_id': matrix_id,
+        'runs_final': False,
+        'mutates_runtime_theory_memory': False,
+        'candidate_not_causal': True,
+        'candidate_not_causal_wording': (
+            'Candidate_replay_matrix_evidence only: tiny deterministic '
+            'candidate/control replay rows can guide follow-up probes, but do '
+            'not establish causal proof or benchmark proof.'
+        ),
+        'project_owned_checkpoint_claimed': False,
+        'third_party_checkpoint_used': False,
+        'hf_validation_used': False,
+        'config': config,
+        'source_results': source_results,
+        'bridge_count': len(theory_memory.abstraction_bridges(limit=8)),
+        'selected_plan': dict(base_plan or {}),
+        'comparisons': comparisons,
+        'aggregate_counts': aggregate,
+        'candidate_win_rate': aggregate['candidate_win_rate'],
+        'control_no_gain_count': aggregate['control_no_gain_count'],
+        'weak_or_absent_count': aggregate['weak_or_absent_count'],
+        'label_leaks': [],
+    }
+    artifact['artifact_content_hash'] = hashlib.sha256(
+        json.dumps(artifact, sort_keys=True).encode('utf-8')
+    ).hexdigest()
+    artifact_path = None
+    artifact_file_hash = None
+    if output_file:
+        artifact_path = _write_json_artifact(output_file, artifact)
+        artifact_file_hash = _file_sha256(artifact_path)
+    result = {
+        'run_kind': artifact['run_kind'],
+        'matrix_id': matrix_id,
+        'runs_final': False,
+        'artifact_path': str(artifact_path) if artifact_path else None,
+        'artifact_sha256': artifact_file_hash,
+        'artifact_content_hash': artifact['artifact_content_hash'],
+        'comparison_count': len(comparisons),
+        'aggregate_counts': aggregate,
+        'candidate_win_rate': aggregate['candidate_win_rate'],
+        'selected_candidate_control_outcomes': [
+            {
+                'scenario_id': row['scenario_id'],
+                'held_out_world_id': row['held_out_world_id'],
+                'source_bridge_id': row['source_bridge_id'],
+                'target_probe_id': row['target_probe_id'],
+                'selected_replay_class': row['selected_replay_class'],
+                'candidate_outcome': row['candidate_outcome'].get('outcome'),
+                'control_outcome': row['control_outcome'].get('outcome'),
+            }
+            for row in comparisons
+        ],
+        'candidate_not_causal': True,
+        'candidate_replay_matrix_evidence': True,
+        'project_owned_checkpoint_claimed': False,
+        'third_party_checkpoint_used': False,
+        'hf_validation_used': False,
+        'label_leaks': [],
+    }
+    print(
+        "AI_DIFFERENT_ABSTRACTION_TRANSFER_REPLAY_MATRIX "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    if emit_hf_artifact_summary:
+        print(
+            "HF_ARTIFACT_SUMMARY "
+            + json.dumps(artifact, sort_keys=True),
+            flush=True,
+        )
+    return result
+
+
 def _hf_upload_requires_create_pr(error: Exception) -> bool:
     message = str(error).lower()
     if '403' in message or 'forbidden' in message:
@@ -12270,6 +12501,10 @@ if __name__ == '__main__':
                         help='Run a bounded candidate-vs-control abstraction transfer replay pack')
     parser.add_argument('--abstraction-transfer-replay-output-file', type=str, default=None,
                         help='Optional JSON artifact path for the bounded abstraction transfer replay pack')
+    parser.add_argument('--abstraction-transfer-replay-matrix', action='store_true',
+                        help='Run a tiny held-out abstraction transfer replay matrix')
+    parser.add_argument('--abstraction-transfer-replay-matrix-output-file', type=str, default=None,
+                        help='Optional JSON artifact path for the abstraction transfer replay matrix')
     parser.add_argument('--math-foundation-prep', action='store_true',
                         help='Run readiness checks before the final watched math discovery run')
     parser.add_argument('--discovery-readiness', action='store_true',
@@ -13734,6 +13969,20 @@ if __name__ == '__main__':
             target_world_types=_parse_abstraction_transfer_worlds(args.world_types),
             output_file=(
                 args.abstraction_transfer_replay_output_file
+                or args.hf_output_file
+            ),
+            emit_hf_artifact_summary=args.hf_log_artifact_summary,
+        )
+        raise SystemExit(0)
+
+    if args.abstraction_transfer_replay_matrix:
+        run_bounded_abstraction_transfer_replay_matrix(
+            seed_start=args.seed,
+            steps=args.benchmark_steps,
+            object_count=_parse_csv_ints(args.object_counts)[0],
+            target_world_types=_parse_abstraction_transfer_worlds(args.world_types),
+            output_file=(
+                args.abstraction_transfer_replay_matrix_output_file
                 or args.hf_output_file
             ),
             emit_hf_artifact_summary=args.hf_log_artifact_summary,
