@@ -76,6 +76,7 @@ from agent.status_capsule import (
     load_capsule_memory_data,
 )
 from agent.module_chat_adapter import (
+    export_chat_driven_response_message,
     export_capsule_chat_message,
     read_module_chat_inbox,
 )
@@ -6183,6 +6184,105 @@ def run_module_chat_export(
     return message
 
 
+def run_module_chat_response_loop(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    recipient: str = 'orchestrator',
+    topic: str = 'ai_different.abstraction_transfer_response',
+    inbox_file: str | Path | None = None,
+    output_file: str | Path | None = None,
+    response_mode: str = 'plan',
+    fallback_outcome_mode: str = 'confirmed',
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Read module-chat inbox and emit an abstraction-transfer response message."""
+    if response_mode not in {'plan', 'run'}:
+        raise ValueError('response_mode must be plan or run')
+    if fallback_outcome_mode not in {'confirmed', 'weak', 'absent'}:
+        raise ValueError('fallback_outcome_mode must be confirmed, weak, or absent')
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+        working_memory = CumulativeTheoryMemory.from_dict(loaded_memory)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+        working_memory = CumulativeTheoryMemory.from_dict(loaded_memory)
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+        working_memory = CumulativeTheoryMemory.from_dict(loaded_memory)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=runtime_memory_path,
+    )
+    inbox_summary = read_module_chat_inbox(inbox_file, participant='ai_different')
+    request_preview = export_chat_driven_response_message(
+        capsule,
+        inbox_summary,
+        recipient=recipient,
+        topic=topic,
+    )['body']['selected_chat_request']
+    campaign_summary = None
+    ran_campaign = False
+    if response_mode == 'run':
+        outcome_mode = (
+            request_preview.get('outcome_mode')
+            if request_preview.get('outcome_mode') in {'confirmed', 'weak', 'absent'}
+            else fallback_outcome_mode
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            campaign_summary = run_abstraction_transfer_campaign(
+                theory_memory=working_memory,
+                seed_start=0,
+                steps=90,
+                object_count=5,
+                target_world_types=[
+                    'standard',
+                    'time_varying',
+                    'hidden_procedural',
+                ],
+                outcome_mode=outcome_mode,
+                emit_hf_artifact_summary=False,
+            )
+        capsule = build_ai_different_status_capsule(
+            working_memory.to_dict(),
+            git_status_text=status_text,
+            git_ignored_text=ignored_text,
+            runtime_memory_path=runtime_memory_path,
+        )
+        ran_campaign = True
+    message = export_chat_driven_response_message(
+        capsule,
+        inbox_summary,
+        campaign_summary=campaign_summary,
+        ran_campaign=ran_campaign,
+        recipient=recipient,
+        topic=topic,
+    )
+    if output_file:
+        _write_json_artifact(output_file, message)
+    print(
+        "AI_DIFFERENT_MODULE_CHAT_RESPONSE "
+        + json.dumps(message, sort_keys=True),
+        flush=True,
+    )
+    return message
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -7282,6 +7382,11 @@ if __name__ == '__main__':
                         help='Optional JSON path for the status capsule')
     parser.add_argument('--module-chat-export', action='store_true',
                         help='Export the AI Different capsule as a module-chat JSON message')
+    parser.add_argument('--module-chat-response-loop', action='store_true',
+                        help='Read module-chat inbox and emit an abstraction-transfer response message')
+    parser.add_argument('--module-chat-response-mode', type=str, default='plan',
+                        choices=['plan', 'run'],
+                        help='Plan or run the cheap no-save abstraction-transfer response')
     parser.add_argument('--module-chat-recipient', type=str, default='orchestrator',
                         help='Recipient participant for module-chat export')
     parser.add_argument('--module-chat-topic', type=str, default='ai_different.status_capsule',
@@ -7457,6 +7562,24 @@ if __name__ == '__main__':
             topic=args.module_chat_topic,
             inbox_file=args.module_chat_inbox,
             output_file=args.module_chat_output_file or args.hf_output_file,
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_response_loop:
+        response_topic = (
+            args.module_chat_topic
+            if args.module_chat_topic != 'ai_different.status_capsule'
+            else 'ai_different.abstraction_transfer_response'
+        )
+        run_module_chat_response_loop(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            recipient=args.module_chat_recipient,
+            topic=response_topic,
+            inbox_file=args.module_chat_inbox,
+            output_file=args.module_chat_output_file or args.hf_output_file,
+            response_mode=args.module_chat_response_mode,
+            fallback_outcome_mode=args.abstraction_transfer_outcome,
         )
         raise SystemExit(0)
 

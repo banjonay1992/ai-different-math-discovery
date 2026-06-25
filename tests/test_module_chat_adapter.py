@@ -13,14 +13,16 @@ sys.path.insert(0, PROJECT_DIR)
 
 from agent.module_chat_adapter import (  # noqa: E402
     build_module_chat_message,
+    build_chat_driven_response_payload,
     choose_next_non_final_request,
+    export_chat_driven_response_message,
     export_capsule_chat_message,
     read_module_chat_inbox,
     validate_module_chat_message,
     validate_participant,
 )
 from agent.status_capsule import build_ai_different_status_capsule  # noqa: E402
-from main import run_module_chat_export  # noqa: E402
+from main import run_module_chat_export, run_module_chat_response_loop  # noqa: E402
 
 
 def memory_fixture():
@@ -192,6 +194,159 @@ class ModuleChatAdapterTests(unittest.TestCase):
         self.assertEqual('broadcast', message['recipient'])
         self.assertEqual('inbox', message['body']['selected_chat_request']['source'])
         self.assertTrue(message['body']['selected_chat_request']['label_clean'])
+
+    def test_multi_message_inbox_prioritizes_language_request_and_code_evidence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inbox = Path(tmpdir) / 'inbox.jsonl'
+            messages = [
+                build_module_chat_message(
+                    sender='language_model_2',
+                    recipient='ai_different',
+                    topic='request.abstraction_transfer.followup',
+                    body={
+                        'request_kind': 'abstraction_transfer_followup',
+                        'question': 'Please test the compressed abstraction in another context.',
+                        'outcome_mode': 'absent',
+                        'priority': 0.95,
+                    },
+                    evidence={'prompt_source': 'language'},
+                    tags=['abstraction_transfer'],
+                ),
+                build_module_chat_message(
+                    sender='code_module',
+                    recipient='ai_different',
+                    topic='evidence.abstraction_transfer.cost',
+                    body={
+                        'note_kind': 'evidence',
+                        'summary': 'The no-save campaign is lightweight enough for local response.',
+                    },
+                    evidence={'estimated_runtime': 'subsecond', 'mutates_runtime_memory': False},
+                    tags=['evidence', 'local_safe'],
+                ),
+                build_module_chat_message(
+                    sender='orchestrator',
+                    recipient='ai_different',
+                    topic='request.abstraction_transfer.followup',
+                    body={
+                        'request_kind': 'abstraction_transfer_followup',
+                        'question': 'Lower priority request.',
+                        'priority': 0.1,
+                    },
+                    evidence={'prompt_source': 'orchestrator'},
+                    tags=['abstraction_transfer'],
+                ),
+            ]
+            inbox.write_text(
+                '\n'.join(json.dumps(message) for message in messages),
+                encoding='utf-8',
+            )
+
+            summary = read_module_chat_inbox(inbox)
+            selected = choose_next_non_final_request(capsule_fixture(), summary)
+            payload = build_chat_driven_response_payload(capsule_fixture(), summary)
+
+        self.assertEqual(3, len(summary['messages']))
+        self.assertEqual(2, len(summary['experiment_requests']))
+        self.assertEqual(1, len(summary['evidence_notes']))
+        self.assertEqual('language_model_2', selected['requested_by'])
+        self.assertIn('--abstraction-transfer-outcome absent', selected['command'])
+        code_notes = [
+            note for note in summary['evidence_notes']
+            if note['sender'] == 'code_module'
+        ]
+        self.assertEqual(1, len(code_notes))
+        self.assertTrue(code_notes[0]['label_clean'])
+        self.assertEqual(1, len(payload['code_evidence_notes']))
+        self.assertTrue(payload['label_clean'])
+
+    def test_response_message_plan_shape_includes_project_and_runtime_evidence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inbox = Path(tmpdir) / 'inbox.jsonl'
+            inbox.write_text(
+                json.dumps(build_module_chat_message(
+                    sender='language_model_2',
+                    recipient='ai_different',
+                    topic='request.abstraction_transfer.followup',
+                    body={
+                        'request_kind': 'abstraction_transfer_followup',
+                        'question': 'Plan the next abstraction transfer response.',
+                        'priority': 0.8,
+                    },
+                    evidence={'source': 'unit_test'},
+                    tags=['abstraction_transfer'],
+                ))
+                + '\n',
+                encoding='utf-8',
+            )
+            summary = read_module_chat_inbox(inbox)
+
+        message = export_chat_driven_response_message(
+            capsule_fixture(),
+            summary,
+            recipient='broadcast',
+        )
+
+        self.assertEqual('ai_different', message['sender'])
+        self.assertEqual('broadcast', message['recipient'])
+        self.assertEqual('ai_different.abstraction_transfer_response', message['topic'])
+        self.assertEqual('plan', message['body']['outcome_or_plan']['mode'])
+        self.assertFalse(message['body']['outcome_or_plan']['ran_campaign'])
+        self.assertFalse(message['body']['runtime_memory_mutated'])
+        self.assertFalse(message['evidence']['runtime_memory_mutated'])
+        self.assertFalse(
+            message['body']['project_owned_boundary']['third_party_checkpoint_used']
+        )
+        self.assertTrue(message['body']['label_clean'])
+        self.assertIn('plan_only', message['tags'])
+
+    def test_run_module_chat_response_loop_can_run_lightweight_no_save_campaign(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inbox = Path(tmpdir) / 'inbox.jsonl'
+            runtime_memory = Path(tmpdir) / 'theory-memory.json'
+            output_file = Path(tmpdir) / 'response.json'
+            inbox.write_text(
+                json.dumps(build_module_chat_message(
+                    sender='language_model_2',
+                    recipient='ai_different',
+                    topic='request.abstraction_transfer.followup',
+                    body={
+                        'request_kind': 'abstraction_transfer_followup',
+                        'question': 'Run the cheap abstraction transfer response.',
+                        'outcome_mode': 'weak',
+                        'priority': 0.9,
+                    },
+                    evidence={'source': 'unit_test'},
+                    tags=['abstraction_transfer'],
+                ))
+                + '\n',
+                encoding='utf-8',
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                message = run_module_chat_response_loop(
+                    memory_data=memory_fixture(),
+                    runtime_memory_path=str(runtime_memory),
+                    recipient='orchestrator',
+                    inbox_file=inbox,
+                    output_file=output_file,
+                    response_mode='run',
+                    git_status_text='',
+                    git_ignored_text='',
+                )
+            saved = json.loads(output_file.read_text(encoding='utf-8'))
+
+        self.assertIn('AI_DIFFERENT_MODULE_CHAT_RESPONSE ', output.getvalue())
+        self.assertFalse(runtime_memory.exists())
+        self.assertEqual('campaign_result', message['body']['outcome_or_plan']['mode'])
+        self.assertTrue(message['body']['outcome_or_plan']['ran_campaign'])
+        self.assertFalse(message['body']['outcome_or_plan']['memory_saved'])
+        self.assertFalse(message['body']['runtime_memory_mutated'])
+        self.assertEqual(
+            'abstraction_transfer_weak',
+            message['body']['outcome_or_plan']['outcome']['outcome'],
+        )
+        self.assertTrue(message['body']['label_clean'])
+        self.assertEqual(message['topic'], saved['topic'])
 
     def test_run_module_chat_export_prints_label_clean_bridge_without_mutating_memory(self):
         with tempfile.TemporaryDirectory() as tmpdir:

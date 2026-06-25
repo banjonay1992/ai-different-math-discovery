@@ -177,6 +177,7 @@ def read_module_chat_inbox(
             'invalid_messages': [],
             'handoff_questions': [],
             'experiment_requests': [],
+            'evidence_notes': [],
         }
     inbox_path = Path(path)
     messages = []
@@ -188,6 +189,7 @@ def read_module_chat_inbox(
             'invalid_messages': [],
             'handoff_questions': [],
             'experiment_requests': [],
+            'evidence_notes': [],
         }
     with inbox_path.open('r', encoding='utf-8') as handle:
         for line_number, line in enumerate(handle, start=1):
@@ -212,6 +214,7 @@ def read_module_chat_inbox(
         'invalid_messages': invalid_messages,
         'handoff_questions': extract_handoff_questions(messages),
         'experiment_requests': extract_experiment_requests(messages),
+        'evidence_notes': extract_evidence_notes(messages),
     }
 
 
@@ -241,6 +244,16 @@ def extract_experiment_requests(messages: list[dict[str, Any]]) -> list[dict[str
         text = _message_search_text(message)
         request_kind = str(body.get('request_kind') or '')
         explicit_experiment = str(body.get('experiment_kind') or '')
+        topic = str(message.get('topic') or '')
+        tags = list(message.get('tags') or [])
+        is_evidence_note = (
+            body.get('note_kind') == 'evidence'
+            or topic.startswith('evidence.')
+            or 'evidence' in tags
+        )
+        has_explicit_request = bool(request_kind or explicit_experiment)
+        if is_evidence_note and not has_explicit_request:
+            continue
         asks_for_abstraction = (
             request_kind == 'abstraction_transfer_followup'
             or explicit_experiment == 'abstraction_transfer_probe'
@@ -271,6 +284,35 @@ def extract_experiment_requests(messages: list[dict[str, Any]]) -> list[dict[str
     return requests
 
 
+def extract_evidence_notes(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    notes = []
+    for message in messages:
+        evidence = dict(message.get('evidence') or {})
+        body = dict(message.get('body') or {})
+        tags = list(message.get('tags') or [])
+        topic = str(message.get('topic') or '')
+        has_evidence_signal = (
+            'evidence' in topic
+            or 'evidence' in tags
+            or body.get('note_kind') == 'evidence'
+        )
+        if not has_evidence_signal:
+            continue
+        note = {
+            'sender': message.get('sender'),
+            'topic': topic,
+            'summary': body.get('summary') or body.get('note') or body.get('question'),
+            'evidence': evidence,
+            'tags': tags,
+            'label_clean': not label_leak_terms({
+                'summary': body.get('summary') or body.get('note'),
+                'evidence': evidence,
+            }),
+        }
+        notes.append(note)
+    return notes
+
+
 def choose_next_non_final_request(
     capsule: dict[str, Any],
     inbox_summary: dict[str, Any],
@@ -298,6 +340,7 @@ def choose_next_non_final_request(
             'command': command,
             'reason': request.get('question') or 'inbox requested abstraction transfer follow-up',
             'runs_final': False,
+            'outcome_mode': outcome_mode if outcome_mode in {'confirmed', 'weak', 'absent'} else None,
             'label_clean': bool(request.get('label_clean', True)),
         }
     if next_experiment:
@@ -318,6 +361,122 @@ def choose_next_non_final_request(
         'runs_final': False,
         'label_clean': True,
     }
+
+
+def build_chat_driven_response_payload(
+    capsule: dict[str, Any],
+    inbox_summary: dict[str, Any],
+    *,
+    campaign_summary: dict[str, Any] | None = None,
+    ran_campaign: bool = False,
+) -> dict[str, Any]:
+    selected = choose_next_non_final_request(capsule, inbox_summary)
+    evidence_notes = list(inbox_summary.get('evidence_notes') or [])
+    latest = dict(capsule.get('latest_verified_abstraction_transfer_result') or {})
+    runtime_memory = dict(capsule.get('runtime_memory') or {})
+    project_boundary = dict(capsule.get('project_owned_boundary') or {})
+    if ran_campaign and campaign_summary:
+        transfer = dict(campaign_summary.get('transfer_result') or {})
+        outcome_or_plan = {
+            'mode': 'campaign_result',
+            'ran_campaign': True,
+            'runs_final': False,
+            'campaign_run_kind': campaign_summary.get('run_kind'),
+            'selected_plan': dict(campaign_summary.get('selected_plan') or {}),
+            'outcome': dict(transfer.get('outcome') or {}),
+            'abstraction_discovery_evidence': dict(
+                campaign_summary.get('abstraction_discovery_evidence') or {}
+            ),
+            'memory_saved': False,
+        }
+    else:
+        outcome_or_plan = {
+            'mode': 'plan',
+            'ran_campaign': False,
+            'runs_final': False,
+            'selected_plan': selected,
+            'memory_saved': False,
+        }
+    label_payload = {
+        'selected': selected,
+        'outcome_or_plan': outcome_or_plan,
+        'latest_transfer': latest.get('agent_facing_evidence', {}),
+        'evidence_notes': evidence_notes,
+    }
+    leak_terms = label_leak_terms(label_payload)
+    return {
+        'module': capsule.get('module', 'AI Different'),
+        'response_kind': 'abstraction_transfer_response',
+        'chat_driven_response_available': True,
+        'selected_chat_request': selected,
+        'code_evidence_notes': [
+            note for note in evidence_notes
+            if note.get('sender') == 'code_module'
+        ],
+        'evidence_notes': evidence_notes,
+        'outcome_or_plan': outcome_or_plan,
+        'latest_verified_abstraction_transfer_result': latest,
+        'evidence_gates': list(capsule.get('evidence_gates') or []),
+        'project_owned_boundary': project_boundary,
+        'runtime_memory': runtime_memory,
+        'runtime_memory_mutated': False,
+        'label_clean': not leak_terms,
+        'leak_terms': leak_terms,
+    }
+
+
+def export_chat_driven_response_message(
+    capsule: dict[str, Any],
+    inbox_summary: dict[str, Any],
+    *,
+    campaign_summary: dict[str, Any] | None = None,
+    ran_campaign: bool = False,
+    recipient: str = 'orchestrator',
+    topic: str = 'ai_different.abstraction_transfer_response',
+) -> dict[str, Any]:
+    body = build_chat_driven_response_payload(
+        capsule,
+        inbox_summary,
+        campaign_summary=campaign_summary,
+        ran_campaign=ran_campaign,
+    )
+    evidence = {
+        'chat_bridge_available': True,
+        'response_kind': body['response_kind'],
+        'evidence_gates': body['evidence_gates'],
+        'latest_verified_abstraction_transfer_result': (
+            body['latest_verified_abstraction_transfer_result']
+        ),
+        'outcome_or_plan': body['outcome_or_plan'],
+        'inbox_summary': {
+            'message_count': len(inbox_summary.get('messages') or []),
+            'invalid_message_count': len(inbox_summary.get('invalid_messages') or []),
+            'experiment_request_count': len(
+                inbox_summary.get('experiment_requests') or []
+            ),
+            'evidence_note_count': len(inbox_summary.get('evidence_notes') or []),
+        },
+        'project_owned_boundary': body['project_owned_boundary'],
+        'runtime_memory': body['runtime_memory'],
+        'runtime_memory_mutated': False,
+        'label_clean': body['label_clean'],
+    }
+    tags = [
+        'ai_different',
+        'module_chat',
+        'abstraction_transfer',
+        'response_loop',
+        'campaign_run' if ran_campaign else 'plan_only',
+        'label_clean' if body['label_clean'] else 'label_review_needed',
+    ]
+    return build_module_chat_message(
+        sender='ai_different',
+        recipient=recipient,
+        topic=topic,
+        body=body,
+        evidence=evidence,
+        tags=tags,
+    )
 
 
 def label_leak_terms(payload: Any) -> list[str]:
