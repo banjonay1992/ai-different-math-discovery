@@ -93,6 +93,14 @@ from agent.experiment_contracts import (
     write_contract_outbox_jsonl,
     write_experiment_contract_ledger,
 )
+from agent.cross_module_adjudicator import (
+    build_adjudication,
+    load_adjudicator_ledger,
+    load_plain_json,
+    read_family_transcript,
+    write_adjudication_outbox_jsonl,
+    write_adjudicator_ledger,
+)
 from agent.module_chat_adapter import (
     append_rolling_family_record,
     build_module_family_response_ledger,
@@ -6860,6 +6868,106 @@ def run_experiment_contract_loop(
     return result
 
 
+def run_cross_module_adjudicator(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    transcript_file: str | Path | None = None,
+    evaluator_ledger_file: str | Path = 'tmp/module-chat-outcome-evaluator-ledger.json',
+    contract_ledger_file: str | Path = 'tmp/module-chat-experiment-contract-ledger.json',
+    adjudicator_ledger_file: str | Path = 'tmp/module-chat-cross-module-adjudicator-ledger.json',
+    outbox_file: str | Path | None = None,
+    output_file: str | Path | None = None,
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Adjudicate a family transcript against AI Different experiment contracts."""
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=runtime_memory_path,
+    )
+    transcript = read_family_transcript(transcript_file)
+    evaluator_ledger = load_plain_json(evaluator_ledger_file)
+    contract_ledger = load_plain_json(contract_ledger_file)
+    adjudicator_ledger = load_adjudicator_ledger(adjudicator_ledger_file)
+    before_hash = _file_sha256(runtime_memory_path)
+    runtime_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+    updated_ledger, message = build_adjudication(
+        transcript_messages=list(transcript.get('messages') or []),
+        adjudicator_ledger=adjudicator_ledger,
+        evaluator_ledger=evaluator_ledger,
+        contract_ledger=contract_ledger,
+        runtime_memory_hash_state=runtime_hash_state,
+        project_owned_boundary=dict(capsule.get('project_owned_boundary') or {}),
+        artifact_path=adjudicator_ledger_file,
+    )
+    write_adjudicator_ledger(adjudicator_ledger_file, updated_ledger)
+    if outbox_file:
+        write_adjudication_outbox_jsonl(outbox_file, message)
+    latest = dict(updated_ledger.get('latest') or {})
+    result = {
+        'cross_module_adjudicator_available': True,
+        'adjudicator_ledger_path': str(adjudicator_ledger_file),
+        'adjudicator_ledger_hash': updated_ledger.get('ledger_hash'),
+        'processed_message_count': len(updated_ledger.get('processed_message_ids') or []),
+        'new_message_count': int(latest.get('new_message_count', 0) or 0),
+        'skipped_message_count': int(latest.get('skipped_message_count', 0) or 0),
+        'open_contract_count': int(latest.get('open_contract_count', 0) or 0),
+        'resolved_contract_count': int(latest.get('resolved_contract_count', 0) or 0),
+        'blocked_contract_count': int(latest.get('blocked_contract_count', 0) or 0),
+        'selected_action': latest.get('selected_action'),
+        'chosen_recipient': latest.get('chosen_recipient'),
+        'outbox_count': int(latest.get('outbox_count', 0) or 0),
+        'outbox_file': str(outbox_file) if outbox_file else None,
+        'response_message': message,
+        'runtime_memory_hash_state': runtime_hash_state,
+        'runtime_memory_mutated': not bool(runtime_hash_state.get('unchanged', True)),
+        'label_leaks': list(latest.get('label_leaks') or []),
+        'label_leaks_count': len(latest.get('label_leaks') or []),
+        'project_owned_boundary': dict(capsule.get('project_owned_boundary') or {}),
+        'third_party_checkpoint_used': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'third_party_checkpoint_used'
+            )
+        ),
+        'invalid_message_count': len(transcript.get('invalid_messages') or []),
+        'no_sibling_imports': True,
+        'project_owned_checkpoint_claimed': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'project_owned_checkpoint_verified'
+            )
+        ),
+    }
+    if output_file:
+        _write_json_artifact(output_file, result)
+    print(
+        "AI_DIFFERENT_CROSS_MODULE_ADJUDICATOR "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    return result
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -7969,6 +8077,8 @@ if __name__ == '__main__':
                         help='Evaluate rolling family evidence and choose the next science experiment')
     parser.add_argument('--module-chat-experiment-contract', action='store_true',
                         help='Emit or resolve plain-data experiment contracts from evaluator decisions')
+    parser.add_argument('--module-chat-cross-module-adjudicator', action='store_true',
+                        help='Adjudicate a family transcript against experiment-contract evidence')
     parser.add_argument('--module-chat-response-mode', type=str, default='plan',
                         choices=['plan', 'run'],
                         help='Plan or run the cheap no-save abstraction-transfer response')
@@ -8000,6 +8110,12 @@ if __name__ == '__main__':
     parser.add_argument('--module-chat-contract-outbox-file', type=str,
                         default='tmp/module-chat-experiment-contract-outbox.jsonl',
                         help='JSONL path for at most one emitted contract/repair message')
+    parser.add_argument('--module-chat-adjudicator-ledger-file', type=str,
+                        default='tmp/module-chat-cross-module-adjudicator-ledger.json',
+                        help='JSON path for cross-module adjudicator state')
+    parser.add_argument('--module-chat-adjudicator-outbox-file', type=str,
+                        default='tmp/module-chat-cross-module-adjudicator-outbox.jsonl',
+                        help='JSONL path for at most one adjudication response message')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -8277,6 +8393,19 @@ if __name__ == '__main__':
             target_recipient=args.module_chat_recipient
             if args.module_chat_recipient != 'orchestrator'
             else 'broadcast',
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_cross_module_adjudicator:
+        run_cross_module_adjudicator(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            transcript_file=args.module_chat_inbox,
+            evaluator_ledger_file=args.module_chat_outcome_ledger_file,
+            contract_ledger_file=args.module_chat_contract_ledger_file,
+            adjudicator_ledger_file=args.module_chat_adjudicator_ledger_file,
+            outbox_file=args.module_chat_adjudicator_outbox_file,
+            output_file=args.module_chat_output_file or args.hf_output_file,
         )
         raise SystemExit(0)
 

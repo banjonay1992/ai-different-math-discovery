@@ -129,6 +129,9 @@ python3 main.py --module-chat-outcome-evaluator --module-chat-rolling-memory-fil
 # Emit/resolve an AI Different experiment contract from the evaluator ledger and family bus evidence
 python3 main.py --module-chat-experiment-contract --module-chat-outcome-ledger-file tmp/module-chat-outcome-evaluator-ledger.json --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-contract-ledger-file tmp/module-chat-experiment-contract-ledger.json --module-chat-contract-outbox-file tmp/module-chat-experiment-contract-outbox.jsonl --theory-memory-file tmp/theory-memory.json
 
+# Adjudicate a full family turn and request repair, resolve a contract, or emit the next safe contract
+python3 main.py --module-chat-cross-module-adjudicator --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-outcome-ledger-file tmp/module-chat-outcome-evaluator-ledger.json --module-chat-contract-ledger-file tmp/module-chat-experiment-contract-ledger.json --module-chat-adjudicator-ledger-file tmp/module-chat-cross-module-adjudicator-ledger.json --module-chat-adjudicator-outbox-file tmp/module-chat-cross-module-adjudicator-outbox.jsonl --theory-memory-file tmp/theory-memory.json
+
 # Inspect long-run memory growth and quantized compression state
 python3 main.py --memory-efficiency-review --theory-memory-file tmp/theory-memory.json
 
