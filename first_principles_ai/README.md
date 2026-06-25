@@ -135,6 +135,9 @@ python3 main.py --module-chat-cross-module-adjudicator --module-chat-inbox tmp/m
 # Schedule the next safe experiment agenda item from adjudicated module-family evidence
 python3 main.py --module-chat-experiment-agenda --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-outcome-ledger-file tmp/module-chat-outcome-evaluator-ledger.json --module-chat-contract-ledger-file tmp/module-chat-experiment-contract-ledger.json --module-chat-adjudicator-ledger-file tmp/module-chat-cross-module-adjudicator-ledger.json --module-chat-agenda-ledger-file tmp/module-chat-experiment-agenda-ledger.json --module-chat-agenda-outbox-file tmp/module-chat-experiment-agenda-outbox.jsonl --theory-memory-file tmp/theory-memory.json
 
+# Curate hypothesis lifecycle memory from agendas, contracts, adjudication, and sibling evidence
+python3 main.py --module-chat-hypothesis-lifecycle --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-outcome-ledger-file tmp/module-chat-outcome-evaluator-ledger.json --module-chat-contract-ledger-file tmp/module-chat-experiment-contract-ledger.json --module-chat-adjudicator-ledger-file tmp/module-chat-cross-module-adjudicator-ledger.json --module-chat-agenda-ledger-file tmp/module-chat-experiment-agenda-ledger.json --module-chat-lifecycle-ledger-file tmp/module-chat-hypothesis-lifecycle-ledger.json --module-chat-lifecycle-outbox-file tmp/module-chat-hypothesis-lifecycle-outbox.jsonl --theory-memory-file tmp/theory-memory.json
+
 # Inspect long-run memory growth and quantized compression state
 python3 main.py --memory-efficiency-review --theory-memory-file tmp/theory-memory.json
 
