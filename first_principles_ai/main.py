@@ -173,6 +173,14 @@ from agent.science_theory_frontier import (
     write_science_theory_frontier_ledger,
     write_science_theory_frontier_outbox_jsonl,
 )
+from agent.science_theory_frontier_outcome import (
+    build_science_theory_frontier_outcome_assessment,
+    load_plain_json as load_science_theory_frontier_outcome_plain_json,
+    load_science_theory_frontier_outcome_ledger,
+    read_science_theory_frontier_outcome_transcript,
+    write_science_theory_frontier_outcome_ledger,
+    write_science_theory_frontier_outcome_outbox_jsonl,
+)
 from agent.module_chat_adapter import (
     append_rolling_family_record,
     build_module_family_response_ledger,
@@ -8191,6 +8199,173 @@ def run_science_theory_frontier_planner(
     return result
 
 
+def run_science_theory_frontier_outcome_assessor(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    transcript_file: str | Path | None = None,
+    frontier_ledger_file: str | Path = 'tmp/module-chat-science-theory-frontier-ledger.json',
+    action_outcome_ledger_file: str | Path = 'tmp/module-chat-science-action-outcome-ledger.json',
+    action_ledger_file: str | Path = 'tmp/module-chat-science-campaign-action-ledger.json',
+    benefit_ledger_file: str | Path = 'tmp/module-chat-science-benefit-ledger.json',
+    evaluator_ledger_file: str | Path = 'tmp/module-chat-outcome-evaluator-ledger.json',
+    outcome_ledger_file: str | Path | None = None,
+    contract_ledger_file: str | Path = 'tmp/module-chat-experiment-contract-ledger.json',
+    adjudicator_ledger_file: str | Path = 'tmp/module-chat-cross-module-adjudicator-ledger.json',
+    agenda_ledger_file: str | Path = 'tmp/module-chat-experiment-agenda-ledger.json',
+    lifecycle_ledger_file: str | Path = 'tmp/module-chat-hypothesis-lifecycle-ledger.json',
+    scorecard_ledger_file: str | Path = 'tmp/module-chat-evidence-scorecard-ledger.json',
+    campaign_ledger_file: str | Path = 'tmp/module-chat-experiment-campaign-ledger.json',
+    campaign_outcome_ledger_file: str | Path = 'tmp/module-chat-experiment-campaign-outcome-ledger.json',
+    theory_memory_ledger_file: str | Path | None = None,
+    frontier_outcome_ledger_file: str | Path = 'tmp/module-chat-science-theory-frontier-outcome-ledger.json',
+    prior_frontier_outcome_ledger_file: str | Path | None = None,
+    sibling_frontier_outcome_ledgers_file: str | Path | None = None,
+    outbox_file: str | Path | None = None,
+    output_file: str | Path | None = None,
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Assess whether a planned theory-frontier move changed symbolic state."""
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=str(runtime_memory_path),
+    )
+    transcript = read_science_theory_frontier_outcome_transcript(transcript_file)
+    frontier_ledger = load_science_theory_frontier_outcome_plain_json(frontier_ledger_file)
+    action_outcome_ledger = load_science_theory_frontier_outcome_plain_json(action_outcome_ledger_file)
+    action_ledger = load_science_theory_frontier_outcome_plain_json(action_ledger_file)
+    benefit_ledger = load_science_theory_frontier_outcome_plain_json(benefit_ledger_file)
+    evaluator_ledger = load_science_theory_frontier_outcome_plain_json(evaluator_ledger_file)
+    outcome_ledger = load_science_theory_frontier_outcome_plain_json(outcome_ledger_file) if outcome_ledger_file else {}
+    contract_ledger = load_science_theory_frontier_outcome_plain_json(contract_ledger_file)
+    adjudicator_ledger = load_science_theory_frontier_outcome_plain_json(adjudicator_ledger_file)
+    agenda_ledger = load_science_theory_frontier_outcome_plain_json(agenda_ledger_file)
+    lifecycle_ledger = load_science_theory_frontier_outcome_plain_json(lifecycle_ledger_file)
+    scorecard_ledger = load_science_theory_frontier_outcome_plain_json(scorecard_ledger_file)
+    campaign_ledger = load_science_theory_frontier_outcome_plain_json(campaign_ledger_file)
+    campaign_outcome_ledger = load_science_theory_frontier_outcome_plain_json(campaign_outcome_ledger_file)
+    theory_memory_ledger = (
+        load_science_theory_frontier_outcome_plain_json(theory_memory_ledger_file)
+        if theory_memory_ledger_file
+        else {}
+    )
+    frontier_outcome_ledger = load_science_theory_frontier_outcome_ledger(frontier_outcome_ledger_file)
+    prior_frontier_outcome_ledger = (
+        load_science_theory_frontier_outcome_plain_json(prior_frontier_outcome_ledger_file)
+        if prior_frontier_outcome_ledger_file
+        else {}
+    )
+    sibling_frontier_outcome_ledgers = (
+        load_science_theory_frontier_outcome_plain_json(sibling_frontier_outcome_ledgers_file)
+        if sibling_frontier_outcome_ledgers_file
+        else {}
+    )
+    before_hash = _file_sha256(runtime_memory_path)
+    runtime_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+    updated_ledger, message = build_science_theory_frontier_outcome_assessment(
+        transcript_messages=list(transcript.get('messages') or []),
+        frontier_outcome_ledger=frontier_outcome_ledger,
+        frontier_ledger=frontier_ledger,
+        action_outcome_ledger=action_outcome_ledger,
+        action_ledger=action_ledger,
+        benefit_ledger=benefit_ledger,
+        evaluator_ledger=evaluator_ledger,
+        outcome_ledger=outcome_ledger,
+        contract_ledger=contract_ledger,
+        adjudicator_ledger=adjudicator_ledger,
+        agenda_ledger=agenda_ledger,
+        lifecycle_ledger=lifecycle_ledger,
+        scorecard_ledger=scorecard_ledger,
+        campaign_ledger=campaign_ledger,
+        campaign_outcome_ledger=campaign_outcome_ledger,
+        theory_memory_ledger=theory_memory_ledger,
+        prior_frontier_outcome_ledger=prior_frontier_outcome_ledger,
+        sibling_frontier_outcome_ledgers=sibling_frontier_outcome_ledgers,
+        runtime_memory_data=loaded_memory,
+        runtime_memory_hash_state=runtime_hash_state,
+        project_owned_boundary=dict(capsule.get('project_owned_boundary') or {}),
+        artifact_path=frontier_outcome_ledger_file,
+    )
+    write_science_theory_frontier_outcome_ledger(frontier_outcome_ledger_file, updated_ledger)
+    if outbox_file:
+        write_science_theory_frontier_outcome_outbox_jsonl(outbox_file, message)
+    latest = dict(updated_ledger.get('latest') or {})
+    state_counts = dict(latest.get('state_counts') or {})
+    result = {
+        'science_theory_frontier_outcome_capability': True,
+        'frontier_outcome_ledger_path': str(frontier_outcome_ledger_file),
+        'frontier_outcome_ledger_hash': updated_ledger.get('ledger_hash'),
+        'frontier_outcome_id': latest.get('frontier_outcome_id'),
+        'processed_message_count': len(updated_ledger.get('processed_message_ids') or []),
+        'new_message_count': int(latest.get('new_message_count', 0) or 0),
+        'skipped_message_count': int(latest.get('skipped_message_count', 0) or 0),
+        'memory_count': int(state_counts.get('memory', 0) or 0),
+        'promote_count': int(state_counts.get('promote', 0) or 0),
+        'retire_count': int(state_counts.get('retire', 0) or 0),
+        'block_count': int(state_counts.get('block', 0) or 0),
+        'funfun_count': int(state_counts.get('funfun', 0) or 0),
+        'code_count': int(state_counts.get('code', 0) or 0),
+        'language_count': int(state_counts.get('language', 0) or 0),
+        'refine_count': int(state_counts.get('refine', 0) or 0),
+        'frontier_count': int(state_counts.get('frontier', 0) or 0),
+        'waiting_count': int(state_counts.get('waiting', 0) or 0),
+        'no_gain_count': int(state_counts.get('no_gain', 0) or 0),
+        'repair_count': int(state_counts.get('repair', 0) or 0),
+        'selected_outcome': latest.get('selected_outcome'),
+        'selected_action': latest.get('selected_action'),
+        'chosen_recipient': latest.get('chosen_recipient'),
+        'outbox_count': int(latest.get('outbox_count', 0) or 0),
+        'outbox_file': str(outbox_file) if outbox_file else None,
+        'response_message': message,
+        'runtime_memory_hash_state': runtime_hash_state,
+        'runtime_memory_mutated': not bool(runtime_hash_state.get('unchanged', True)),
+        'label_leaks': list(latest.get('label_leaks') or []),
+        'label_leaks_count': len(latest.get('label_leaks') or []),
+        'project_owned_boundary': dict(capsule.get('project_owned_boundary') or {}),
+        'third_party_checkpoint_used': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'third_party_checkpoint_used'
+            )
+        ),
+        'invalid_message_count': len(transcript.get('invalid_messages') or []),
+        'no_sibling_imports': True,
+        'project_owned_checkpoint_claimed': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'project_owned_checkpoint_verified'
+            )
+        ),
+    }
+    if output_file:
+        _write_json_artifact(output_file, result)
+    print(
+        "AI_DIFFERENT_SCIENCE_THEORY_FRONTIER_OUTCOME "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    return result
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -9320,6 +9495,8 @@ if __name__ == '__main__':
                         help='Assess whether science campaign actions received useful evidence')
     parser.add_argument('--module-chat-science-theory-frontier', action='store_true',
                         help='Plan one durable theory-frontier move from assessed science outcomes')
+    parser.add_argument('--module-chat-science-theory-frontier-outcome', action='store_true',
+                        help='Assess whether theory-frontier moves changed symbolic theory state')
     parser.add_argument('--module-chat-response-mode', type=str, default='plan',
                         choices=['plan', 'run'],
                         help='Plan or run the cheap no-save abstraction-transfer response')
@@ -9429,6 +9606,21 @@ if __name__ == '__main__':
     parser.add_argument('--module-chat-frontier-outbox-file', type=str,
                         default='tmp/module-chat-science-theory-frontier-outbox.jsonl',
                         help='JSONL path for at most one science theory-frontier response')
+    parser.add_argument('--module-chat-frontier-outcome-ledger-file', type=str,
+                        default='tmp/module-chat-science-theory-frontier-outcome-ledger.json',
+                        help='JSON path for science theory-frontier outcome assessment state')
+    parser.add_argument('--module-chat-prior-frontier-outcome-ledger-file', type=str,
+                        default=None,
+                        help='Optional prior science theory-frontier outcome ledger JSON path')
+    parser.add_argument('--module-chat-sibling-frontier-outcome-ledgers-file', type=str,
+                        default=None,
+                        help='Optional plain JSON bundle of sibling frontier/outcome ledgers')
+    parser.add_argument('--module-chat-theory-memory-ledger-file', type=str,
+                        default=None,
+                        help='Optional plain JSON theory-memory evidence ledger to read without mutation')
+    parser.add_argument('--module-chat-frontier-outcome-outbox-file', type=str,
+                        default='tmp/module-chat-science-theory-frontier-outcome-outbox.jsonl',
+                        help='JSONL path for at most one science theory-frontier outcome response')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -9894,6 +10086,33 @@ if __name__ == '__main__':
             prior_frontier_ledger_file=args.module_chat_prior_frontier_ledger_file,
             sibling_outcome_ledgers_file=args.module_chat_sibling_outcome_ledgers_file,
             outbox_file=args.module_chat_frontier_outbox_file,
+            output_file=args.module_chat_output_file or args.hf_output_file,
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_science_theory_frontier_outcome:
+        run_science_theory_frontier_outcome_assessor(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            transcript_file=args.module_chat_inbox,
+            frontier_ledger_file=args.module_chat_frontier_ledger_file,
+            action_outcome_ledger_file=args.module_chat_action_outcome_ledger_file,
+            action_ledger_file=args.module_chat_action_ledger_file,
+            benefit_ledger_file=args.module_chat_benefit_ledger_file,
+            evaluator_ledger_file=args.module_chat_outcome_ledger_file,
+            outcome_ledger_file=args.module_chat_agenda_outcome_ledger_file,
+            contract_ledger_file=args.module_chat_contract_ledger_file,
+            adjudicator_ledger_file=args.module_chat_adjudicator_ledger_file,
+            agenda_ledger_file=args.module_chat_agenda_ledger_file,
+            lifecycle_ledger_file=args.module_chat_lifecycle_ledger_file,
+            scorecard_ledger_file=args.module_chat_scorecard_ledger_file,
+            campaign_ledger_file=args.module_chat_campaign_ledger_file,
+            campaign_outcome_ledger_file=args.module_chat_campaign_outcome_ledger_file,
+            theory_memory_ledger_file=args.module_chat_theory_memory_ledger_file,
+            frontier_outcome_ledger_file=args.module_chat_frontier_outcome_ledger_file,
+            prior_frontier_outcome_ledger_file=args.module_chat_prior_frontier_outcome_ledger_file,
+            sibling_frontier_outcome_ledgers_file=args.module_chat_sibling_frontier_outcome_ledgers_file,
+            outbox_file=args.module_chat_frontier_outcome_outbox_file,
             output_file=args.module_chat_output_file or args.hf_output_file,
         )
         raise SystemExit(0)
