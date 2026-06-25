@@ -85,6 +85,14 @@ from agent.family_outcome_evaluator import (
     write_outcome_evaluator_ledger,
     write_outcome_evaluator_memory,
 )
+from agent.experiment_contracts import (
+    load_experiment_contract_ledger,
+    read_family_bus_messages,
+    update_contract_ledger,
+    validate_evaluator_ledger,
+    write_contract_outbox_jsonl,
+    write_experiment_contract_ledger,
+)
 from agent.module_chat_adapter import (
     append_rolling_family_record,
     build_module_family_response_ledger,
@@ -6747,6 +6755,111 @@ def run_family_outcome_evaluator(
     return result
 
 
+def run_experiment_contract_loop(
+    theory_memory: CumulativeTheoryMemory | None = None,
+    *,
+    theory_memory_file: str | Path | None = None,
+    runtime_memory_path: str = 'tmp/theory-memory.json',
+    evaluator_ledger_file: str | Path = 'tmp/module-chat-outcome-evaluator-ledger.json',
+    family_bus_file: str | Path | None = None,
+    contract_ledger_file: str | Path = 'tmp/module-chat-experiment-contract-ledger.json',
+    outbox_file: str | Path | None = None,
+    output_file: str | Path | None = None,
+    target_recipient: str = 'broadcast',
+    repair_recipient: str = 'orchestrator',
+    memory_data: dict | None = None,
+    git_status_text: str | None = None,
+    git_ignored_text: str | None = None,
+) -> dict:
+    """Emit/resolve AI Different experiment contracts from evaluator evidence."""
+    if memory_data is not None:
+        loaded_memory = dict(memory_data)
+    elif theory_memory is not None:
+        loaded_memory = theory_memory.to_dict()
+    else:
+        loaded_memory = load_capsule_memory_data(theory_memory_file)
+    status_text = (
+        git_status_text
+        if git_status_text is not None
+        else git_status_for_path(runtime_memory_path)
+    )
+    ignored_text = (
+        git_ignored_text
+        if git_ignored_text is not None
+        else git_check_ignore_for_path(runtime_memory_path)
+    )
+    capsule = build_ai_different_status_capsule(
+        loaded_memory,
+        git_status_text=status_text,
+        git_ignored_text=ignored_text,
+        runtime_memory_path=runtime_memory_path,
+    )
+    with Path(evaluator_ledger_file).open('r', encoding='utf-8') as handle:
+        evaluator_ledger = validate_evaluator_ledger(json.load(handle))
+    contract_ledger = load_experiment_contract_ledger(contract_ledger_file)
+    bus_summary = read_family_bus_messages(family_bus_file)
+    before_hash = _file_sha256(runtime_memory_path)
+    runtime_hash_state = _runtime_memory_hash_state(runtime_memory_path, before_hash)
+    updated_ledger, message = update_contract_ledger(
+        contract_ledger,
+        evaluator_ledger,
+        list(bus_summary.get('messages') or []),
+        runtime_memory_hash_state=runtime_hash_state,
+        project_owned_boundary=dict(capsule.get('project_owned_boundary') or {}),
+        target_recipient=target_recipient,
+        repair_recipient=repair_recipient,
+        artifact_path=contract_ledger_file,
+    )
+    write_experiment_contract_ledger(contract_ledger_file, updated_ledger)
+    if outbox_file:
+        write_contract_outbox_jsonl(outbox_file, message)
+    latest = dict(updated_ledger.get('latest') or {})
+    result = {
+        'experiment_contract_capability': True,
+        'contract_ledger_path': str(contract_ledger_file),
+        'contract_ledger_hash': updated_ledger.get('ledger_hash'),
+        'new_contract_count': int(latest.get('new_contract_count', 0) or 0),
+        'skipped_contract_count': int(latest.get('skipped_contract_count', 0) or 0),
+        'resolved_contract_count': int(latest.get('resolved_contract_count', 0) or 0),
+        'blocked_contract_count': int(latest.get('blocked_contract_count', 0) or 0),
+        'chosen_recipient': latest.get('chosen_recipient'),
+        'chosen_action': latest.get('chosen_action'),
+        'outbox_count': int(latest.get('outbox_count', 0) or 0),
+        'outbox_file': str(outbox_file) if outbox_file else None,
+        'response_message': message,
+        'open_contract_count': sum(
+            1 for contract in updated_ledger.get('contracts') or []
+            if contract.get('status') == 'open'
+        ),
+        'resolved_total': sum(
+            1 for contract in updated_ledger.get('contracts') or []
+            if contract.get('status') == 'resolved'
+        ),
+        'blocked_total': sum(
+            1 for contract in updated_ledger.get('contracts') or []
+            if contract.get('status') == 'blocked'
+        ),
+        'runtime_memory_hash_state': runtime_hash_state,
+        'runtime_memory_mutated': not bool(runtime_hash_state.get('unchanged', True)),
+        'label_leaks': list(latest.get('label_leaks') or []),
+        'project_owned_boundary': dict(capsule.get('project_owned_boundary') or {}),
+        'third_party_checkpoint_used': bool(
+            (capsule.get('project_owned_boundary') or {}).get(
+                'third_party_checkpoint_used'
+            )
+        ),
+        'invalid_message_count': len(bus_summary.get('invalid_messages') or []),
+    }
+    if output_file:
+        _write_json_artifact(output_file, result)
+    print(
+        "AI_DIFFERENT_EXPERIMENT_CONTRACT "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    return result
+
+
 def _upload_math_final_artifact(
     artifact_path: Path,
     *,
@@ -7854,6 +7967,8 @@ if __name__ == '__main__':
                         help='Run idempotent rolling module-family response over a chat JSONL log')
     parser.add_argument('--module-chat-outcome-evaluator', action='store_true',
                         help='Evaluate rolling family evidence and choose the next science experiment')
+    parser.add_argument('--module-chat-experiment-contract', action='store_true',
+                        help='Emit or resolve plain-data experiment contracts from evaluator decisions')
     parser.add_argument('--module-chat-response-mode', type=str, default='plan',
                         choices=['plan', 'run'],
                         help='Plan or run the cheap no-save abstraction-transfer response')
@@ -7879,6 +7994,12 @@ if __name__ == '__main__':
     parser.add_argument('--module-chat-outcome-memory-file', type=str,
                         default='tmp/module-chat-outcome-evaluator-memory.json',
                         help='JSON path for durable outcome-evaluator memory')
+    parser.add_argument('--module-chat-contract-ledger-file', type=str,
+                        default='tmp/module-chat-experiment-contract-ledger.json',
+                        help='JSON path for experiment-contract ledger state')
+    parser.add_argument('--module-chat-contract-outbox-file', type=str,
+                        default='tmp/module-chat-experiment-contract-outbox.jsonl',
+                        help='JSONL path for at most one emitted contract/repair message')
     parser.add_argument('--memory-efficiency-review', action='store_true',
                         help='Print bounded-memory and quantized-summary status')
     parser.add_argument('--compact-theory-memory', action='store_true',
@@ -8141,6 +8262,21 @@ if __name__ == '__main__':
             output_file=args.module_chat_output_file or args.hf_output_file,
             evaluator_ledger_file=args.module_chat_outcome_ledger_file,
             evaluator_memory_file=args.module_chat_outcome_memory_file,
+        )
+        raise SystemExit(0)
+
+    if args.module_chat_experiment_contract:
+        run_experiment_contract_loop(
+            theory_memory=theory_memory,
+            theory_memory_file=args.theory_memory_file,
+            evaluator_ledger_file=args.module_chat_outcome_ledger_file,
+            family_bus_file=args.module_chat_inbox,
+            contract_ledger_file=args.module_chat_contract_ledger_file,
+            outbox_file=args.module_chat_contract_outbox_file,
+            output_file=args.module_chat_output_file or args.hf_output_file,
+            target_recipient=args.module_chat_recipient
+            if args.module_chat_recipient != 'orchestrator'
+            else 'broadcast',
         )
         raise SystemExit(0)
 
