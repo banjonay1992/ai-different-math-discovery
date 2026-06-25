@@ -165,6 +165,9 @@ python3 main.py --module-chat-science-theory-frontier-outcome --module-chat-inbo
 # Plan the next durable science campaign strategy from frontier outcomes
 python3 main.py --module-chat-science-campaign-strategy --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-frontier-outcome-ledger-file tmp/module-chat-science-theory-frontier-outcome-ledger.json --module-chat-frontier-ledger-file tmp/module-chat-science-theory-frontier-ledger.json --module-chat-campaign-ledger-file tmp/module-chat-experiment-campaign-ledger.json --module-chat-campaign-strategy-ledger-file tmp/module-chat-science-campaign-strategy-ledger.json --module-chat-campaign-strategy-outbox-file tmp/module-chat-science-campaign-strategy-outbox.jsonl --theory-memory-file tmp/theory-memory.json
 
+# Assess whether science campaign strategies changed symbolic campaign state
+python3 main.py --module-chat-science-campaign-strategy-outcome --module-chat-inbox tmp/module-chat-log.jsonl --module-chat-campaign-strategy-ledger-file tmp/module-chat-science-campaign-strategy-ledger.json --module-chat-frontier-outcome-ledger-file tmp/module-chat-science-theory-frontier-outcome-ledger.json --module-chat-frontier-ledger-file tmp/module-chat-science-theory-frontier-ledger.json --module-chat-campaign-ledger-file tmp/module-chat-experiment-campaign-ledger.json --module-chat-campaign-strategy-outcome-ledger-file tmp/module-chat-science-campaign-strategy-outcome-ledger.json --module-chat-campaign-strategy-outcome-outbox-file tmp/module-chat-science-campaign-strategy-outcome-outbox.jsonl --theory-memory-file tmp/theory-memory.json
+
 # Inspect long-run memory growth and quantized compression state
 python3 main.py --memory-efficiency-review --theory-memory-file tmp/theory-memory.json
 
