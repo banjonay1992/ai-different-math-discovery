@@ -82,7 +82,10 @@ Because knowledge is built from first principles, the agent can:
 
 ```bash
 # Install dependencies
-pip3 install numpy
+pip3 install -r first_principles_ai/requirements.txt
+
+# Optional GPU path (if you plan to run CUDA-feasibility or tensor backends on GPU)
+pip3 install -r first_principles_ai/requirements-gpu.txt
 
 # Run the experiment (default: 2000 steps)
 python3 main.py
@@ -259,6 +262,46 @@ descriptions:
 ```bash
 python3 main.py --math-benchmark --seeds 3 --benchmark-steps 160 --world-types standard
 ```
+
+## GPU feasibility migration runbook
+
+Install optional GPU dependencies before running tensor-heavy checks:
+
+```bash
+cd first_principles_ai
+python3 -m pip install -r requirements-gpu.txt
+```
+
+Run the mini feasibility benchmark:
+
+```bash
+python3 main.py --gpu-feasibility-benchmark --gpu-sample-count 50000 --gpu-repeats 4 --physics-force-backend cuda --gpu-output-file tmp/gpu-feasibility.json
+```
+
+Report fields to check in the printed/JSON output:
+
+- `torch_status`: `available` means `torch` imported; otherwise includes the import failure reason.
+- `torch_cpu_seconds` and `cuda_seconds`: timing fields for torch CPU and CUDA kernels (if measured).
+- `available_force_backends`: availability snapshot for numpy/torch/cuda on this machine.
+- `physics_force_backend_request`: backend requested by CLI (`auto`/`numpy`/`torch`/`cuda`).
+- `physics_force_backend`: actual backend selected after resolution.
+- `physics_force_backend_fallback_reason`: why a requested backend could not be honored.
+- `physics_force_max_abs_error`: max absolute delta difference against the python baseline.
+- `physics_force_parity_passed`: must be true (default threshold `<= 1e-8`) before relying on GPU/torch parity.
+- `physics_force_speedup_vs_python`: speedup ratio for force kernel.
+- `recommendation`: one of:
+  - `fix_tensor_physics_parity_before_gpu_runs`
+  - `use_cuda_force_backend_for_large_force_batches`
+  - `use_tensor_force_backend_for_force_heavy_shards`
+  - `prefer_cpu_sharding_until_gpu_kernel_is_larger`
+  - `prefer_cpu_sharding_until_tensor_backend_exists`
+
+Suggested interpretation:
+
+- If `physics_force_parity_passed` is false, fix parity before changing production backend.
+- If parity passes and speedup is strong with request resolved to `cuda`, use `--physics-force-backend cuda` for heavy force workloads.
+- If parity passes but fallback is `torch`/`numpy`, treat this as CPU tensor acceleration or fallback mode, not full GPU compute.
+- Always confirm the artifact JSON includes `recommendation`, `fallback_reason`, and timing fields before rerunning longer campaigns.
 
 The equation workbench is the starter-kit layer for manual research loops. It
 gives the agent primitive variables, simple operators, held-out scoring, and

@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'first_principles_ai'))
@@ -113,6 +114,55 @@ def build_mixed_force_world(force_backend='python'):
 
 
 class TensorPhysicsBackendTests(unittest.TestCase):
+    def test_resolve_force_backend_auto_prefers_cuda_when_available(self):
+        with patch(
+            'world.tensor_backend.available_force_backends',
+            return_value={
+                'numpy': True,
+                'torch': True,
+                'cuda': True,
+                'cuda_device': 'Mock CUDA',
+            },
+        ):
+            status = resolve_force_backend('auto')
+
+        self.assertEqual('auto', status['requested_backend'])
+        self.assertEqual('cuda', status['backend'])
+        self.assertIsNone(status['fallback_reason'])
+        self.assertTrue(status['available_backends']['cuda'])
+
+    def test_resolve_force_backend_cuda_falls_back_to_torch(self):
+        with patch(
+            'world.tensor_backend.available_force_backends',
+            return_value={
+                'numpy': True,
+                'torch': True,
+                'cuda': False,
+                'cuda_device': None,
+            },
+        ):
+            status = resolve_force_backend('cuda')
+
+        self.assertEqual('cuda', status['requested_backend'])
+        self.assertEqual('torch', status['backend'])
+        self.assertEqual('cuda_unavailable_using_torch_cpu', status['fallback_reason'])
+
+    def test_resolve_force_backend_cuda_falls_back_to_numpy_when_torch_unavailable(self):
+        with patch(
+            'world.tensor_backend.available_force_backends',
+            return_value={
+                'numpy': True,
+                'torch': False,
+                'cuda': False,
+                'cuda_device': None,
+            },
+        ):
+            status = resolve_force_backend('cuda')
+
+        self.assertEqual('cuda', status['requested_backend'])
+        self.assertEqual('numpy', status['backend'])
+        self.assertEqual('cuda_unavailable_using_numpy', status['fallback_reason'])
+
     def test_numpy_force_backend_matches_python_step(self):
         if not available_force_backends()['numpy']:
             self.skipTest('numpy backend unavailable')
@@ -186,6 +236,35 @@ class TensorPhysicsBackendTests(unittest.TestCase):
         self.assertIn(status['backend'], {'cuda', 'torch', 'numpy', 'python'})
         if status['backend'] != 'cuda':
             self.assertTrue(status['fallback_reason'])
+
+    def test_cuda_force_deltas_fall_back_to_torch_path_on_cuda_error(self):
+        calls = []
+
+        def fake_torch_delta_call(**kwargs):
+            calls.append(kwargs['backend'])
+            if len(calls) == 1:
+                raise RuntimeError('simulated cuda failure')
+            return [(1.0, 2.0)] * len(kwargs['positions'])
+
+        with patch('world.tensor_backend._torch_external_force_deltas', side_effect=fake_torch_delta_call):
+            result = compute_external_force_deltas(
+                positions=[(1.0, 2.0), (3.0, 4.0)],
+                dt=0.01,
+                time_value=0.0,
+                gravity=1.0,
+                uniform_force=None,
+                central_force=None,
+                gravity_wells=[],
+                repulsion_zones=[],
+                inverse_square_repulsions=[],
+                vortex_fields=[],
+                time_varying_force=None,
+                force_components=[],
+                backend='cuda',
+            )
+
+        self.assertEqual(['cuda', 'torch'], calls)
+        self.assertEqual([(1.0, 2.0), (1.0, 2.0)], result)
 
 
 if __name__ == '__main__':

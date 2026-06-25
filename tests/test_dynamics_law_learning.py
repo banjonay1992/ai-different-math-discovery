@@ -223,6 +223,21 @@ class DynamicsLawLearnerTests(unittest.TestCase):
         self.assertAlmostEqual(center_x, radial.properties['center_x'], delta=0.1)
         self.assertAlmostEqual(center_y, radial.properties['center_y'], delta=0.1)
 
+    def test_insufficient_samples_returns_no_discovered_laws(self):
+        learner = DynamicsLawLearner()
+        samples = [MotionSample(
+            step=step,
+            x=10.0 + step * 0.01,
+            y=10.0 + step * 0.02,
+            vx=0.5,
+            vy=-0.1,
+            dvx=0.0,
+            dvy=0.0,
+        ) for step in range(79)]
+
+        laws = learner.discover(samples)
+        self.assertEqual([], laws)
+
 
 if __name__ == '__main__':
     unittest.main()
