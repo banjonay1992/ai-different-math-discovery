@@ -26,6 +26,7 @@ import json
 import base64
 import zlib
 import time
+import tempfile
 from collections import Counter
 from pathlib import Path
 
@@ -2811,6 +2812,178 @@ def run_bounded_abstraction_transfer_negative_control_matrix(
     }
     print(
         "AI_DIFFERENT_ABSTRACTION_TRANSFER_NEGATIVE_CONTROL_MATRIX "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    if emit_hf_artifact_summary:
+        print(
+            "HF_ARTIFACT_SUMMARY "
+            + json.dumps(artifact, sort_keys=True),
+            flush=True,
+        )
+    return result
+
+
+def run_bounded_abstraction_transfer_negative_control_sweep(
+    *,
+    seed_start: int = 0,
+    seed_count: int = 2,
+    steps: int = 120,
+    object_count: int = 5,
+    target_world_types: list[str] | None = None,
+    output_file: str | Path | None = None,
+    emit_hf_artifact_summary: bool = False,
+) -> dict:
+    """Run a small schema-valid negative-control sweep over matrix seeds."""
+    target_world_types = target_world_types or [
+        'standard',
+        'time_varying',
+        'inverse_square_repulsion',
+        'localized_gravity',
+        'hidden_procedural',
+    ]
+    seed_count = max(1, int(seed_count))
+    seeds = [int(seed_start) + offset for offset in range(seed_count)]
+    matrix_results = []
+    comparisons = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        for seed in seeds:
+            matrix_path = tmpdir_path / f'negative-control-matrix-{seed}.json'
+            with contextlib.redirect_stdout(io.StringIO()):
+                matrix_result = run_bounded_abstraction_transfer_negative_control_matrix(
+                    seed_start=seed,
+                    steps=steps,
+                    object_count=object_count,
+                    target_world_types=target_world_types,
+                    output_file=matrix_path,
+                    emit_hf_artifact_summary=False,
+                )
+            matrix_artifact = json.loads(matrix_path.read_text(encoding='utf-8'))
+            matrix_validation = validate_abstraction_replay_artifact(matrix_artifact)
+            matrix_results.append({
+                'matrix_id': matrix_artifact['matrix_id'],
+                'seed_start': seed,
+                'decision': matrix_artifact['decision']['decision'],
+                'promote_bridge': bool(matrix_artifact['decision']['promote_bridge']),
+                'artifact_content_hash': matrix_artifact['artifact_content_hash'],
+                'artifact_sha256': _file_sha256(matrix_path),
+                'schema_validation': matrix_validation,
+                'aggregate_counts': matrix_artifact['aggregate_counts'],
+                'candidate_win_rate': matrix_artifact['candidate_win_rate'],
+                'candidate_survives_negative_controls_rate': (
+                    matrix_artifact['candidate_survives_negative_controls_rate']
+                ),
+            })
+            for row in matrix_artifact['comparisons']:
+                merged_row = dict(row)
+                merged_row['source_matrix_id'] = matrix_artifact['matrix_id']
+                merged_row['sweep_seed_start'] = seed
+                merged_row['sweep_case_id'] = (
+                    f"{matrix_artifact['matrix_id']}:{row['scenario_id']}"
+                )
+                comparisons.append(merged_row)
+    aggregate = _abstraction_negative_control_aggregate(comparisons)
+    thresholds = {
+        'min_comparisons': 5 * seed_count,
+        'promote_candidate_win_rate': 0.6,
+        'promote_negative_control_survival_rate': 0.6,
+        'max_shuffled_or_mismatched_wins': 0,
+    }
+    decision = _abstraction_negative_control_decision(aggregate, thresholds)
+    sweep_id = 'abstraction_transfer_negative_control_sweep_' + hashlib.sha256(
+        json.dumps({
+            'seed_start': seed_start,
+            'seed_count': seed_count,
+            'steps': steps,
+            'object_count': object_count,
+            'target_world_types': target_world_types,
+            'thresholds': thresholds,
+            'matrix_ids': [item['matrix_id'] for item in matrix_results],
+        }, sort_keys=True).encode('utf-8')
+    ).hexdigest()[:16]
+    config = {
+        'seed_start': int(seed_start),
+        'seed_count': int(seed_count),
+        'seed_values': seeds,
+        'steps': int(steps),
+        'object_count': int(object_count),
+        'target_world_types': list(target_world_types),
+        'thresholds': thresholds,
+        'local_smoke_seed_limit': 2,
+        'hf_recommended_when_seed_count_exceeds': 2,
+    }
+    artifact = {
+        'run_kind': 'bounded_abstraction_transfer_negative_control_sweep',
+        'evidence_type': 'candidate_replay_negative_control_sweep_evidence',
+        'sweep_id': sweep_id,
+        'runs_final': False,
+        'mutates_runtime_theory_memory': False,
+        'candidate_not_causal': True,
+        'candidate_not_causal_wording': (
+            'Candidate_replay_negative_control_sweep_evidence only: repeated '
+            'schema-valid candidate, no-bridge, and mismatched-bridge rows can '
+            'guide whether to run a broader sweep, but do not establish causal '
+            'proof, benchmark proof, or project-owned model capability.'
+        ),
+        'project_owned_checkpoint_claimed': False,
+        'third_party_checkpoint_used': False,
+        'hf_validation_used': False,
+        'hf_recommended_for_broader_sweep': seed_count > 2,
+        'hf_repro_plan': {
+            'command': (
+                'python3 first_principles_ai/main.py '
+                '--abstraction-transfer-negative-control-sweep '
+                f'--seed {seed_start} --seeds {seed_count} '
+                f'--benchmark-steps {steps} --object-counts {object_count} '
+                '--world-types ' + ','.join(target_world_types) + ' '
+                '--abstraction-transfer-negative-control-sweep-output-file '
+                'outputs/abstraction-transfer-negative-control-sweep.json'
+            ),
+            'use_hf_when': 'use cheap HF when seed_count exceeds local_smoke_seed_limit',
+            'owned_checkpoint_claim': False,
+        },
+        'config': config,
+        'matrix_results': matrix_results,
+        'comparisons': comparisons,
+        'aggregate_counts': aggregate,
+        'candidate_win_rate': aggregate['candidate_win_rate'],
+        'candidate_survives_negative_controls_rate': aggregate[
+            'candidate_survives_negative_controls_rate'
+        ],
+        'decision': decision,
+        'label_leaks': [],
+    }
+    artifact_schema_validation = _finalize_abstraction_replay_artifact(artifact)
+    artifact_path = None
+    artifact_file_hash = None
+    if output_file:
+        artifact_path = _write_json_artifact(output_file, artifact)
+        artifact_file_hash = _file_sha256(artifact_path)
+    result = {
+        'run_kind': artifact['run_kind'],
+        'sweep_id': sweep_id,
+        'runs_final': False,
+        'artifact_path': str(artifact_path) if artifact_path else None,
+        'artifact_sha256': artifact_file_hash,
+        'artifact_content_hash': artifact['artifact_content_hash'],
+        'artifact_schema_validation': artifact_schema_validation,
+        'matrix_count': len(matrix_results),
+        'comparison_count': len(comparisons),
+        'aggregate_counts': aggregate,
+        'candidate_win_rate': aggregate['candidate_win_rate'],
+        'candidate_survives_negative_controls_rate': aggregate[
+            'candidate_survives_negative_controls_rate'
+        ],
+        'decision': decision,
+        'hf_validation_used': False,
+        'hf_recommended_for_broader_sweep': seed_count > 2,
+        'project_owned_checkpoint_claimed': False,
+        'third_party_checkpoint_used': False,
+        'label_leaks': [],
+    }
+    print(
+        "AI_DIFFERENT_ABSTRACTION_TRANSFER_NEGATIVE_CONTROL_SWEEP "
         + json.dumps(result, sort_keys=True),
         flush=True,
     )
@@ -12843,6 +13016,10 @@ if __name__ == '__main__':
                         help='Run a tiny abstraction transfer matrix with mismatched negative controls')
     parser.add_argument('--abstraction-transfer-negative-control-output-file', type=str, default=None,
                         help='Optional JSON artifact path for the abstraction transfer negative-control matrix')
+    parser.add_argument('--abstraction-transfer-negative-control-sweep', action='store_true',
+                        help='Run a schema-valid abstraction transfer negative-control sweep')
+    parser.add_argument('--abstraction-transfer-negative-control-sweep-output-file', type=str, default=None,
+                        help='Optional JSON artifact path for the abstraction transfer negative-control sweep')
     parser.add_argument('--math-foundation-prep', action='store_true',
                         help='Run readiness checks before the final watched math discovery run')
     parser.add_argument('--discovery-readiness', action='store_true',
@@ -14335,6 +14512,21 @@ if __name__ == '__main__':
             target_world_types=_parse_abstraction_transfer_worlds(args.world_types),
             output_file=(
                 args.abstraction_transfer_negative_control_output_file
+                or args.hf_output_file
+            ),
+            emit_hf_artifact_summary=args.hf_log_artifact_summary,
+        )
+        raise SystemExit(0)
+
+    if args.abstraction_transfer_negative_control_sweep:
+        run_bounded_abstraction_transfer_negative_control_sweep(
+            seed_start=args.seed,
+            seed_count=args.seeds,
+            steps=args.benchmark_steps,
+            object_count=_parse_csv_ints(args.object_counts)[0],
+            target_world_types=_parse_abstraction_transfer_worlds(args.world_types),
+            output_file=(
+                args.abstraction_transfer_negative_control_sweep_output_file
                 or args.hf_output_file
             ),
             emit_hf_artifact_summary=args.hf_log_artifact_summary,

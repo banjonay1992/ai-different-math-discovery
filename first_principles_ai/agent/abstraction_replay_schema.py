@@ -20,6 +20,9 @@ _KIND_TO_EVIDENCE_TYPE = {
     'bounded_abstraction_transfer_negative_control_matrix': (
         'candidate_replay_negative_control_evidence'
     ),
+    'bounded_abstraction_transfer_negative_control_sweep': (
+        'candidate_replay_negative_control_sweep_evidence'
+    ),
 }
 
 
@@ -99,7 +102,18 @@ def validate_abstraction_replay_artifact(artifact: dict[str, Any]) -> dict[str, 
         if aggregate['comparison_count'] != len(comparisons):
             _fail('aggregate_counts.comparison_count', 'comparison count does not match rows')
     else:
-        _required_str(artifact, 'matrix_id')
+        if run_kind == 'bounded_abstraction_transfer_negative_control_sweep':
+            _required_str(artifact, 'sweep_id')
+            sweep_results = _required_list(artifact, 'matrix_results')
+            if not sweep_results:
+                _fail('matrix_results', 'sweep must include at least one matrix result')
+            for index, result in enumerate(sweep_results):
+                if not isinstance(result, dict):
+                    _fail(f'matrix_results[{index}]', 'matrix result must be an object')
+                _required_str(result, 'matrix_id')
+                _required_str(result, 'decision')
+        else:
+            _required_str(artifact, 'matrix_id')
         aggregate = _validate_matrix_aggregate(artifact)
         decision = _required_dict(artifact, 'decision')
         decision_label = _required_str(decision, 'decision')

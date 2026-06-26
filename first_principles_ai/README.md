@@ -117,6 +117,9 @@ python3 main.py --abstraction-transfer-replay-matrix --seed 7 --benchmark-steps 
 # Add same-budget no-bridge and mismatched-bridge negative controls to the matrix
 python3 main.py --abstraction-transfer-negative-control-matrix --seed 7 --benchmark-steps 90 --world-types standard,time_varying,hidden_procedural --abstraction-transfer-negative-control-output-file tmp/abstraction-transfer-negative-control-matrix.json
 
+# Run a tiny local schema-valid negative-control sweep; move larger seed counts to cheap HF
+python3 main.py --abstraction-transfer-negative-control-sweep --seed 7 --seeds 2 --benchmark-steps 90 --world-types standard,time_varying,hidden_procedural --abstraction-transfer-negative-control-sweep-output-file tmp/abstraction-transfer-negative-control-sweep.json
+
 # Check whether the math-foundation gates are ready before the final watched run
 python3 main.py --math-foundation-prep --seeds 1 --benchmark-steps 220 --world-types standard,sideways_wind,vortex --equation-hidden-worlds 2
 
