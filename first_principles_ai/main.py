@@ -61,6 +61,11 @@ from agent.compute_budget import plan_adaptive_compute_budget
 from agent.discovery_loop import AutonomousDiscoveryLoop, CumulativeTheoryMemory
 from agent.math_foundation import MathFoundationWorkbench
 from agent.resource_efficiency import estimate_json_bytes
+from agent.abstraction_replay_schema import (
+    ABSTRACTION_REPLAY_ARTIFACT_SCHEMA_VERSION,
+    artifact_content_hash as abstraction_replay_artifact_content_hash,
+    validate_abstraction_replay_artifact,
+)
 from agent.super_system import (
     build_experiment_design_cockpit,
     build_super_system_report,
@@ -2206,12 +2211,14 @@ def run_bounded_abstraction_transfer_replay_pack(
     }
     artifact = {
         'run_kind': 'bounded_abstraction_transfer_replay_pack',
+        'evidence_type': 'replay_candidate_benefit',
         'runs_final': False,
         'mutates_runtime_theory_memory': False,
         'candidate_not_causal': True,
         'candidate_not_causal_wording': (
             'Bounded replay pack evidence only: replay_candidate_benefit is '
-            'not causal proof, not live AGI, and not a science benchmark.'
+            'not causal proof, not benchmark proof, not live AGI, and not '
+            'project-owned model capability.'
         ),
         'project_owned_checkpoint_claimed': False,
         'third_party_checkpoint_used': False,
@@ -2224,9 +2231,7 @@ def run_bounded_abstraction_transfer_replay_pack(
         'evidence_counts': evidence_counts,
         'label_leaks': [],
     }
-    artifact['artifact_content_hash'] = hashlib.sha256(
-        json.dumps(artifact, sort_keys=True).encode('utf-8')
-    ).hexdigest()
+    artifact_schema_validation = _finalize_abstraction_replay_artifact(artifact)
     artifact_path = None
     artifact_file_hash = None
     if output_file:
@@ -2238,6 +2243,7 @@ def run_bounded_abstraction_transfer_replay_pack(
         'artifact_path': str(artifact_path) if artifact_path else None,
         'artifact_sha256': artifact_file_hash,
         'artifact_content_hash': artifact['artifact_content_hash'],
+        'artifact_schema_validation': artifact_schema_validation,
         'comparison_count': len(comparisons),
         'evidence_counts': evidence_counts,
         'selected_candidate_control_outcomes': [
@@ -2528,6 +2534,7 @@ def run_bounded_abstraction_transfer_replay_matrix(
     }
     artifact = {
         'run_kind': 'bounded_abstraction_transfer_replay_matrix',
+        'evidence_type': 'candidate_replay_matrix_evidence',
         'matrix_id': matrix_id,
         'runs_final': False,
         'mutates_runtime_theory_memory': False,
@@ -2535,7 +2542,8 @@ def run_bounded_abstraction_transfer_replay_matrix(
         'candidate_not_causal_wording': (
             'Candidate_replay_matrix_evidence only: tiny deterministic '
             'candidate/control replay rows can guide follow-up probes, but do '
-            'not establish causal proof or benchmark proof.'
+            'not establish causal proof, benchmark proof, or project-owned '
+            'model capability.'
         ),
         'project_owned_checkpoint_claimed': False,
         'third_party_checkpoint_used': False,
@@ -2551,9 +2559,7 @@ def run_bounded_abstraction_transfer_replay_matrix(
         'weak_or_absent_count': aggregate['weak_or_absent_count'],
         'label_leaks': [],
     }
-    artifact['artifact_content_hash'] = hashlib.sha256(
-        json.dumps(artifact, sort_keys=True).encode('utf-8')
-    ).hexdigest()
+    artifact_schema_validation = _finalize_abstraction_replay_artifact(artifact)
     artifact_path = None
     artifact_file_hash = None
     if output_file:
@@ -2566,6 +2572,7 @@ def run_bounded_abstraction_transfer_replay_matrix(
         'artifact_path': str(artifact_path) if artifact_path else None,
         'artifact_sha256': artifact_file_hash,
         'artifact_content_hash': artifact['artifact_content_hash'],
+        'artifact_schema_validation': artifact_schema_validation,
         'comparison_count': len(comparisons),
         'aggregate_counts': aggregate,
         'candidate_win_rate': aggregate['candidate_win_rate'],
@@ -2732,6 +2739,7 @@ def run_bounded_abstraction_transfer_negative_control_matrix(
     }
     artifact = {
         'run_kind': 'bounded_abstraction_transfer_negative_control_matrix',
+        'evidence_type': 'candidate_replay_negative_control_evidence',
         'matrix_id': matrix_id,
         'runs_final': False,
         'mutates_runtime_theory_memory': False,
@@ -2758,9 +2766,7 @@ def run_bounded_abstraction_transfer_negative_control_matrix(
         'decision': decision,
         'label_leaks': [],
     }
-    artifact['artifact_content_hash'] = hashlib.sha256(
-        json.dumps(artifact, sort_keys=True).encode('utf-8')
-    ).hexdigest()
+    artifact_schema_validation = _finalize_abstraction_replay_artifact(artifact)
     artifact_path = None
     artifact_file_hash = None
     if output_file:
@@ -2773,6 +2779,7 @@ def run_bounded_abstraction_transfer_negative_control_matrix(
         'artifact_path': str(artifact_path) if artifact_path else None,
         'artifact_sha256': artifact_file_hash,
         'artifact_content_hash': artifact['artifact_content_hash'],
+        'artifact_schema_validation': artifact_schema_validation,
         'comparison_count': len(comparisons),
         'aggregate_counts': aggregate,
         'candidate_win_rate': aggregate['candidate_win_rate'],
@@ -7135,6 +7142,17 @@ def _file_sha256(path: str | Path) -> str | None:
         for chunk in iter(lambda: handle.read(1024 * 1024), b''):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _finalize_abstraction_replay_artifact(artifact: dict) -> dict:
+    artifact['artifact_schema_version'] = ABSTRACTION_REPLAY_ARTIFACT_SCHEMA_VERSION
+    artifact['artifact_schema_validation'] = {
+        'validator': 'abstraction_replay_artifact_schema',
+        'validated': True,
+        'schema_version': ABSTRACTION_REPLAY_ARTIFACT_SCHEMA_VERSION,
+    }
+    artifact['artifact_content_hash'] = abstraction_replay_artifact_content_hash(artifact)
+    return validate_abstraction_replay_artifact(artifact)
 
 
 def _runtime_memory_hash_state(
