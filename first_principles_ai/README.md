@@ -114,6 +114,9 @@ python3 main.py --abstraction-transfer-replay-pack --seed 7 --benchmark-steps 90
 # Score a tiny held-out abstraction transfer replay matrix
 python3 main.py --abstraction-transfer-replay-matrix --seed 7 --benchmark-steps 90 --world-types standard,time_varying,hidden_procedural --abstraction-transfer-replay-matrix-output-file tmp/abstraction-transfer-replay-matrix.json
 
+# Add same-budget no-bridge and mismatched-bridge negative controls to the matrix
+python3 main.py --abstraction-transfer-negative-control-matrix --seed 7 --benchmark-steps 90 --world-types standard,time_varying,hidden_procedural --abstraction-transfer-negative-control-output-file tmp/abstraction-transfer-negative-control-matrix.json
+
 # Check whether the math-foundation gates are ready before the final watched run
 python3 main.py --math-foundation-prep --seeds 1 --benchmark-steps 220 --world-types standard,sideways_wind,vortex --equation-hidden-worlds 2
 

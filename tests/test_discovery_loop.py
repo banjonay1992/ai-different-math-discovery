@@ -23,6 +23,7 @@ from main import (
     _run_equation_followup_cases,
     parse_live_progress_line,
     run_abstraction_transfer_campaign,
+    run_bounded_abstraction_transfer_negative_control_matrix,
     run_bounded_abstraction_transfer_replay_pack,
     run_bounded_abstraction_transfer_replay_matrix,
     run_live_progress_viewer,
@@ -598,6 +599,137 @@ class DiscoveryLoopTests(unittest.TestCase):
         self.assertEqual(2, classes.count('candidate_win'))
         self.assertEqual(2, classes.count('control_no_gain'))
         self.assertEqual(1, classes.count('weak_or_absent_bridge'))
+
+    def test_abstraction_transfer_negative_control_matrix_holds_mixed_evidence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_path = Path(tmpdir) / 'negative-control-matrix.json'
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                result = run_bounded_abstraction_transfer_negative_control_matrix(
+                    seed_start=7,
+                    steps=90,
+                    object_count=5,
+                    target_world_types=[
+                        'standard',
+                        'time_varying',
+                        'hidden_procedural',
+                    ],
+                    output_file=artifact_path,
+                )
+            artifact = json.loads(artifact_path.read_text(encoding='utf-8'))
+
+        self.assertIn(
+            'AI_DIFFERENT_ABSTRACTION_TRANSFER_NEGATIVE_CONTROL_MATRIX',
+            stream.getvalue(),
+        )
+        self.assertEqual(
+            'bounded_abstraction_transfer_negative_control_matrix',
+            result['run_kind'],
+        )
+        self.assertEqual(5, result['comparison_count'])
+        self.assertEqual(artifact['matrix_id'], result['matrix_id'])
+        self.assertEqual(64, len(result['artifact_sha256']))
+        self.assertFalse(artifact['runs_final'])
+        self.assertFalse(artifact['mutates_runtime_theory_memory'])
+        self.assertFalse(artifact['project_owned_checkpoint_claimed'])
+        self.assertFalse(artifact['third_party_checkpoint_used'])
+        self.assertFalse(artifact['hf_validation_used'])
+        self.assertEqual([], artifact['label_leaks'])
+        self.assertTrue(result['candidate_replay_negative_control_evidence'])
+        wording = artifact['candidate_not_causal_wording']
+        self.assertIn('Candidate_replay_negative_control_evidence', wording)
+        self.assertIn('do not establish causal proof', wording)
+        self.assertIn('benchmark proof', wording)
+        thresholds = artifact['config']['thresholds']
+        self.assertEqual(0.6, thresholds['promote_candidate_win_rate'])
+        self.assertEqual(
+            0.6,
+            thresholds['promote_negative_control_survival_rate'],
+        )
+        aggregate = artifact['aggregate_counts']
+        self.assertEqual(5, aggregate['comparison_count'])
+        self.assertEqual(2, aggregate['candidate_win_count'])
+        self.assertEqual(2, aggregate['control_no_gain_count'])
+        self.assertEqual(1, aggregate['weak_or_absent_count'])
+        self.assertEqual(2, aggregate['candidate_survives_negative_controls_count'])
+        self.assertEqual(0, aggregate['shuffled_or_mismatched_control_win_count'])
+        self.assertEqual(0.4, aggregate['candidate_win_rate'])
+        self.assertEqual(0.4, aggregate['candidate_survives_negative_controls_rate'])
+        self.assertEqual('hold_for_more_evidence', artifact['decision']['decision'])
+        self.assertFalse(artifact['decision']['promote_bridge'])
+        self.assertEqual(artifact['decision'], result['decision'])
+        classes = {
+            row['negative_control_class']
+            for row in artifact['comparisons']
+        }
+        self.assertEqual(
+            {
+                'candidate_survives_negative_controls',
+                'weak_or_absent_bridge',
+            },
+            classes,
+        )
+        for row in artifact['comparisons']:
+            self.assertEqual(
+                'no_bridge_plus_mismatched_bridge',
+                row['negative_control_type'],
+            )
+            self.assertEqual(
+                'mismatched_bridge_same_budget',
+                row['shuffled_control_type'],
+            )
+            self.assertTrue(row['shuffled_bridge_id'].startswith('mismatched:'))
+            self.assertTrue(row['shuffled_outcome']['outcome'])
+
+    def test_abstraction_transfer_negative_control_matrix_is_deterministic(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_path = Path(tmpdir) / 'negative-control-matrix.json'
+            runtime_memory = Path(tmpdir) / 'theory-memory.json'
+            runtime_memory.write_text('{"runtime":"unchanged"}', encoding='utf-8')
+            before_runtime = runtime_memory.read_text(encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                first = run_bounded_abstraction_transfer_negative_control_matrix(
+                    seed_start=4,
+                    steps=90,
+                    object_count=5,
+                    target_world_types=[
+                        'standard',
+                        'time_varying',
+                        'hidden_procedural',
+                    ],
+                    output_file=artifact_path,
+                )
+            first_artifact = json.loads(artifact_path.read_text(encoding='utf-8'))
+            after_first_runtime = runtime_memory.read_text(encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                second = run_bounded_abstraction_transfer_negative_control_matrix(
+                    seed_start=4,
+                    steps=90,
+                    object_count=5,
+                    target_world_types=[
+                        'standard',
+                        'time_varying',
+                        'hidden_procedural',
+                    ],
+                    output_file=artifact_path,
+                )
+            second_artifact = json.loads(artifact_path.read_text(encoding='utf-8'))
+            after_second_runtime = runtime_memory.read_text(encoding='utf-8')
+
+        self.assertEqual(first['artifact_content_hash'], second['artifact_content_hash'])
+        self.assertEqual(first['artifact_sha256'], second['artifact_sha256'])
+        self.assertEqual(first_artifact, second_artifact)
+        self.assertEqual(before_runtime, after_first_runtime)
+        self.assertEqual(before_runtime, after_second_runtime)
+        self.assertEqual('hold_for_more_evidence', first['decision']['decision'])
+        self.assertEqual(
+            2,
+            first['aggregate_counts']['candidate_survives_negative_controls_count'],
+        )
+        self.assertEqual(
+            0,
+            first['aggregate_counts']['shuffled_or_mismatched_control_win_count'],
+        )
 
     def test_distance_scaled_residual_generates_strength_law_concept(self):
         loop = AutonomousDiscoveryLoop()

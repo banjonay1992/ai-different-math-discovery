@@ -2343,6 +2343,108 @@ def _abstraction_replay_aggregate(comparisons: list[dict]) -> dict:
     }
 
 
+def _abstraction_negative_control_class(
+    candidate_outcome: str,
+    no_bridge_outcome: str,
+    shuffled_outcome: str,
+) -> str:
+    candidate_score = _abstraction_replay_score(candidate_outcome)
+    no_bridge_score = _abstraction_replay_score(no_bridge_outcome)
+    shuffled_score = _abstraction_replay_score(shuffled_outcome)
+    if shuffled_score > candidate_score:
+        return 'shuffled_or_mismatched_control_win'
+    if candidate_score >= 3 and candidate_score > max(no_bridge_score, shuffled_score):
+        return 'candidate_survives_negative_controls'
+    if candidate_outcome in {
+        'abstraction_transfer_weak',
+        'abstraction_transfer_absent',
+    }:
+        return 'weak_or_absent_bridge'
+    if candidate_score == no_bridge_score == shuffled_score:
+        return 'negative_control_no_gain'
+    return 'mixed_or_hold'
+
+
+def _abstraction_negative_control_aggregate(comparisons: list[dict]) -> dict:
+    class_counts = {
+        'candidate_survives_negative_controls': 0,
+        'negative_control_no_gain': 0,
+        'weak_or_absent_bridge': 0,
+        'shuffled_or_mismatched_control_win': 0,
+        'mixed_or_hold': 0,
+    }
+    for row in comparisons:
+        negative_class = str(row.get('negative_control_class') or '')
+        if negative_class in class_counts:
+            class_counts[negative_class] += 1
+    replay_aggregate = _abstraction_replay_aggregate(comparisons)
+    total = len(comparisons)
+    survives_count = class_counts['candidate_survives_negative_controls']
+    return {
+        **replay_aggregate,
+        'candidate_survives_negative_controls_count': survives_count,
+        'negative_control_no_gain_count': class_counts['negative_control_no_gain'],
+        'shuffled_or_mismatched_control_win_count': class_counts[
+            'shuffled_or_mismatched_control_win'
+        ],
+        'mixed_or_hold_count': class_counts['mixed_or_hold'],
+        'negative_control_class_counts': class_counts,
+        'candidate_survives_negative_controls_rate': round(
+            survives_count / total,
+            3,
+        ) if total else 0.0,
+    }
+
+
+def _abstraction_negative_control_decision(
+    aggregate: dict,
+    thresholds: dict,
+) -> dict:
+    comparison_count = int(aggregate.get('comparison_count', 0) or 0)
+    candidate_win_rate = float(aggregate.get('candidate_win_rate', 0.0) or 0.0)
+    survives_rate = float(
+        aggregate.get('candidate_survives_negative_controls_rate', 0.0) or 0.0
+    )
+    shuffled_wins = int(
+        aggregate.get('shuffled_or_mismatched_control_win_count', 0) or 0
+    )
+    if comparison_count < int(thresholds['min_comparisons']):
+        return {
+            'decision': 'defer_insufficient_matrix',
+            'promote_bridge': False,
+            'reason': 'fewer held-out comparisons than the predeclared minimum',
+        }
+    if shuffled_wins > int(thresholds['max_shuffled_or_mismatched_wins']):
+        return {
+            'decision': 'defer_negative_control_failed',
+            'promote_bridge': False,
+            'reason': 'a shuffled or mismatched bridge matched/beaten the candidate',
+        }
+    if (
+        candidate_win_rate >= float(thresholds['promote_candidate_win_rate'])
+        and survives_rate >= float(thresholds['promote_negative_control_survival_rate'])
+    ):
+        return {
+            'decision': 'promote_candidate_bridge_for_followup',
+            'promote_bridge': True,
+            'reason': 'candidate crossed predeclared no-bridge and mismatched-control thresholds',
+        }
+    if int(aggregate.get('candidate_win_count', 0) or 0) > 0:
+        return {
+            'decision': 'hold_for_more_evidence',
+            'promote_bridge': False,
+            'reason': (
+                'candidate beat controls in some rows, but the tiny matrix did '
+                'not cross the conservative promotion threshold'
+            ),
+        }
+    return {
+        'decision': 'defer_candidate_not_distinct_from_controls',
+        'promote_bridge': False,
+        'reason': 'candidate did not separate from no-bridge or mismatched controls',
+    }
+
+
 def run_bounded_abstraction_transfer_replay_matrix(
     *,
     seed_start: int = 0,
@@ -2488,6 +2590,220 @@ def run_bounded_abstraction_transfer_replay_matrix(
     }
     print(
         "AI_DIFFERENT_ABSTRACTION_TRANSFER_REPLAY_MATRIX "
+        + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+    if emit_hf_artifact_summary:
+        print(
+            "HF_ARTIFACT_SUMMARY "
+            + json.dumps(artifact, sort_keys=True),
+            flush=True,
+        )
+    return result
+
+
+def run_bounded_abstraction_transfer_negative_control_matrix(
+    *,
+    seed_start: int = 0,
+    steps: int = 120,
+    object_count: int = 5,
+    target_world_types: list[str] | None = None,
+    output_file: str | Path | None = None,
+    emit_hf_artifact_summary: bool = False,
+) -> dict:
+    """Run a tiny non-final matrix with no-bridge and mismatched bridge controls."""
+    target_world_types = target_world_types or [
+        'standard',
+        'time_varying',
+        'inverse_square_repulsion',
+        'localized_gravity',
+        'hidden_procedural',
+    ]
+    theory_memory = CumulativeTheoryMemory()
+    loop = AutonomousDiscoveryLoop()
+    source_results = []
+    for case in _abstraction_transfer_source_cases(seed_start=seed_start):
+        report = loop.build_report(
+            case['equations'],
+            step=case['step'],
+            current_count=case['current_count'],
+        )
+        theory_memory.record_result(case['context'], case['seed'], report)
+        packed_report = report.to_dict()
+        source_results.append({
+            'context': case['context'],
+            'seed': case['seed'],
+            'bridge_count': len(packed_report.get('abstraction_bridges') or []),
+            'bridge_kinds': [
+                bridge.get('abstraction_kind')
+                for bridge in packed_report.get('abstraction_bridges') or []
+            ],
+        })
+    base_plan = _abstraction_transfer_campaign_plan(
+        theory_memory,
+        world_types=target_world_types,
+        object_count=object_count,
+        steps=steps,
+        seed_start=seed_start + 100,
+    )
+    comparisons = []
+    matrix_cases = _abstraction_replay_matrix_cases(seed_start, target_world_types)
+    if base_plan:
+        for index, case in enumerate(matrix_cases):
+            plan = dict(base_plan)
+            plan['world_type'] = case['world_type']
+            plan['unrelated_world'] = case['world_type']
+            plan['seed'] = case['seed']
+            comparison = _abstraction_replay_comparison(
+                loop=loop,
+                theory_memory=theory_memory,
+                plan=plan,
+                scenario_id=case['scenario_id'],
+                seed=int(case['seed']),
+                steps=steps,
+                object_count=object_count,
+                candidate_mode=case['candidate_mode'],
+                control_mode=case['control_mode'],
+            )
+            shuffled_mode = 'weak' if case['candidate_mode'] == 'weak' else 'absent'
+            shuffled_report = loop.build_report(
+                [_abstraction_transfer_target_equation(plan, shuffled_mode)],
+                step=steps,
+                current_count=object_count,
+            )
+            shuffled_outcome = theory_memory.evaluate_planned_result(
+                plan,
+                context=str(plan.get('world_type') or 'hidden_procedural'),
+                seed=int(case['seed']) + 20_000,
+                report=shuffled_report,
+            )
+            shuffled_bridge_id = (
+                f"mismatched:{index}:{plan.get('abstraction_key')}:"
+                f"{case['world_type']}"
+            )
+            candidate_outcome = str(comparison['candidate_outcome'].get('outcome'))
+            no_bridge_outcome = str(comparison['control_outcome'].get('outcome'))
+            shuffled_label = str(shuffled_outcome.get('outcome'))
+            comparison.update({
+                'negative_control_type': 'no_bridge_plus_mismatched_bridge',
+                'no_bridge_control_type': 'no_bridge_absent_equation',
+                'shuffled_control_type': 'mismatched_bridge_same_budget',
+                'shuffled_bridge_id': shuffled_bridge_id,
+                'shuffled_mode': shuffled_mode,
+                'shuffled_outcome': shuffled_outcome,
+                'shuffled_evidence_score': _abstraction_replay_score(shuffled_label),
+                'candidate_vs_shuffled_class': _abstraction_replay_class(
+                    candidate_outcome,
+                    shuffled_label,
+                ),
+                'negative_control_class': _abstraction_negative_control_class(
+                    candidate_outcome,
+                    no_bridge_outcome,
+                    shuffled_label,
+                ),
+            })
+            comparisons.append(comparison)
+    aggregate = _abstraction_negative_control_aggregate(comparisons)
+    thresholds = {
+        'min_comparisons': 5,
+        'promote_candidate_win_rate': 0.6,
+        'promote_negative_control_survival_rate': 0.6,
+        'max_shuffled_or_mismatched_wins': 0,
+    }
+    decision = _abstraction_negative_control_decision(aggregate, thresholds)
+    matrix_id = 'abstraction_transfer_negative_control_matrix_' + hashlib.sha256(
+        json.dumps({
+            'seed_start': seed_start,
+            'steps': steps,
+            'object_count': object_count,
+            'target_world_types': target_world_types,
+            'matrix_cases': matrix_cases,
+            'thresholds': thresholds,
+            'bridge': base_plan.get('abstraction_key') if base_plan else None,
+        }, sort_keys=True).encode('utf-8')
+    ).hexdigest()[:16]
+    config = {
+        'seed_start': int(seed_start),
+        'steps': int(steps),
+        'object_count': int(object_count),
+        'target_world_types': list(target_world_types),
+        'matrix_cases': matrix_cases,
+        'thresholds': thresholds,
+    }
+    artifact = {
+        'run_kind': 'bounded_abstraction_transfer_negative_control_matrix',
+        'matrix_id': matrix_id,
+        'runs_final': False,
+        'mutates_runtime_theory_memory': False,
+        'candidate_not_causal': True,
+        'candidate_not_causal_wording': (
+            'Candidate_replay_negative_control_evidence only: same-budget '
+            'candidate, no-bridge, and mismatched-bridge rows can guide the '
+            'next probe, but do not establish causal proof, benchmark proof, '
+            'or project-owned model capability.'
+        ),
+        'project_owned_checkpoint_claimed': False,
+        'third_party_checkpoint_used': False,
+        'hf_validation_used': False,
+        'config': config,
+        'source_results': source_results,
+        'bridge_count': len(theory_memory.abstraction_bridges(limit=8)),
+        'selected_plan': dict(base_plan or {}),
+        'comparisons': comparisons,
+        'aggregate_counts': aggregate,
+        'candidate_win_rate': aggregate['candidate_win_rate'],
+        'candidate_survives_negative_controls_rate': aggregate[
+            'candidate_survives_negative_controls_rate'
+        ],
+        'decision': decision,
+        'label_leaks': [],
+    }
+    artifact['artifact_content_hash'] = hashlib.sha256(
+        json.dumps(artifact, sort_keys=True).encode('utf-8')
+    ).hexdigest()
+    artifact_path = None
+    artifact_file_hash = None
+    if output_file:
+        artifact_path = _write_json_artifact(output_file, artifact)
+        artifact_file_hash = _file_sha256(artifact_path)
+    result = {
+        'run_kind': artifact['run_kind'],
+        'matrix_id': matrix_id,
+        'runs_final': False,
+        'artifact_path': str(artifact_path) if artifact_path else None,
+        'artifact_sha256': artifact_file_hash,
+        'artifact_content_hash': artifact['artifact_content_hash'],
+        'comparison_count': len(comparisons),
+        'aggregate_counts': aggregate,
+        'candidate_win_rate': aggregate['candidate_win_rate'],
+        'candidate_survives_negative_controls_rate': aggregate[
+            'candidate_survives_negative_controls_rate'
+        ],
+        'decision': decision,
+        'selected_candidate_control_outcomes': [
+            {
+                'scenario_id': row['scenario_id'],
+                'held_out_world_id': row['held_out_world_id'],
+                'source_bridge_id': row['source_bridge_id'],
+                'target_probe_id': row['target_probe_id'],
+                'negative_control_type': row['negative_control_type'],
+                'selected_replay_class': row['selected_replay_class'],
+                'negative_control_class': row['negative_control_class'],
+                'candidate_outcome': row['candidate_outcome'].get('outcome'),
+                'control_outcome': row['control_outcome'].get('outcome'),
+                'shuffled_outcome': row['shuffled_outcome'].get('outcome'),
+            }
+            for row in comparisons
+        ],
+        'candidate_not_causal': True,
+        'candidate_replay_negative_control_evidence': True,
+        'project_owned_checkpoint_claimed': False,
+        'third_party_checkpoint_used': False,
+        'hf_validation_used': False,
+        'label_leaks': [],
+    }
+    print(
+        "AI_DIFFERENT_ABSTRACTION_TRANSFER_NEGATIVE_CONTROL_MATRIX "
         + json.dumps(result, sort_keys=True),
         flush=True,
     )
@@ -12505,6 +12821,10 @@ if __name__ == '__main__':
                         help='Run a tiny held-out abstraction transfer replay matrix')
     parser.add_argument('--abstraction-transfer-replay-matrix-output-file', type=str, default=None,
                         help='Optional JSON artifact path for the abstraction transfer replay matrix')
+    parser.add_argument('--abstraction-transfer-negative-control-matrix', action='store_true',
+                        help='Run a tiny abstraction transfer matrix with mismatched negative controls')
+    parser.add_argument('--abstraction-transfer-negative-control-output-file', type=str, default=None,
+                        help='Optional JSON artifact path for the abstraction transfer negative-control matrix')
     parser.add_argument('--math-foundation-prep', action='store_true',
                         help='Run readiness checks before the final watched math discovery run')
     parser.add_argument('--discovery-readiness', action='store_true',
@@ -13983,6 +14303,20 @@ if __name__ == '__main__':
             target_world_types=_parse_abstraction_transfer_worlds(args.world_types),
             output_file=(
                 args.abstraction_transfer_replay_matrix_output_file
+                or args.hf_output_file
+            ),
+            emit_hf_artifact_summary=args.hf_log_artifact_summary,
+        )
+        raise SystemExit(0)
+
+    if args.abstraction_transfer_negative_control_matrix:
+        run_bounded_abstraction_transfer_negative_control_matrix(
+            seed_start=args.seed,
+            steps=args.benchmark_steps,
+            object_count=_parse_csv_ints(args.object_counts)[0],
+            target_world_types=_parse_abstraction_transfer_worlds(args.world_types),
+            output_file=(
+                args.abstraction_transfer_negative_control_output_file
                 or args.hf_output_file
             ),
             emit_hf_artifact_summary=args.hf_log_artifact_summary,
