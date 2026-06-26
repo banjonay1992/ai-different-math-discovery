@@ -173,6 +173,23 @@ class AbstractionReplaySchemaTests(unittest.TestCase):
         self.assertEqual(before_runtime, after_second_runtime)
         self.assertEqual('hold_for_more_evidence', first['decision']['decision'])
 
+    def test_negative_control_sweep_marks_larger_seed_count_hf_ready(self):
+        result, artifact = self._artifact_from_runner(
+            run_bounded_abstraction_transfer_negative_control_sweep,
+            seed_count=3,
+        )
+
+        self.assertTrue(result['hf_recommended_for_broader_sweep'])
+        self.assertTrue(artifact['hf_recommended_for_broader_sweep'])
+        self.assertFalse(artifact['hf_validation_used'])
+        self.assertIn('--seeds 3', artifact['hf_repro_plan']['command'])
+        self.assertIn('cheap HF', artifact['hf_repro_plan']['use_hf_when'])
+        self.assertFalse(artifact['hf_repro_plan']['owned_checkpoint_claim'])
+        self.assertEqual(3, len(artifact['matrix_results']))
+        self.assertEqual(15, artifact['aggregate_counts']['comparison_count'])
+        self.assertEqual('hold_for_more_evidence', artifact['decision']['decision'])
+        self.assertFalse(artifact['decision']['promote_bridge'])
+
     def test_missing_no_overclaim_wording_fails_clearly(self):
         _, artifact = self._artifact_from_runner(run_bounded_abstraction_transfer_replay_matrix)
         malformed = copy.deepcopy(artifact)
